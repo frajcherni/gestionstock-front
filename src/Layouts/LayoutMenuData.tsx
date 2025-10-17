@@ -73,6 +73,13 @@ const Navdata = () => {
             }
         },
         {
+            id: "devise",
+            label: "Devise",
+            icon: "ri-file-text-line",
+            link: "/Devis",
+            stateVariables: isDashboard,
+        },
+        {
             id: "ventecomptoire",
             label: "Vente Comptoire",
             icon: "ri-shopping-cart-line",
@@ -155,6 +162,12 @@ const Navdata = () => {
                     link: "/FactureList",
                     parentId: "achat",
                 },
+                {
+                    id: "payment-fournisseur",
+                    label: "Payments Fournisseur",
+                    link: "/PaymentFournisseur",
+                    parentId: "achat",
+                },
             ],
         },
         {
@@ -224,25 +237,13 @@ const Navdata = () => {
                 {
                     id: "website-articles",
                     label: "Gestion Articles",
-                    link: "/WebSiteSettings",
+                    link: "/website-articles",
                     parentId: "website",
                 },
                 {
                     id: "website-carousel",
                     label: "Gestion Carousel",
                     link: "/website-carousel",
-                    parentId: "website",
-                },
-                {
-                    id: "website-menu",
-                    label: "Gestion Menu",
-                    link: "/website-menu",
-                    parentId: "website",
-                },
-                {
-                    id: "website-pages",
-                    label: "Gestion Pages",
-                    link: "/website-pages",
                     parentId: "website",
                 },
             ],
