@@ -1,4 +1,21 @@
-export interface Article {
+
+export interface Client {
+    id: number;
+    raison_sociale: string; //
+    designation?: string;
+    matricule_fiscal: string; //
+    register_commerce: string;
+    adresse: string; //
+    ville: string;
+    code_postal: string;
+    telephone1: string; //
+    telephone2?: string;
+    email: string;
+    status: "Actif" | "Inactif";
+    createdAt?: string;
+    updatedAt?: string;
+  }
+  export interface Article {
     on_website?: boolean;
     is_offre?: boolean;
     is_top_seller?: boolean;
@@ -73,22 +90,6 @@ export interface Fournisseur {
 }
 
 
-export interface Client {
-  id: number;
-  raison_sociale: string;
-  designation?: string;
-  matricule_fiscal: string;
-  register_commerce: string;
-  adresse: string;
-  ville: string;
-  code_postal: string;
-  telephone1: string;
-  telephone2?: string;
-  email: string;
-  status: "Actif" | "Inactif";
-  createdAt?: string;
-  updatedAt?: string;
-}
 
 
 // interfaces.ts
@@ -155,6 +156,7 @@ export interface BonReceptionArticle {
 
 export interface BonLivraisonArticle {
     article_id: number;
+    prix_ttc : number ;
     article?: Article;
     quantite: number;
     quantiteLivree: number;
@@ -191,11 +193,31 @@ export interface Vendeur {
     updated_at?: string;
 }
 
-export interface BonCommandeClient {
+// Add to your existing interfaces
+export interface PaiementClient {
+    id: number;
+    montant: number;
+    modePaiement: "Espece" | "Cheque" | "Virement" | "Traite" | "Autre";
+    numeroPaiement: string;
+    date: string;
+    bonCommandeClient_id: number;
+    client_id: number;
+    notes?: string;
+    numeroCheque?: string;
+    banque?: string;
+    numeroTraite?: string;
+    dateEcheance?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    bonCommandeClient?: BonCommandeClient;
+    client?: Client;
+  }
+  
+  // Update BonCommandeClient interface to include payment info
+  export interface BonCommandeClient {
     id: number;
     numeroCommande: string;
-    clientWebsite?: ClientWebsite; // Add this line
-
+    clientWebsite?: ClientWebsite;
     dateCommande: string;
     status: "Brouillon" | "Confirme" | "Livre" | "Partiellement Livre" | "Annule";
     taxMode: "HT" | "TTC";
@@ -208,16 +230,49 @@ export interface BonCommandeClient {
     vendeur_id: number;
     client?: Client;
     vendeur?: Vendeur;
+    totalTTC : number;
+      modeReglement: "especes" | "cheque" | "virement" | "carte" | "traite" | "autre";
+      numeroReglement?: string;
+      dateEcheance?: string;
+      banqueCheque?: string;
+      espaceNotes?: string;
+      montantVirement?: number;
+    retentionAppliquee?: boolean;
+    retentionMontant?: number;
+    netAPayer?: number;
+    // Add payment fields
+    montantPaye: number;
+    resteAPayer: number;
+    hasPayments: boolean;
     articles: Array<{
-        article_id: number;
-        quantite: number;
-        prixUnitaire: number;
-        tva?: number;
-        remise?: number;
-        article?: Article;
+      article_id: number;
+      quantite: number;
+      quantiteLivree: number;
+      prixUnitaire: number;
+      puv_ttc: number;
+      prix_ttc: number;
+      tva?: number;
+      remise?: number;
+      article?: Article;
     }>;
-}
 
+    modePaiement?: "especes" | "cheque" | "virement" | "traite" | "autre";
+    numeroPaiement?: string;
+    banque?: string;
+    notesPaiement?: string;
+
+    paiements?: PaiementClient[];
+    paymentMethods?: Array<{
+      id: string;
+      method: "especes" | "cheque" | "virement" | "traite";
+      amount: number;
+      numero?: string;
+      banque?: string;
+      dateEcheance?: string;
+    }>;
+    totalPaymentAmount?: number;
+  
+  }
 
 export interface FactureFournisseur {
     id: number;
@@ -247,6 +302,7 @@ export interface FactureFournisseur {
         prixUnitaire: number;
         tva?: number | null;
         remise?: number | null;
+        prix_ttc : number;
     }>;
 }
 
@@ -270,6 +326,7 @@ export interface FactureClientArticle {
     article: Article;
     quantite: number;
     prixUnitaire: number;
+    prix_ttc : number;
     tva?: number;
     remise?: number;
 }
@@ -277,6 +334,7 @@ export interface FactureClientArticle {
 
 export interface FactureClient {
     id: number;
+    exoneration : string;
     numeroFacture: string;
     conditionPaiement : string ;
     timbreFiscal : boolean
@@ -314,5 +372,10 @@ export interface EncaissementClient {
     client_id : number
     client?: Client;
     factureClient : FactureClient
+    numeroCheque?: string;
+    banque?: string;
+    numeroTraite?: string;
+    dateEcheance?: string;
 
 }
+

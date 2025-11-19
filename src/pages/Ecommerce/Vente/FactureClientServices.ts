@@ -1,14 +1,14 @@
 import axios from "axios";
 import { FactureClient , EncaissementClient} from "../../../Components/Article/Interfaces";
 
-const API_URL = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 
 
 export const fetchFacturesClient = async (): Promise<FactureClient[]> => {
     debugger
     try {
-        const response = await fetch(`${API_URL}/factures-client/getAllFacturesClient`);
+        const response = await fetch(`${API_BASE}/factures-client/getAllFacturesClient`);
         if (!response.ok) throw new Error('Erreur lors de la récupération des factures');
         
         const data = await response.json();
@@ -29,7 +29,7 @@ export const fetchFacturesClient = async (): Promise<FactureClient[]> => {
 
 export const fetchFactureClientById = async (id: number): Promise<FactureClient> => {
     try {
-        const response = await axios.get(`${API_URL}/factures-client/${id}`);
+        const response = await axios.get(`${API_BASE}/factures-client/${id}`);
         return response.data;
     } catch (error: any) {
         throw new Error(error.response?.data?.message || "Échec de la récupération de la facture client");
@@ -43,7 +43,9 @@ export const createFacture = async (factureData: any): Promise<FactureClient> =>
         const articles = factureData.articles?.map((item: any) => ({
             article_id: Number(item.article_id),
             quantite: Number(item.quantite),
-            prix_unitaire: Number(item.prixUnitaire || item.prix_unitaire), // Map prixUnitaire to prix_unitaire
+            prix_unitaire: Number(item.prixUnitaire || item.prix_unitaire),
+            prix_ttc: Number(item.prix_ttc ), // Map prixUnitaire to prix_unitaire
+            // Map prixUnitaire to prix_unitaire
             tva: item.tva ? Number(item.tva) : undefined,
             remise: item.remise ? Number(item.remise) : undefined
         })) || [];
@@ -52,7 +54,7 @@ export const createFacture = async (factureData: any): Promise<FactureClient> =>
             throw new Error("Les articles sont requis");
         }
 debugger
-        const response = await axios.post(`${API_URL}/factures-client/addAllFacturesClient`, {
+        const response = await axios.post(`${API_BASE}/factures-client/addAllFacturesClient`, {
             numeroFacture: factureData.numeroFacture,
             dateFacture: factureData.dateFacture,
             dateEcheance: factureData.dateEcheance,
@@ -84,7 +86,7 @@ debugger
 export const updateFacture = async (id: number, factureData: Partial<FactureClient>): Promise<FactureClient> => {
    
     try {
-        const response = await fetch(`${API_URL}/factures-client/updateFactureClient/${id}`, {
+        const response = await fetch(`${API_BASE}/factures-client/updateFactureClient/${id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -102,7 +104,7 @@ export const updateFacture = async (id: number, factureData: Partial<FactureClie
 };
 export const deleteFacture = async (id: number): Promise<void> => {
     try {
-        await axios.delete(`${API_URL}/factures-client/deleteFactureClient/${id}`);
+        await axios.delete(`${API_BASE}/factures-client/deleteFactureClient/${id}`);
     } catch (error: any) {
         throw new Error(error.response?.data?.message || "Échec de la suppression de la facture client");
     }
@@ -110,7 +112,7 @@ export const deleteFacture = async (id: number): Promise<void> => {
 
 export const annulerFacture = async (id: number): Promise<void> => {
     try {
-        await axios.post(`${API_URL}/${id}/annuler`);
+        await axios.post(`${API_BASE}/${id}/annuler`);
     } catch (error: any) {
         throw new Error(error.response?.data?.message || "Échec de l'annulation de la facture client");
     }
@@ -119,7 +121,7 @@ export const annulerFacture = async (id: number): Promise<void> => {
 export const fetchEncaissementsClient = async (): Promise<EncaissementClient[]> => {
     debugger
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/getAllEncaissements`);
+        const response = await fetch(`${API_BASE}/EncaissementClient/getAllEncaissements`);
         if (!response.ok) throw new Error('Erreur lors de la récupération des encaissements');
         
         const data = await response.json();
@@ -133,7 +135,7 @@ export const fetchEncaissementsClient = async (): Promise<EncaissementClient[]> 
 
 export const fetchEncaissementClient = async (id: number): Promise<EncaissementClient> => {
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/${id}`);
+        const response = await fetch(`${API_BASE}/EncaissementClient/${id}`);
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         return await response.json();
     } catch (error) {
@@ -144,7 +146,7 @@ export const fetchEncaissementClient = async (id: number): Promise<EncaissementC
 
 export const createEncaissementClient = async (encaissementData: Partial<EncaissementClient>): Promise<EncaissementClient> => {
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/createencaissement`, {
+        const response = await fetch(`${API_BASE}/EncaissementClient/createencaissement`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -153,7 +155,11 @@ export const createEncaissementClient = async (encaissementData: Partial<Encaiss
                 modePaiement: encaissementData.modePaiement,
                 numeroEncaissement: encaissementData.numeroEncaissement,
                 date: encaissementData.date,
-                client_id: encaissementData.client_id
+                client_id: encaissementData.client_id,
+                numeroCheque: encaissementData.numeroCheque,
+                banque: encaissementData.banque,
+                numeroTraite: encaissementData.numeroTraite,
+                dateEcheance: encaissementData.dateEcheance
             })
         });
         if (!response.ok) {
@@ -168,7 +174,7 @@ export const createEncaissementClient = async (encaissementData: Partial<Encaiss
 
 export const updateEncaissementClient = async (id: number, encaissementData: Partial<EncaissementClient>): Promise<EncaissementClient> => {
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/updateEncaissement/${id}`, {
+        const response = await fetch(`${API_BASE}/EncaissementClient/updateEncaissement/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -177,8 +183,11 @@ export const updateEncaissementClient = async (id: number, encaissementData: Par
                 modePaiement: encaissementData.modePaiement,
                 numeroEncaissement: encaissementData.numeroEncaissement,
                 date: encaissementData.date,
-                client_id: Number(encaissementData.client_id), // Add this line
-
+                client_id: Number(encaissementData.client_id),
+                numeroCheque: encaissementData.numeroCheque,
+                banque: encaissementData.banque,
+                numeroTraite: encaissementData.numeroTraite,
+                dateEcheance: encaissementData.dateEcheance
             })
         });
         if (!response.ok) {
@@ -193,7 +202,7 @@ export const updateEncaissementClient = async (id: number, encaissementData: Par
 
 export const deleteEncaissementClient = async (id: number): Promise<void> => {
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/${id}`, {
+        const response = await fetch(`${API_BASE}/EncaissementClient/${id}`, {
             method: 'DELETE'
         });
         if (!response.ok) {
@@ -207,7 +216,7 @@ export const deleteEncaissementClient = async (id: number): Promise<void> => {
 
 export const fetchNextEncaissementNumberFromAPI = async (): Promise<string> => {
     try {
-        const response = await fetch(`${API_URL}/EncaissementClient/getNextEncaissementNumber`);
+        const response = await fetch(`${API_BASE}/EncaissementClient/getNextEncaissementNumber`);
         if (!response.ok) throw new Error("Failed to fetch next encaissement number");
         const data = await response.json();
         return data.numeroEncaissement || `ENC-C${new Date().getFullYear()}00001`;
@@ -219,7 +228,7 @@ export const fetchNextEncaissementNumberFromAPI = async (): Promise<string> => {
 
 export const fetchNextFactureNumberFromAPI = async (): Promise<string> => {
     try {
-        const response = await fetch(`${API_URL}/factures-client/getNextFactureNumber`);
+        const response = await fetch(`${API_BASE}/factures-client/getNextFactureNumber`);
         if (!response.ok) throw new Error("Failed to fetch next reception number");
         const data = await response.json();
         return data.numeroFacture;

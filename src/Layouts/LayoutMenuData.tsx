@@ -73,17 +73,10 @@ const Navdata = () => {
             }
         },
         {
-            id: "devise",
-            label: "Devise",
+            id: "devis",
+            label: "Devis",
             icon: "ri-file-text-line",
             link: "/Devis",
-            stateVariables: isDashboard,
-        },
-        {
-            id: "ventecomptoire",
-            label: "Vente Comptoire",
-            icon: "ri-shopping-cart-line",
-            link: "/VenteComptoire",
             stateVariables: isDashboard,
         },
         {
@@ -184,9 +177,22 @@ const Navdata = () => {
             stateVariables: isVente,
             subItems: [
                 {
+                    id: "ventecomptoire",
+                    label: "Vente Comptoire",
+                    icon: "ri-shopping-cart-line",
+                    link: "/VenteComptoire",
+                    parentId: "vente",
+                },
+                {
                     id: "commande-client",
                     label: "Commande Client",
                     link: "/CommandeClient",
+                    parentId: "vente",
+                },
+                {
+                    id: "paimentBonCommande",
+                    label: "Paiment Commande Client",
+                    link: "/paimentBonCommande",
                     parentId: "vente",
                 },
                 {

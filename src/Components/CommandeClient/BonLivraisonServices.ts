@@ -1,14 +1,14 @@
 
 import { BonLivraison } from "../Article/Interfaces";
 
-const API_URL = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 
 // Fetch all client orders
 export const FetchBonLivraison = async (): Promise<BonLivraison[]> => {
     debugger
     try {
-        const response = await fetch(`${API_URL}/bons-livraison/getbonlivraison`);
+        const response = await fetch(`${API_BASE}/bons-livraison/getbonlivraison`);
         if (!response.ok) {
             throw new Error('Failed to fetch client orders');
         }
@@ -21,8 +21,9 @@ export const FetchBonLivraison = async (): Promise<BonLivraison[]> => {
 
 // Create a new client order
 export const createBonLivraison = async (bonLivraison: Omit<BonLivraison, 'id'>): Promise<BonLivraison> => {
+    debugger
     try {
-        const response = await fetch(`${API_URL}/bons-livraison/addbonlivraison`, {
+        const response = await fetch(`${API_BASE}/bons-livraison/addbonlivraison`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -42,7 +43,7 @@ export const createBonLivraison = async (bonLivraison: Omit<BonLivraison, 'id'>)
 export const updateBonLivraison = async (id: number, bonCommande: Partial<BonLivraison>): Promise<BonLivraison> => {
    debugger
     try {
-        const response = await fetch(`${API_URL}/bons-livraison/${id}`, {
+        const response = await fetch(`${API_BASE}/bons-livraison/${id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -62,7 +63,7 @@ export const updateBonLivraison = async (id: number, bonCommande: Partial<BonLiv
 // Delete a client order
 export const deleteBonLivraison = async (id: number): Promise<void> => {
     try {
-        const response = await fetch(`${API_URL}/bons-livraison/${id}`, {
+        const response = await fetch(`${API_BASE}/bons-livraison/${id}`, {
             method: 'DELETE',
         });
         if (!response.ok) {
@@ -76,7 +77,7 @@ export const deleteBonLivraison = async (id: number): Promise<void> => {
 
 
 export const fetchNextLivraisonNumber = async (): Promise<string> => {
-    const response = await fetch(`${API_URL}/bons-livraison/getNextLivraisonNumber`);
+    const response = await fetch(`${API_BASE}/bons-livraison/getNextLivraisonNumber`);
     if (!response.ok) throw new Error("Failed to fetch next livraison number");
     const data = await response.json();
     return data.numeroLivraison;

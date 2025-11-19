@@ -154,7 +154,7 @@ const ClientsList = () => {
     }
   };
 
-  // Form validation
+  // Form validation - ALL FIELDS ARE OPTIONAL
   const validation = useFormik({
     enableReinitialize: true,
     initialValues: {
@@ -171,17 +171,17 @@ const ClientsList = () => {
       status: client?.status || "Actif"
     },
     validationSchema: Yup.object({
-      raison_sociale: Yup.string().required("La raison sociale est obligatoire"),
+      raison_sociale: Yup.string(),
       designation: Yup.string(),
-      matricule_fiscal: Yup.string().required("Le matricule fiscal est obligatoire"),
-      register_commerce: Yup.string().required("Le registre de commerce est obligatoire"),
-      adresse: Yup.string().required("L'adresse est obligatoire"),
-      ville: Yup.string().required("La ville est obligatoire"),
-      code_postal: Yup.string().required("Le code postal est obligatoire"),
-      telephone1: Yup.string().required("Le téléphone 1 est obligatoire"),
+      matricule_fiscal: Yup.string(),
+      register_commerce: Yup.string(),
+      adresse: Yup.string(),
+      ville: Yup.string(),
+      code_postal: Yup.string(),
+      telephone1: Yup.string(),
       telephone2: Yup.string(),
-      email: Yup.string().email("Email invalide").required("L'email est obligatoire"),
-      status: Yup.string().required("Le statut est obligatoire")
+      email: Yup.string().email("Email invalide"),
+      status: Yup.string()
     }),
     onSubmit: handleSubmit
   });
@@ -449,7 +449,7 @@ const ClientsList = () => {
                       <Row>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Raison Sociale*</Label>
+                            <Label className="form-label">Raison Sociale</Label>
                             <Input
                               name="raison_sociale"
                               placeholder="Entrer la raison sociale"
@@ -480,7 +480,7 @@ const ClientsList = () => {
                       <Row>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Matricule Fiscal*</Label>
+                            <Label className="form-label">Matricule Fiscal</Label>
                             <Input
                               name="matricule_fiscal"
                               placeholder="Entrer le matricule fiscal"
@@ -494,7 +494,7 @@ const ClientsList = () => {
                         </Col>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Registre Commerce*</Label>
+                            <Label className="form-label">Registre Commerce</Label>
                             <Input
                               name="register_commerce"
                               placeholder="Entrer le registre de commerce"
@@ -511,7 +511,7 @@ const ClientsList = () => {
                       <Row>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Adresse*</Label>
+                            <Label className="form-label">Adresse</Label>
                             <Input
                               name="adresse"
                               placeholder="Entrer l'adresse"
@@ -525,7 +525,7 @@ const ClientsList = () => {
                         </Col>
                         <Col md={3}>
                           <div className="mb-3">
-                            <Label className="form-label">Ville*</Label>
+                            <Label className="form-label">Ville</Label>
                             <Input
                               name="ville"
                               placeholder="Entrer la ville"
@@ -539,7 +539,7 @@ const ClientsList = () => {
                         </Col>
                         <Col md={3}>
                           <div className="mb-3">
-                            <Label className="form-label">Code Postal*</Label>
+                            <Label className="form-label">Code Postal</Label>
                             <Input
                               name="code_postal"
                               placeholder="Entrer le code postal"
@@ -556,7 +556,7 @@ const ClientsList = () => {
                       <Row>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Téléphone 1*</Label>
+                            <Label className="form-label">Téléphone 1</Label>
                             <Input
                               name="telephone1"
                               placeholder="Entrer le téléphone principal"
@@ -587,7 +587,7 @@ const ClientsList = () => {
                       <Row>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Email*</Label>
+                            <Label className="form-label">Email</Label>
                             <Input
                               name="email"
                               type="email"
@@ -602,7 +602,7 @@ const ClientsList = () => {
                         </Col>
                         <Col md={6}>
                           <div className="mb-3">
-                            <Label className="form-label">Statut*</Label>
+                            <Label className="form-label">Statut</Label>
                             <Input
                               name="status"
                               type="select"

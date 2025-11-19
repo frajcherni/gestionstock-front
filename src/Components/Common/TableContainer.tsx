@@ -187,6 +187,46 @@ const TableContainer = ({
     Number(customPageSize) && setPageSize(Number(customPageSize));
   }, [customPageSize, setPageSize]);
 
+  // Enhanced pagination with limits and ellipsis
+  const getVisiblePages = () => {
+    const totalPages = getPageOptions().length;
+    const currentPage = getState().pagination.pageIndex;
+    const delta = 2; // Number of pages to show on each side of current page
+    const range = [];
+    const rangeWithDots = [];
+
+    for (let i = 0; i < totalPages; i++) {
+      if (
+        i === 0 || // First page
+        i === totalPages - 1 || // Last page
+        (i >= currentPage - delta && i <= currentPage + delta) // Pages around current page
+      ) {
+        range.push(i);
+      }
+    }
+
+    let prev = -1;
+    for (const i of range) {
+      if (prev !== -1 && i - prev !== 1) {
+        rangeWithDots.push('...');
+      }
+      rangeWithDots.push(i);
+      prev = i;
+    }
+
+    return rangeWithDots;
+  };
+
+  // Calculate showing range
+  const getShowingRange = () => {
+    const { pageIndex, pageSize } = getState().pagination;
+    const start = pageIndex * pageSize + 1;
+    const end = Math.min((pageIndex + 1) * pageSize, data.length);
+    return { start, end };
+  };
+
+  const { start, end } = getShowingRange();
+
   return (
     <Fragment>
       {isGlobalFilter && <Row className="mb-3">
@@ -298,25 +338,101 @@ const TableContainer = ({
 
       <Row className="align-items-center mt-2 g-3 text-center text-sm-start">
         <div className="col-sm">
-          <div className="text-muted">Showing<span className="fw-semibold ms-1">{getState().pagination.pageSize}</span> of <span className="fw-semibold">{data.length}</span> Results
+          <div className="text-muted">
+            Showing <span className="fw-semibold">{start}</span> to <span className="fw-semibold">{end}</span> of <span className="fw-semibold">{data.length}</span> Results
           </div>
         </div>
         <div className="col-sm-auto">
           <ul className="pagination pagination-separated pagination-md justify-content-center justify-content-sm-start mb-0">
+            {/* First Page Button */}
+            <li className={!getCanPreviousPage() ? "page-item disabled" : "page-item"}>
+              <Link to="#" className="page-link" onClick={() => setPageIndex(0)} title="First Page">
+                «
+              </Link>
+            </li>
+            
+            {/* Previous Page Button */}
             <li className={!getCanPreviousPage() ? "page-item disabled" : "page-item"}>
               <Link to="#" className="page-link" onClick={previousPage}>Previous</Link>
             </li>
-            {getPageOptions().map((item: any, key: number) => (
+
+            {/* Page Numbers with Ellipsis */}
+            {getVisiblePages().map((page: any, key: number) => (
               <React.Fragment key={key}>
-                <li className="page-item">
-                  <Link to="#" className={getState().pagination.pageIndex === item ? "page-link active" : "page-link"} onClick={() => setPageIndex(item)}>{item + 1}</Link>
-                </li>
+                {page === '...' ? (
+                  <li className="page-item disabled">
+                    <span className="page-link">...</span>
+                  </li>
+                ) : (
+                  <li className="page-item">
+                    <Link 
+                      to="#" 
+                      className={getState().pagination.pageIndex === page ? "page-link active" : "page-link"} 
+                      onClick={() => setPageIndex(page)}
+                    >
+                      {page + 1}
+                    </Link>
+                  </li>
+                )}
               </React.Fragment>
             ))}
+
+            {/* Next Page Button */}
             <li className={!getCanNextPage() ? "page-item disabled" : "page-item"}>
               <Link to="#" className="page-link" onClick={nextPage}>Next</Link>
             </li>
+
+            {/* Last Page Button */}
+            <li className={!getCanNextPage() ? "page-item disabled" : "page-item"}>
+              <Link 
+                to="#" 
+                className="page-link" 
+                onClick={() => setPageIndex(getPageOptions().length - 1)}
+                title="Last Page"
+              >
+                »
+              </Link>
+            </li>
           </ul>
+        </div>
+
+        {/* Page Size Selector */}
+        <div className="col-sm-auto mt-2 mt-sm-0">
+          <select
+            className="form-select form-select-sm"
+            value={getState().pagination.pageSize}
+            onChange={e => {
+              setPageSize(Number(e.target.value));
+            }}
+          >
+            {[10, 25, 50, 100].map(pageSize => (
+              <option key={pageSize} value={pageSize}>
+                Show {pageSize}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Row>
+
+      {/* Quick Jump Input */}
+      <Row className="mt-2">
+        <div className="col-sm-auto">
+          <div className="d-flex align-items-center">
+            <span className="text-muted me-2">Go to page:</span>
+            <input
+              type="number"
+              min="1"
+              max={getPageOptions().length}
+              defaultValue={getState().pagination.pageIndex + 1}
+              onChange={e => {
+                const page = e.target.value ? Number(e.target.value) - 1 : 0;
+                setPageIndex(Math.max(0, Math.min(page, getPageOptions().length - 1)));
+              }}
+              className="form-control form-control-sm"
+              style={{ width: '80px' }}
+            />
+            <span className="text-muted ms-2">of {getPageOptions().length}</span>
+          </div>
         </div>
       </Row>
     </Fragment>

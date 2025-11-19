@@ -62,6 +62,7 @@ const CategoriesList = () => {
 
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
 const [imagePreview, setImagePreview] = useState<string | null>(null);
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 // Image upload handler
 const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -414,7 +415,7 @@ const fetchData = useCallback(async () => {
         {imagePreview || categorie?.image ? (
           <div className="mb-3">
             <img 
-              src={imagePreview || (categorie?.image ? `http://54.37.159.225:5000/${categorie.image.replace(/\\/g, "/")}` : "")}
+              src={imagePreview || (categorie?.image ? `${API_BASE}/${categorie.image.replace(/\\/g, "/")}` : "")}
               alt="Preview" 
               className="img-fluid rounded mb-2"
               style={{ maxHeight: '150px', objectFit: 'cover' }}

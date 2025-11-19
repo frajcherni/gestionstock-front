@@ -44,7 +44,10 @@ const EncaissementClientList = () => {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [selectedFactureId, setSelectedFactureId] = useState<number | null>(factureIdFromUrl ? Number(factureIdFromUrl) : null);
-
+  const [numeroCheque, setNumeroCheque] = useState("");
+  const [banque, setBanque] = useState("");
+  const [numeroTraite, setNumeroTraite] = useState("");
+  const [dateEcheance, setDateEcheance] = useState("");
   // Helper function to calculate final total for a facture (same logic as in facture client)
   const getFactureFinalTotal = useCallback((facture: FactureClient): number => {
     // Use totalTTCAfterRemise if available (from your facture calculation)
@@ -76,7 +79,7 @@ const EncaissementClientList = () => {
     }
     
     // Fix floating point precision
-    return Math.round(finalTotal * 100) / 100;
+    return Math.round(finalTotal * 1000) / 1000;
   }, []);
 
   useEffect(() => {
@@ -178,6 +181,11 @@ const EncaissementClientList = () => {
       setSelectedClient(null);
       setClientSearch("");
       setSelectedFactureId(factureIdFromUrl ? Number(factureIdFromUrl) : null);
+      // Reset cheque and traite fields
+      setNumeroCheque("");
+      setBanque("");
+      setNumeroTraite("");
+      setDateEcheance("");
       validation.resetForm();
     } else {
       setCreateEditModal(true);
@@ -252,7 +260,17 @@ const EncaissementClientList = () => {
         numeroEncaissement: values.numeroEncaissement,
         date: values.date,
         facture_id: isEdit ? encaissement?.facture_id : (selectedFactureId || 0),
-        client_id: clientId || 0
+        client_id: clientId || 0,
+        // Add new fields for cheque
+        ...(values.modePaiement === "Cheque" && {
+          numeroCheque: numeroCheque,
+          banque: banque,
+        }),
+        // Add new fields for traite
+        ...(values.modePaiement === "Traite" && {
+          numeroTraite: numeroTraite,
+          dateEcheance: dateEcheance,
+        }),
       };
   
       console.log("DEBUG - Final encaissement data:", encaissementData);
@@ -267,13 +285,17 @@ const EncaissementClientList = () => {
   
       setCreateEditModal(false);
       setSelectedFactureId(factureIdFromUrl ? Number(factureIdFromUrl) : null);
+      // Reset cheque and traite fields after successful submission
+      setNumeroCheque("");
+      setBanque("");
+      setNumeroTraite("");
+      setDateEcheance("");
       fetchData();
     } catch (err) {
       console.error("DEBUG - Error in handleSubmit:", err);
       toast.error(err instanceof Error ? err.message : "Échec de l'opération");
     }
   };
-  
 
   const validation = useFormik({
     enableReinitialize: true,
@@ -295,7 +317,7 @@ const EncaissementClientList = () => {
 
           if (currentMontant > maxAllowed) {
             return this.createError({
-              message: `Le montant ne peut pas dépasser ${maxAllowed.toFixed(2)} DT (reste à payer)`
+              message: `Le montant ne peut pas dépasser ${maxAllowed.toFixed(3)} DT (reste à payer)`
             });
           }
 
@@ -367,7 +389,7 @@ const EncaissementClientList = () => {
         header: "Montant",
         accessorKey: "montant",
         enableColumnFilter: false,
-        cell: (cell: any) => `${parseFloat(cell.getValue()).toFixed(2)} DT`,
+        cell: (cell: any) => `${parseFloat(cell.getValue()).toFixed(3)} DT`,
       },
       {
         header: "Mode de Paiement",
@@ -391,14 +413,20 @@ const EncaissementClientList = () => {
                 <Link
                   to="#"
                   className="text-primary d-inline-block edit-item-btn"
-                  onClick={() => {
-                    setEncaissement(encaissement);
-                    // Don't set selectedClient for edit mode - we'll use the existing client_id
-                    setSelectedFactureId(encaissement.facture_id || null);
-                    validation.setFieldValue("client_id", encaissement.client_id || 0);
-                    setIsEdit(true);
-                    setCreateEditModal(true);
-                  }}
+              // In the columns action cell, update the edit click handler:
+onClick={() => {
+  setEncaissement(encaissement);
+  // Populate cheque and traite fields for edit mode
+  setNumeroCheque(encaissement.numeroCheque || "");
+  setBanque(encaissement.banque || "");
+  setNumeroTraite(encaissement.numeroTraite || "");
+  setDateEcheance(encaissement.dateEcheance || "");
+  // Don't set selectedClient for edit mode - we'll use the existing client_id
+  setSelectedFactureId(encaissement.facture_id || null);
+  validation.setFieldValue("client_id", encaissement.client_id || 0);
+  setIsEdit(true);
+  setCreateEditModal(true);
+}}
                 >
                   <i className="ri-pencil-fill fs-16"></i>
                 </Link>
@@ -535,216 +563,156 @@ const EncaissementClientList = () => {
                   </ModalHeader>
                   <Form onSubmit={validation.handleSubmit}>
                     <ModalBody style={{ padding: '20px' }}>
-                      {!isEdit && (
-                        <Row>
-                          <Col md={12}>
-                            <div className="mb-3">
-                              <Label>Client*</Label>
-                              <Input
-                                type="text"
-                                placeholder="Rechercher client (min 3 caractères)"
-                                value={selectedClient ? selectedClient.raison_sociale : clientSearch}
-                                onChange={(e) => {
-                                  if (!e.target.value) {
-                                    setSelectedClient(null);
-                                    validation.setFieldValue("client_id", 0);
-                                  }
-                                  setClientSearch(e.target.value);
-                                }}
-                                readOnly={!!selectedClient}
-                              />
-                              {!selectedClient && clientSearch.length >= 3 && (
-                                <div className="search-results mt-2">
-                                  {filteredClients.length > 0 ? (
-                                    <ul className="list-group">
-                                      {filteredClients.map(c => (
-                                        <li
-                                          key={c.id}
-                                          className="list-group-item list-group-item-action"
-                                          onClick={() => {
-                                            setSelectedClient(c);
-                                            validation.setFieldValue("client_id", c.id);
-                                          }}
-                                        >
-                                          {c.raison_sociale}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <div className="text-muted">Aucun résultat trouvé</div>
-                                  )}
-                                </div>
-                              )}
-                              {selectedClient && (
-                                <Button
-                                  color="link"
-                                  size="sm"
-                                  className="mt-1 p-0"
-                                  onClick={() => {
-                                    setSelectedClient(null);
-                                    setClientSearch("");
-                                    validation.setFieldValue("client_id", 0);
-                                  }}
-                                >
-                                  <i className="ri-close-line"></i> Changer de client
-                                </Button>
-                              )}
-                              {validation.touched.client_id && validation.errors.client_id && (
-                                <div className="text-danger">{validation.errors.client_id as string}</div>
-                              )}
-                            </div>
-                          </Col>
-                        </Row>
-                      )}
+                    <Row>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Montant*</Label>
+            <Input
+              type="number"
+              name="montant"
+              value={validation.values.montant}
+              onChange={validation.handleChange}
+              onBlur={validation.handleBlur}
+              invalid={validation.touched.montant && !!validation.errors.montant}
+              step="0.001"
+              min="0.001"
+              max={isEdit && encaissement?.factureClient ? calculateMaxAllowedAmount().amount : undefined}
+            />
+            {validation.touched.montant && validation.errors.montant && (
+              <div className="text-danger">{validation.errors.montant as string}</div>
+            )}
+            {isEdit && encaissement?.factureClient && (
+              <small className="text-muted">
+                Maximum autorisé: {calculateMaxAllowedAmount().amount.toFixed(3)} DT
+                (reste à payer pour la facture {calculateMaxAllowedAmount().factureNumber})
+                {Number(validation.values.montant) > calculateMaxAllowedAmount().amount && (
+                  <span className="text-danger ms-2">
+                    <i className="ri-alert-line me-1"></i>
+                    Le montant dépasse la limite autorisée
+                  </span>
+                )}
+              </small>
+            )}
+          </div>
+        </Col>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Mode de paiement*</Label>
+            <Input
+              type="select"
+              name="modePaiement"
+              value={validation.values.modePaiement}
+              onChange={validation.handleChange}
+              onBlur={validation.handleBlur}
+              invalid={validation.touched.modePaiement && !!validation.errors.modePaiement}
+            >
+              <option value="Espece">En espèces</option>
+              <option value="Cheque">Chèque</option>
+              <option value="Virement">Virement</option>
+              <option value="Traite">Traite</option>
+              <option value="Autre">Autre</option>
+            </Input>
+            {validation.touched.modePaiement && validation.errors.modePaiement && (
+              <div className="text-danger">{validation.errors.modePaiement as string}</div>
+            )}
+          </div>
+        </Col>
+      </Row>
 
-                      {isEdit && encaissement?.factureClient && (
-                        <Row>
-                          <Col md={12}>
-                            <Card className="border border-warning">
-                              <CardBody className="p-3">
-                                <h6 className="text-warning mb-2">
-                                  <i className="ri-information-line me-2"></i>
-                                  Informations de paiement - Facture {encaissement.factureClient.numeroFacture}
-                                </h6>
-                                <div className="row">
-                               
-                           
-                                  <div className="col-6">
-                                    <small className="text-muted">Total Final:</small>
-                                    <p className="mb-1 fw-bold text-primary">
-                                      {calculateMaxAllowedAmount().finalTotal.toFixed(2)} DT
-                                    </p>
-                                  </div>
-                                  <div className="col-6">
-                                    <small className="text-muted">Autres paiements:</small>
-                                    <p className="mb-1 fw-medium">
-                                      {encaissements
-                                        .filter(e => e.facture_id === encaissement.facture_id && e.id !== encaissement.id)
-                                        .reduce((sum, e) => sum + Number(e.montant), 0)
-                                        .toFixed(2)} DT
-                                    </p>
-                                  </div>
-                                  <div className="col-6">
-                                    <small className="text-muted">Paiement actuel:</small>
-                                    <p className="mb-1 fw-medium">{Number(validation.values.montant).toFixed(2)} DT</p>
-                                  </div>
-                                  <div className="col-6">
-                                    <small className="text-muted">Reste à payer:</small>
-                                    <p className="mb-1 fw-medium text-success">
-                                      {(
-                                        calculateMaxAllowedAmount().finalTotal -
-                                        encaissements
-                                          .filter(e => e.facture_id === encaissement.facture_id && e.id !== encaissement.id)
-                                          .reduce((sum, e) => sum + Number(e.montant), 0) -
-                                        Number(validation.values.montant)
-                                      ).toFixed(2)} DT
-                                    </p>
-                                  </div>
-                                  <div className="col-12 mt-2">
-                                    <div className="alert alert-info py-2 mb-0">
-                                      <small>
-                                        <i className="ri-lightbulb-line me-1"></i>
-                                        <strong>Limite de paiement:</strong> Vous pouvez modifier ce paiement jusqu'à {calculateMaxAllowedAmount().amount.toFixed(2)} DT maximum
-                                      </small>
-                                    </div>
-                                  </div>
-                                </div>
-                              </CardBody>
-                            </Card>
-                          </Col>
-                        </Row>
-                      )}
+      {/* Cheque Fields - Conditionally displayed */}
+      {validation.values.modePaiement === "Cheque" && (
+        <Row>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Numéro du chèque*</Label>
+              <Input
+                type="text"
+                value={numeroCheque}
+                onChange={(e) => setNumeroCheque(e.target.value)}
+                placeholder="Saisir le numéro du chèque"
+                required={validation.values.modePaiement === "Cheque"}
+              />
+            </div>
+          </Col>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Banque*</Label>
+              <Input
+                type="text"
+                value={banque}
+                onChange={(e) => setBanque(e.target.value)}
+                placeholder="Nom de la banque"
+                required={validation.values.modePaiement === "Cheque"}
+              />
+            </div>
+          </Col>
+        </Row>
+      )}
 
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Montant*</Label>
-                            <Input
-                              type="number"
-                              name="montant"
-                              value={validation.values.montant}
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              invalid={validation.touched.montant && !!validation.errors.montant}
-                              step="0.01"
-                              min="0.01"
-                              max={isEdit && encaissement?.factureClient ? calculateMaxAllowedAmount().amount : undefined}
-                            />
-                            {validation.touched.montant && validation.errors.montant && (
-                              <div className="text-danger">{validation.errors.montant as string}</div>
-                            )}
-                            {isEdit && encaissement?.factureClient && (
-                              <small className="text-muted">
-                                Maximum autorisé: {calculateMaxAllowedAmount().amount.toFixed(2)} DT
-                                (reste à payer pour la facture {calculateMaxAllowedAmount().factureNumber})
-                                {Number(validation.values.montant) > calculateMaxAllowedAmount().amount && (
-                                  <span className="text-danger ms-2">
-                                    <i className="ri-alert-line me-1"></i>
-                                    Le montant dépasse la limite autorisée
-                                  </span>
-                                )}
-                              </small>
-                            )}
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Mode de paiement*</Label>
-                            <Input
-                              type="select"
-                              name="modePaiement"
-                              value={validation.values.modePaiement}
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              invalid={validation.touched.modePaiement && !!validation.errors.modePaiement}
-                            >
-                              <option value="Espece">En espèces</option>
-                              <option value="Cheque">Chèque</option>
-                              <option value="Virement">Virement</option>
-                              <option value="Traite">Traite</option>
-                              <option value="Autre">Autre</option>
-                            </Input>
-                            {validation.touched.modePaiement && validation.errors.modePaiement && (
-                              <div className="text-danger">{validation.errors.modePaiement as string}</div>
-                            )}
-                          </div>
-                        </Col>
-                      </Row>
+      {/* Traite Fields - Conditionally displayed */}
+      {validation.values.modePaiement === "Traite" && (
+        <Row>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Numéro de traite*</Label>
+              <Input
+                type="text"
+                value={numeroTraite}
+                onChange={(e) => setNumeroTraite(e.target.value)}
+                placeholder="Saisir le numéro de traite"
+                required={validation.values.modePaiement === "Traite"}
+              />
+            </div>
+          </Col>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Date d'échéance*</Label>
+              <Input
+                type="date"
+                value={dateEcheance}
+                onChange={(e) => setDateEcheance(e.target.value)}
+                min={validation.values.date} // Can't be before encaissement date
+                required={validation.values.modePaiement === "Traite"}
+              />
+            </div>
+          </Col>
+        </Row>
+      )}
 
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Numéro d'encaissement*</Label>
-                            <Input
-                              type="text"
-                              name="numeroEncaissement"
-                              value={validation.values.numeroEncaissement}
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              invalid={validation.touched.numeroEncaissement && !!validation.errors.numeroEncaissement}
-                            />
-                            {validation.touched.numeroEncaissement && validation.errors.numeroEncaissement && (
-                              <div className="text-danger">{validation.errors.numeroEncaissement as string}</div>
-                            )}
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Date*</Label>
-                            <Input
-                              type="date"
-                              name="date"
-                              value={validation.values.date}
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              invalid={validation.touched.date && !!validation.errors.date}
-                            />
-                            {validation.touched.date && validation.errors.date && (
-                              <div className="text-danger">{validation.errors.date as string}</div>
-                            )}
-                          </div>
-                        </Col>
-                      </Row>
+      <Row>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Numéro d'encaissement*</Label>
+            <Input
+              type="text"
+              name="numeroEncaissement"
+              value={validation.values.numeroEncaissement}
+              onChange={validation.handleChange}
+              onBlur={validation.handleBlur}
+              invalid={validation.touched.numeroEncaissement && !!validation.errors.numeroEncaissement}
+            />
+            {validation.touched.numeroEncaissement && validation.errors.numeroEncaissement && (
+              <div className="text-danger">{validation.errors.numeroEncaissement as string}</div>
+            )}
+          </div>
+        </Col>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Date*</Label>
+            <Input
+              type="date"
+              name="date"
+              value={validation.values.date}
+              onChange={validation.handleChange}
+              onBlur={validation.handleBlur}
+              invalid={validation.touched.date && !!validation.errors.date}
+            />
+            {validation.touched.date && validation.errors.date && (
+              <div className="text-danger">{validation.errors.date as string}</div>
+            )}
+          </div>
+        </Col>
+      </Row>
                     </ModalBody>
                     <ModalFooter>
                       <Button color="light" onClick={toggleCreateEditModal}>

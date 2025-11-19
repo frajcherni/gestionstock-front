@@ -1,7 +1,7 @@
 // BonsCommande CRUD Service
 import { BonCommande } from "../Article/Interfaces";
 
-const API_BASE = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 // ✅ GET all bons de commande
 export const fetchBonsCommande = async (): Promise<BonCommande[]> => {

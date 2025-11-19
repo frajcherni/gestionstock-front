@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import { Link } from 'react-router-dom';
 import { Col, Collapse, Row } from 'reactstrap';
 import withRouter from '../../Components/Common/withRouter';
-
+import './HorizontalLayout.css'
 // Import Data
 import navdata from "../LayoutMenuData";
 //i18n

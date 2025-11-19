@@ -11,10 +11,12 @@ import { loginSuccess, logoutUserSuccess, apiError, reset_login_flag } from './r
 
 import axios from "axios";
 
+const API_BASE = process.env.REACT_APP_API_BASE;
+
 export const loginUser = (user: any, history: any) => async (dispatch: any) => {
   try {
 debugger
-    const response : any = await axios.post('http://54.37.159.225:5000/api/auth/login', {
+    const response : any = await axios.post(`${API_BASE}/auth/login`, {
       username: user.username,
       password: user.password,
     });

@@ -6,8 +6,8 @@ import {
   Vendeur
 } from "./Interfaces";
 
-const API_BASE = "http://54.37.159.225:5000/api";
 
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 
 // Add to your ArticleServices.ts
@@ -281,7 +281,7 @@ export const deleteCategorie = async (id: number): Promise<void> => {
 // ******************************* //
 
 export const fetchFournisseurs = async (): Promise<Fournisseur[]> => {
-  const response = await fetch('http://54.37.159.225:5000/api/fournisseurs/getfournisseur');
+  const response = await fetch(`${API_BASE}/fournisseurs/getfournisseur`);
   if (!response.ok) throw new Error("Failed to fetch fournisseurs");
   return response.json();
 };
@@ -384,7 +384,7 @@ export const createVendeur = async (client: Omit<Vendeur, "id" | "createdAt" | "
         },
         body: JSON.stringify(client),
     });
-    if (!response.ok) throw new Error("Échec de la création du client");
+    if (!response.ok) throw new Error("Échec de la création du vendeur");
     return response.json();
 };
 
@@ -396,13 +396,14 @@ export const updateVendeur = async (id: number, client: Partial<Vendeur>): Promi
         },
         body: JSON.stringify(client),
     });
-    if (!response.ok) throw new Error("Échec de la mise à jour du client");
+    if (!response.ok) throw new Error("Échec de la mise à jour du vendeur");
     return response.json();
 };
 
 export const deleteVendeur = async (id: number): Promise<void> => {
+  debugger
     const response = await fetch(`${API_BASE}/vendeurs/deletevendeur/${id}`, {
         method: "DELETE",
     });
-    if (!response.ok) throw new Error("Échec de la suppression du client");
+    if (!response.ok) throw new Error("Échec de la suppression du vendeur");
 };

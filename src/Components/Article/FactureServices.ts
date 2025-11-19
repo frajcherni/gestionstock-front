@@ -1,7 +1,7 @@
 import axios from "axios";
 import { FactureFournisseur, Payment } from "./Interfaces";
 
-const API_BASE = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 // ----------------- Factures -----------------
 

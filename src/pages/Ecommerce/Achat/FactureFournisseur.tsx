@@ -50,25 +50,34 @@ const FactureList = () => {
     const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
     const [filteredFournisseurs, setFilteredFournisseurs] = useState<Fournisseur[]>([]);
     const [showRemise, setShowRemise] = useState(false);
-
+// Add these states near your other useState declarations
+const [editingTTC, setEditingTTC] = useState<{ [key: number]: string }>({});
+const [editingHT, setEditingHT] = useState<{ [key: number]: string }>({});
     //
     const { userProfile, loading: profileLoading } = useProfile();
-
-
     const [nextFactureNumber, setNextFactureNumber] = useState("");
     const [selectedArticles, setSelectedArticles] = useState<{
         article_id: number;
-        quantite: number;
+        quantite: number | ""; // Allow empty string
         prixUnitaire: number;
+        prixTTC: number; // Add this field
         tva?: number | null;
         remise?: number | null;
         articleDetails?: Article;
-    }[]>([]);
+      }[]>([]);
+     
+      const parseNumericInput = (value: string): number => {
+        if (!value || value === "") return 0;
+        const cleanValue = value.replace(",", ".");
+        const numericValue = parseFloat(cleanValue);
+        return isNaN(numericValue) ? 0 : Math.round(numericValue * 1000) / 1000;
+      };
+   
+      
     const [remiseType, setRemiseType] = useState<"percentage" | "fixed">("percentage");
     const [globalRemise, setGlobalRemise] = useState<number>(0);
     const [taxMode, setTaxMode] = useState<"HT" | "TTC">("HT");
     const [timbreFiscal, setTimbreFiscal] = useState<boolean>(false);
-
     const tvaOptions = [
         { value: null, label: "Non applicable" },
         { value: 0, label: "0% (Exonéré)" },
@@ -78,10 +87,8 @@ const FactureList = () => {
         { value: 19, label: "19%" },
         { value: 21, label: "21%" }
     ];
-
     const [pdfModal, setPdfModal] = useState(false);
     const [selectedFactureForPdf, setSelectedFactureForPdf] = useState<FactureFournisseur | null>(null);
-
     const companyInfo = useMemo(() => ({
         name: userProfile?.company_name ,
         address: userProfile?.company_address ,
@@ -92,12 +99,10 @@ const FactureList = () => {
         taxId: userProfile?.company_tax_id,
         logo: logo,
     }), [userProfile]);
-
     const openPdfModal = (facture: FactureFournisseur) => {
         setSelectedFactureForPdf(facture);
         setPdfModal(true);
     };
-
     useEffect(() => {
         const fetchNextNumber = async () => {
             try {
@@ -110,12 +115,10 @@ const FactureList = () => {
                 setNextFactureNumber(defaultNumber);
             }
         };
-
         if (!isEdit) {
             fetchNextNumber();
         }
     }, [isEdit, factures.length]);
-
     useEffect(() => {
         const fetchNextPaymentNumber = async () => {
             try {
@@ -128,22 +131,34 @@ const FactureList = () => {
                 setNextPaymentNumber(defaultNumber);
             }
         };
-
         fetchNextPaymentNumber();
     }, []);
-
-    useEffect(() => {
-        if (articleSearch.length >= 3) {
-            const filtered = articles.filter(article =>
-                article.nom.toLowerCase().includes(articleSearch.toLowerCase()) ||
-                article.reference.toLowerCase().includes(articleSearch.toLowerCase())
-            );
-            setFilteredArticles(filtered);
-        } else {
-            setFilteredArticles([]);
-        }
-    }, [articleSearch, articles]);
-
+   // Fix the article search useEffect
+useEffect(() => {
+    if (articleSearch.length >= 3) {
+      const filtered = articles.filter(
+        (article) =>
+          (article.designation?.toLowerCase() || "").includes(articleSearch.toLowerCase()) ||
+          (article.reference?.toLowerCase() || "").includes(articleSearch.toLowerCase())
+      );
+      setFilteredArticles(filtered);
+    } else {
+      setFilteredArticles([]);
+    }
+  }, [articleSearch, articles]);
+ 
+  // Fix the fournisseur search useEffect
+  useEffect(() => {
+    if (fournisseurSearch.length >= 3) {
+      const filtered = fournisseurs.filter(
+        (fournisseur) =>
+          (fournisseur.raison_sociale?.toLowerCase() || "").includes(fournisseurSearch.toLowerCase())
+      );
+      setFilteredFournisseurs(filtered);
+    } else {
+      setFilteredFournisseurs([]);
+    }
+  }, [fournisseurSearch, fournisseurs]);
     useEffect(() => {
         if (fournisseurSearch.length >= 3) {
             const filtered = fournisseurs.filter(fournisseur =>
@@ -154,7 +169,6 @@ const FactureList = () => {
             setFilteredFournisseurs([]);
         }
     }, [fournisseurSearch, fournisseurs]);
-
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
@@ -164,12 +178,12 @@ const FactureList = () => {
                 fetchArticles(),
                 fetchPayments()
             ]);
-    
+   
             const facturesWithCalculatedPayments = facturesData.map(facture => {
                 const relevantPayments = paymentsData.filter(payment =>
                     payment.factureFournisseur && payment.factureFournisseur.id === facture.id
                 );
-    
+   
                 const totalPayments = relevantPayments.reduce((sum, payment) => {
                     let paymentAmount: number;
                     if (typeof payment.montant === 'string') {
@@ -179,30 +193,31 @@ const FactureList = () => {
                     }
                     return sum + paymentAmount;
                 }, 0);
-    
+   
                 let status: "Brouillon" | "Validee" | "Payee" | "Annulee" | "Partiellement Payee" = facture.status;
                 let subTotal = 0;
                 let totalTax = 0;
                 let grandTotal = 0;
-    
+   
                 facture.articles.forEach(item => {
                     const qty = Number(item.quantite) || 1;
-                    const price = Number(item.prixUnitaire) || 0;
+                    const priceHT = Number(item.prixUnitaire) || 0;
                     const tvaRate = Number(item.tva ?? 0);
                     const remiseRate = Number(item.remise || 0);
-    
-                    const montantHTLigne = qty * price * (1 - (remiseRate / 100));
-                    const montantTTCLigne = montantHTLigne * (1 + (tvaRate / 100));
-                    const taxAmount = montantTTCLigne - montantHTLigne;
-    
+                    const priceTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
+   
+                    const montantHTLigne = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
+                    const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
+                    const taxAmount = Math.round((montantTTCLigne - montantHTLigne) * 1000) / 1000;
+   
                     subTotal += montantHTLigne;
                     totalTax += taxAmount;
                     grandTotal += montantTTCLigne;
                 });
-    
+   
                 let finalTotal = grandTotal;
                 const hasDiscount = facture.remise && Number(facture.remise) > 0;
-                
+               
                 if (hasDiscount) {
                     if (facture.remiseType === "percentage") {
                         finalTotal = grandTotal * (1 - Number(facture.remise) / 100);
@@ -210,7 +225,7 @@ const FactureList = () => {
                         finalTotal = Number(facture.remise);
                     }
                 }
-                
+               
                 if (facture.timbreFiscal) {
                     if (hasDiscount) {
                         finalTotal += 1;
@@ -219,28 +234,27 @@ const FactureList = () => {
                         finalTotal = grandTotal;
                     }
                 }
-    
-                let resteAPayer = finalTotal - totalPayments;
-                
+   
                 // Fix floating point issues
-                subTotal = Math.round(subTotal * 100) / 100;
-                totalTax = Math.round(totalTax * 100) / 100;
-                grandTotal = Math.round(grandTotal * 100) / 100;
-                finalTotal = Math.round(finalTotal * 100) / 100;
-                resteAPayer = Math.round(resteAPayer * 100) / 100;
-                
+                subTotal = Math.round(subTotal * 1000) / 1000;
+                totalTax = Math.round(totalTax * 1000) / 1000;
+                grandTotal = Math.round(grandTotal * 1000) / 1000;
+                finalTotal = Math.round(finalTotal * 1000) / 1000;
+               
+                let resteAPayer = Math.round((finalTotal - totalPayments) * 1000) / 1000;
+               
                 // Ensure no negative values
                 resteAPayer = Math.max(0, resteAPayer);
-    
+   
                 // Update status logic
                 if (facture.status === "Annulee") {
                     status = "Annulee";
-                } else if (resteAPayer === 0 && finalTotal > 0) {
+                } else if (Math.abs(resteAPayer) < 0.001 && finalTotal > 0) {
                     status = "Payee";
                 } else if (totalPayments > 0 && totalPayments < finalTotal) {
                     status = "Partiellement Payee";
                 }
-    
+   
                 return {
                     ...facture,
                     totalHT: subTotal,
@@ -253,7 +267,7 @@ const FactureList = () => {
                     hasPayments: totalPayments > 0
                 };
             });
-    
+   
             setFactures(facturesWithCalculatedPayments);
             setFilteredFactures(facturesWithCalculatedPayments);
             setFournisseurs(fournisseursData);
@@ -264,16 +278,12 @@ const FactureList = () => {
             setLoading(false);
         }
     }, []);
-
     useEffect(() => {
         fetchData();
     }, [fetchData]);
-
-    
-
+   
     useEffect(() => {
         let result = [...factures];
-
         if (activeTab === "2") {
             result = result.filter(facture => facture.status === "Brouillon");
         } else if (activeTab === "3") {
@@ -283,7 +293,6 @@ const FactureList = () => {
         } else if (activeTab === "5") {
             result = result.filter(facture => facture.status === "Annulee");
         }
-
         if (startDate && endDate) {
             const start = moment(startDate).startOf('day');
             const end = moment(endDate).endOf('day');
@@ -292,7 +301,6 @@ const FactureList = () => {
                 return factureDate.isBetween(start, end, null, '[]');
             });
         }
-
         if (searchText) {
             const searchLower = searchText.toLowerCase();
             result = result.filter(facture =>
@@ -300,94 +308,223 @@ const FactureList = () => {
                 (facture.fournisseur?.raison_sociale && facture.fournisseur.raison_sociale.toLowerCase().includes(searchLower))
             );
         }
-
         setFilteredFactures(result);
     }, [activeTab, startDate, endDate, searchText, factures]);
-
-    const { subTotal, totalTax, grandTotal, finalTotal } = useMemo(() => {
-        if (selectedArticles.length === 0) {
-            return {
-                subTotal: "0",
-                totalTax: "0",
-                grandTotal: "0",
-                finalTotal: "0"
-            };
+      // Replace the current useMemo calculation with this:
+const { sousTotalHT, netHT, totalTax, grandTotal, finalTotal, discountAmount } = useMemo(() => {
+    if (selectedArticles.length === 0) {
+      return {
+        sousTotalHT: 0,
+        netHT: 0,
+        totalTax: 0,
+        grandTotal: 0,
+        finalTotal: 0,
+        discountAmount: 0,
+      };
+    }
+ 
+    let sousTotalHTValue = 0;
+    let netHTValue = 0;
+    let totalTaxValue = 0;
+    let grandTotalValue = 0;
+ 
+    // Calculate initial totals with proper rounding
+    selectedArticles.forEach((article) => {
+      const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
+      const tvaRate = Number(article.tva) || 0;
+      const remiseRate = Number(article.remise) || 0;
+     
+      let priceHT = Number(article.prixUnitaire) || 0;
+      let priceTTC = Number(article.prixTTC) || 0;
+     
+      if (editingHT[article.article_id] !== undefined) {
+        const editingValue = parseNumericInput(editingHT[article.article_id]);
+        if (!isNaN(editingValue) && editingValue >= 0) {
+          priceHT = parseFloat(editingValue.toFixed(3));
+          const tvaAmount = tvaRate > 0 ? parseFloat(((priceHT * tvaRate) / 100).toFixed(3)) : 0;
+          priceTTC = parseFloat((priceHT + tvaAmount).toFixed(3));
         }
-    
-        let subTotalValue = 0;
-        let totalTaxValue = 0;
-        let grandTotalValue = 0;
-    
-        selectedArticles.forEach(article => {
-            const qty = Number(article.quantite) || 1;
-            const price = Number(article.prixUnitaire) || 0;
-            const tvaRate = Number(article.tva ?? 0);
-            const remiseRate = Number(article.remise || 0);
-    
-            const montantHTLigne = qty * price * (1 - (remiseRate / 100));
-            const montantTTCLigne = montantHTLigne * (1 + (tvaRate / 100));
-            const taxAmount = montantTTCLigne - montantHTLigne;
-    
-            subTotalValue += montantHTLigne;
-            totalTaxValue += taxAmount;
-            grandTotalValue += montantTTCLigne;
-        });
-    
-        let finalTotalValue = grandTotalValue;
-        
-        // Apply global discount if any
-        if (showRemise && Number(globalRemise) > 0) {
-            if (remiseType === "percentage") {
-                finalTotalValue = grandTotalValue * (1 - (Number(globalRemise) / 100));
-            } else {
-                finalTotalValue = Number(globalRemise);
-            }
+      } else if (editingTTC[article.article_id] !== undefined) {
+        const editingValue = parseNumericInput(editingTTC[article.article_id]);
+        if (!isNaN(editingValue) && editingValue >= 0) {
+          priceTTC = parseFloat(editingValue.toFixed(3));
+          if (tvaRate > 0) {
+            const coefficient = 1 + tvaRate / 100;
+            priceHT = parseFloat((priceTTC / coefficient).toFixed(3));
+          } else {
+            priceHT = priceTTC;
+          }
         }
-        
-        // Add timbre fiscal to the appropriate total
-        if (timbreFiscal) {
-            if (showRemise && globalRemise > 0) {
-                // If there's a discount, add timbre to final total (after discount)
-                finalTotalValue += 1;
-            } else {
-                // If no discount, add timbre to grand total
-                grandTotalValue += 1;
-                finalTotalValue = grandTotalValue; // Update final total to include timbre
-            }
-        }
-    
-        return {
-            subTotal: subTotalValue.toFixed(2),
-            totalTax: totalTaxValue.toFixed(2),
-            grandTotal: grandTotalValue.toFixed(2),
-            finalTotal: finalTotalValue.toFixed(2)
-        };
-    }, [selectedArticles, showRemise, globalRemise, remiseType, timbreFiscal]);
-
-    const handleAddArticle = (articleId: string) => {
-        const article = articles.find(a => a.id === parseInt(articleId));
-        if (article && !selectedArticles.some(item => item.article_id === article.id)) {
-            setSelectedArticles([...selectedArticles, {
-                article_id: article.id,
-                quantite: 0,
-                prixUnitaire: article.pua_ht || 0,
-                tva: article.tva ?? null,
-                remise: 0,
-                articleDetails: article
-            }]);
-        }
+      }
+     
+      // Calculate line amounts
+      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
+      const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
+      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
+      const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
+ 
+      sousTotalHTValue += montantSousTotalHT;
+      netHTValue += montantNetHT;
+      totalTaxValue += montantTVA;
+      grandTotalValue += montantTTCLigne;
+    });
+ 
+    // Round accumulated values
+    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
+    netHTValue = Math.round(netHTValue * 1000) / 1000;
+    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
+ 
+    let finalTotalValue = grandTotalValue;
+    let discountAmountValue = 0;
+    let netHTAfterDiscount = netHTValue;
+    let totalTaxAfterDiscount = totalTaxValue;
+ 
+    // Apply remise logic with proper rounding
+    if (showRemise && Number(globalRemise) > 0) {
+      if (remiseType === "percentage") {
+        discountAmountValue = Math.round(netHTValue * (Number(globalRemise) / 100) * 1000) / 1000;
+        netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
+       
+        const discountRatio = netHTAfterDiscount / netHTValue;
+        totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
+       
+        finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
+       
+      } else if (remiseType === "fixed") {
+        finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
+       
+        const tvaToHtRatio = totalTaxValue / netHTValue;
+        const htAfterDiscount = Math.round(finalTotalValue / (1 + tvaToHtRatio) * 1000) / 1000;
+       
+        discountAmountValue = Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
+        netHTAfterDiscount = htAfterDiscount;
+        totalTaxAfterDiscount = Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+      }
+    }
+ 
+    // Add timbre fiscal
+    if (timbreFiscal) {
+      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+    }
+ 
+    // Use discounted values for final display
+    const displayNetHT = showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
+    const displayTotalTax = showRemise && Number(globalRemise) > 0 ? totalTaxAfterDiscount : totalTaxValue;
+ 
+    return {
+      sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
+      netHT: Math.round(displayNetHT * 1000) / 1000,
+      totalTax: Math.round(displayTotalTax * 1000) / 1000,
+      grandTotal: Math.round(grandTotalValue * 1000) / 1000,
+      finalTotal: Math.round(finalTotalValue * 1000) / 1000,
+      discountAmount: Math.round(discountAmountValue * 1000) / 1000,
     };
-
+  }, [selectedArticles, showRemise, globalRemise, remiseType, timbreFiscal, editingHT, editingTTC]);
+  const handleAddArticle = (articleId: string) => {
+    const article = articles.find(a => a.id === parseInt(articleId));
+    if (article && !selectedArticles.some(item => item.article_id === article.id)) {
+      const initialHT = article.pua_ht || 0;
+      const initialTVA = article.tva || 0;
+      const initialTTC = article.pua_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+ 
+      setSelectedArticles([
+        ...selectedArticles,
+        {
+          article_id: article.id,
+          quantite: "", // Start with empty instead of 0
+          prixUnitaire: initialHT,
+          prixTTC: Math.round(initialTTC * 1000) / 1000, // Ensure proper rounding
+          tva: initialTVA,
+          remise: 0,
+          articleDetails: article
+        }
+      ]);
+    }
+  };
     const handleRemoveArticle = (articleId: number) => {
         setSelectedArticles(selectedArticles.filter(item => item.article_id !== articleId));
     };
-
     const handleArticleChange = (articleId: number, field: string, value: any) => {
-        setSelectedArticles(selectedArticles.map(item =>
-            item.article_id === articleId ? { ...item, [field]: value } : item
-        ));
-    };
-
+        setSelectedArticles(prevArticles =>
+          prevArticles.map((item) => {
+            if (item.article_id === articleId) {
+              const updatedItem = { ...item, [field]: value };
+             
+              // Recalculate HT when TVA changes
+              if (field === "tva") {
+                const currentTTC = item.prixTTC;
+                const newTVA = value === "" ? 0 : Number(value);
+               
+                let newPriceHT = currentTTC;
+                if (newTVA > 0) {
+                  newPriceHT = currentTTC / (1 + newTVA / 100);
+                }
+               
+                // Use proper rounding
+                updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
+               
+                // Clear any editing states to use the new calculated values
+                setEditingHT((prev) => {
+                  const newState = { ...prev };
+                  delete newState[articleId];
+                  return newState;
+                });
+                setEditingTTC((prev) => {
+                  const newState = { ...prev };
+                  delete newState[articleId];
+                  return newState;
+                });
+              }
+             
+              // Recalculate TTC when HT changes
+              if (field === "prixUnitaire") {
+                const currentHT = value;
+                const currentTVA = item.tva || 0;
+               
+                let newPriceTTC = Number(currentHT);
+                if (currentTVA > 0) {
+                  newPriceTTC = Number(currentHT) * (1 + currentTVA / 100);
+                }
+               
+                // Use proper rounding
+                updatedItem.prixTTC = Math.round(newPriceTTC * 1000) / 1000;
+              }
+             
+              // Recalculate HT when TTC changes
+              if (field === "prixTTC") {
+                const currentTTC = value;
+                const currentTVA = item.tva || 0;
+               
+                let newPriceHT = Number(currentTTC);
+                if (currentTVA > 0) {
+                  newPriceHT = Number(currentTTC) / (1 + currentTVA / 100);
+                }
+               
+                // Use proper rounding
+                updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
+              }
+             
+              return updatedItem;
+            }
+            return item;
+          })
+        );
+       
+        // Keep the existing code for resetting editing states when TVA changes
+        if (field === "tva") {
+          setEditingHT((prev) => {
+            const newState = { ...prev };
+            delete newState[articleId];
+            return newState;
+          });
+          setEditingTTC((prev) => {
+            const newState = { ...prev };
+            delete newState[articleId];
+            return newState;
+          });
+        }
+      };
     const toggleCreateEditModal = useCallback(() => {
         if (createEditModal) {
             setCreateEditModal(false);
@@ -403,7 +540,6 @@ const FactureList = () => {
             setCreateEditModal(true);
         }
     }, [createEditModal]);
-
     const handleSubmit = async (values: any) => {
         try {
             const factureData = {
@@ -416,15 +552,15 @@ const FactureList = () => {
                     article_id: item.article_id,
                     quantite: item.quantite,
                     prix_unitaire: item.prixUnitaire,
+                    prix_ttc: item.prixTTC,
                     tva: item.tva,
                     remise: item.remise
                 })),
-                totalHT: subTotal,
+               // totalHT: subTotal,
                 totalTVA: totalTax,
                 totalTTC: Number(grandTotal),
                 timbreFiscal: timbreFiscal
             };
-
             if (isEdit && facture) {
                 await updateFacture(facture.id, factureData);
                 toast.success("Facture mise à jour avec succès");
@@ -432,14 +568,12 @@ const FactureList = () => {
                 await createFacture(factureData);
                 toast.success("Facture créée avec succès");
             }
-
             setCreateEditModal(false);
             fetchData();
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Échec de l'opération");
         }
     };
-
     const validation = useFormik({
         enableReinitialize: true,
         initialValues: {
@@ -465,23 +599,21 @@ const FactureList = () => {
         }),
         onSubmit: handleSubmit
     });
-
     const openDetailModal = (facture: FactureFournisseur) => {
         setSelectedFacture(facture);
         setDetailModal(true);
     };
-
     const openPaymentModal = async (facture: FactureFournisseur) => {
         setSelectedFacture(facture);
         setPaymentModal(true);
-    
+   
         try {
             const nextNumber = await fetchNextPaymentNumberFromAPI();
             setNextPaymentNumber(nextNumber);
-            
+           
             // Reset form with current values
             setTimeout(() => {
-                const initialMontant = facture.resteAPayer.toFixed(2).replace('.', ',');
+                const initialMontant = facture.resteAPayer.toFixed(3).replace('.', ',');
                 paymentValidation.setValues({
                     montant: initialMontant,
                     modePaiement: "Espece",
@@ -492,7 +624,7 @@ const FactureList = () => {
         } catch (err) {
             console.error("Failed to fetch next payment number:", err);
             setTimeout(() => {
-                const initialMontant = facture.resteAPayer.toFixed(2).replace('.', ',');
+                const initialMontant = facture.resteAPayer.toFixed(3).replace('.', ',');
                 paymentValidation.setValues({
                     montant: initialMontant,
                     modePaiement: "Espece",
@@ -502,10 +634,8 @@ const FactureList = () => {
             }, 100);
         }
     };
-
     const handleDelete = async () => {
         if (!facture) return;
-
         try {
             await deleteFacture(facture.id);
             setDeleteModal(false);
@@ -515,7 +645,6 @@ const FactureList = () => {
             toast.error(err instanceof Error ? err.message : "Échec de la suppression");
         }
     };
-
     const handleAnnuler = async (factureId: number) => {
         try {
             await updateFacture(factureId, { status: "Annulee" });
@@ -525,29 +654,27 @@ const FactureList = () => {
             toast.error(err instanceof Error ? err.message : "Échec de l'annulation");
         }
     };
-
-     
-
+    
     const handlePaymentSubmit = async (values: any) => {
         if (!selectedFacture) return;
-    
+   
         if (selectedFacture.status === "Payee" || selectedFacture.status === "Annulee") {
             toast.error("Impossible d'ajouter un paiement pour une facture payée ou annulée.");
             return;
         }
-    
+   
         // values.montant is now already converted to number in the onSubmit
         const paymentAmount = values.montant;
-        
+       
         // Fix floating point comparison
-        const roundedAmount = Math.round(paymentAmount * 100) / 100;
-        const roundedReste = Math.round(selectedFacture.resteAPayer * 100) / 100;
-        
+        const roundedAmount = Math.round(paymentAmount * 1000) / 1000;
+        const roundedReste = Math.round(selectedFacture.resteAPayer * 1000) / 1000;
+       
         if (roundedAmount > roundedReste) {
             toast.error("Le montant du paiement ne peut pas dépasser le reste à payer.");
             return;
         }
-    
+   
         try {
             const paymentData = {
                 facture_id: selectedFacture.id,
@@ -556,7 +683,7 @@ const FactureList = () => {
                 numeroPaiement: values.numeroPaiement,
                 date: values.date,
             };
-    
+   
             await createPayment(paymentData);
             setPaymentModal(false);
             fetchData();
@@ -565,11 +692,11 @@ const FactureList = () => {
             toast.error(err instanceof Error ? err.message : "Échec de l'enregistrement du paiement");
         }
     };
-    
+   
     const paymentValidation = useFormik({
         enableReinitialize: true,
         initialValues: {
-            montant: "0,00",
+            montant: "0,000",
             modePaiement: "Espece",
             numeroPaiement: nextPaymentNumber,
             date: moment().format("YYYY-MM-DD")
@@ -578,7 +705,7 @@ const FactureList = () => {
             montant: Yup.string()
                 .test('is-valid-amount', "Le montant doit être un nombre valide", function (value) {
                     if (!value) return false;
-                    
+                   
                     // Replace comma with dot for validation
                     const numericValue = parseFloat(value.replace(',', '.'));
                     return !isNaN(numericValue) && numericValue > 0;
@@ -586,17 +713,17 @@ const FactureList = () => {
                 .test('min-amount', "Le montant doit être supérieur à 0", function (value) {
                     if (!value) return false;
                     const numericValue = parseFloat(value.replace(',', '.'));
-                    return numericValue >= 0.01;
+                    return numericValue >= 0.001;
                 })
                 .test('max-reste', "Le montant ne peut pas dépasser le reste à payer", function (value) {
                     if (!value) return false;
                     const numericValue = parseFloat(value.replace(',', '.'));
                     const reste = selectedFacture?.resteAPayer || 0;
-                    
-                    // Round both values to 2 decimal places for precise comparison
-                    const roundedValue = Math.round(numericValue * 100) / 100;
-                    const roundedReste = Math.round(reste * 100) / 100;
-                    
+                   
+                    // Round both values to 3 decimal places for precise comparison
+                    const roundedValue = Math.round(numericValue * 1000) / 1000;
+                    const roundedReste = Math.round(reste * 1000) / 1000;
+                   
                     return roundedValue <= roundedReste;
                 })
                 .required("Le montant est requis"),
@@ -613,16 +740,27 @@ const FactureList = () => {
             });
         }
     });
-    
+    // Add these helper functions at the top of your component
+const formatForDisplay = (value: number | string | undefined | null): string => {
+    if (value === undefined || value === null) return "0,000";
+   
+    const numericValue = typeof value === "string" ? parseFloat(value.replace(",", ".")) : Number(value);
+   
+    if (isNaN(numericValue)) return "0,000";
+   
+    return numericValue.toFixed(3).replace(".", ",");
+  };
+ 
+ 
     // Custom handler for montant field
     const handleMontantChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         let value = e.target.value;
-        
+       
         // Allow only numbers, one comma, or one dot
         if (value === '' || /^[0-9]*[,.]?[0-9]*$/.test(value)) {
             // Replace dot with comma for consistent display
             value = value.replace('.', ',');
-            
+           
             // Allow only one comma
             const commaCount = (value.match(/,/g) || []).length;
             if (commaCount <= 1) {
@@ -630,40 +768,41 @@ const FactureList = () => {
             }
         }
     };
-    
+   
     const handleMontantBlur = (e: React.FocusEvent<HTMLInputElement>) => {
         let value = e.target.value;
-        
+       
         if (value) {
             // Ensure comma as decimal separator
             value = value.replace('.', ',');
-            
-            // Format to 2 decimal places
+           
+            // Format to 3 decimal places
             const parts = value.split(',');
             if (parts.length === 1) {
                 // No decimal part
-                value = value + ',00';
+                value = value + ',000';
             } else if (parts.length === 2) {
                 // Has decimal part
                 const integerPart = parts[0] || '0';
                 let decimalPart = parts[1];
-                
-                // Ensure exactly 2 decimal digits
+               
+                // Ensure exactly 3 decimal digits
                 if (decimalPart.length === 0) {
-                    decimalPart = '00';
+                    decimalPart = '000';
                 } else if (decimalPart.length === 1) {
+                    decimalPart = decimalPart + '00';
+                } else if (decimalPart.length === 2) {
                     decimalPart = decimalPart + '0';
-                } else if (decimalPart.length > 2) {
-                    decimalPart = decimalPart.substring(0, 2);
+                } else if (decimalPart.length > 3) {
+                    decimalPart = decimalPart.substring(0, 3);
                 }
-                
+               
                 value = integerPart + ',' + decimalPart;
             }
-            
+           
             paymentValidation.setFieldValue('montant', value);
         }
     };
-
     const StatusBadge = ({ status }: { status?: "Brouillon" | "Validee" | "Payee" | "Annulee" | "Partiellement Payee" }) => {
         const statusConfig = {
             "Brouillon": { bgClass: "bg-warning", textClass: "text-warning", icon: "ri-time-line" },
@@ -672,9 +811,9 @@ const FactureList = () => {
             "Annulee": { bgClass: "bg-danger", textClass: "text-danger", icon: "ri-close-circle-line" },
             "Partiellement Payee": { bgClass: "bg-info", textClass: "text-info", icon: "ri-wallet-line" }
         };
-    
+   
         const config = status && status in statusConfig ? statusConfig[status] : statusConfig["Brouillon"];
-    
+   
         return (
             <span className={`badge ${config.bgClass}-subtle ${config.textClass} text-uppercase`}>
                 <i className={`${config.icon} align-bottom me-1`}></i>
@@ -682,7 +821,6 @@ const FactureList = () => {
             </span>
         );
     };
-
     const columns = useMemo(
         () => [
             {
@@ -713,7 +851,7 @@ const FactureList = () => {
                 enableColumnFilter: false,
                 cell: (cell: any) => {
                     const total = Number(cell.getValue()) || 0;
-                    return `${total.toFixed(2)} DT`;
+                    return `${total.toFixed(3)} DT`;
                 },
             },
             {
@@ -722,14 +860,14 @@ const FactureList = () => {
                 enableColumnFilter: false,
                 cell: (cell: any) => {
                     const total = Number(cell.getValue()) || 0;
-                    return `${total.toFixed(2)} DT`;
+                    return `${total.toFixed(3)} DT`;
                 },
             },
             {
                 header: "Payé",
                 accessorKey: "montantPaye",
                 enableColumnFilter: false,
-                cell: (cell: any) => `${Number(cell.getValue()).toFixed(2)} DT`,
+                cell: (cell: any) => `${Number(cell.getValue()).toFixed(3)} DT`,
             },
             {
                 header: "Reste à payer",
@@ -737,7 +875,7 @@ const FactureList = () => {
                 enableColumnFilter: false,
                 cell: (cell: any) => {
                     const value = Number(cell.getValue());
-                    const displayValue = Math.abs(value).toFixed(2);
+                    const displayValue = Math.abs(value).toFixed(3);
                     return `${displayValue} DT`;
                 },
             },
@@ -752,7 +890,7 @@ const FactureList = () => {
                 cell: (cellProps: any) => {
                     const facture = cellProps.row.original;
                     const hasPayments = facture.montantPaye > 0;
-                    
+                   
                     return (
                         <ul className="list-inline hstack gap-2 mb-0">
                             {/* View Detail - Always visible */}
@@ -761,16 +899,16 @@ const FactureList = () => {
                                     <i className="ri-eye-line fs-16"></i>
                                 </Link>
                             </li>
-                            
+                           
                             {/* PDF - Always visible */}
                             <li className="list-inline-item">
                                 <Link to="#" className="text-info d-inline-block" onClick={() => openPdfModal(facture)}>
                                     <i className="ri-file-pdf-line fs-16"></i>
                                 </Link>
                             </li>
-                            
-                            {/* Edit - Only show if no payments and not cancelled */}
                            
+                            {/* Edit - Only show if no payments and not cancelled */}
+                          
                             {!hasPayments && facture.status !== "Annulee" && (
                                 <li className="list-inline-item edit">
                                     <Link to="#" className="text-primary d-inline-block edit-item-btn" onClick={() => {
@@ -780,6 +918,7 @@ const FactureList = () => {
                                             article_id: item.article.id,
                                             quantite: item.quantite,
                                             prixUnitaire: Number(item.prixUnitaire),
+                                            prixTTC: Number(item.prix_ttc) || Number(item.prixUnitaire) * (1 + (item.tva || 0) / 100),
                                             tva: item.tva != null ? Number(item.tva) : null,
                                             remise: item.remise != null ? Number(item.remise) : null,
                                             articleDetails: item.article
@@ -795,7 +934,7 @@ const FactureList = () => {
                                     </Link>
                                 </li>
                             )}
-                            
+                           
                             {/* Add Payment - Only show if not cancelled and has remaining amount */}
                             {facture.status !== "Annulee" && facture.resteAPayer > 0 && (
                                 <li className="list-inline-item">
@@ -804,7 +943,7 @@ const FactureList = () => {
                                     </Link>
                                 </li>
                             )}
-                            
+                           
                             {/* Delete - Only show if no payments and not cancelled */}
                             {!hasPayments && facture.status !== "Annulee" && (
                                 <li className="list-inline-item">
@@ -816,15 +955,15 @@ const FactureList = () => {
                                     </Link>
                                 </li>
                             )}
-                            
-                            {/* Cancel :  {facture.status !== "Annulee" && facture.status !== "Payee" && (
+                           
+                            {/* Cancel : {facture.status !== "Annulee" && facture.status !== "Payee" && (
                                 <li className="list-inline-item">
                                     <Link to="#" className="text-danger d-inline-block" onClick={() => handleAnnuler(facture.id)}>
                                         <i className="ri-close-circle-line fs-16"></i>
                                     </Link>
                                 </li>
                             )}*/}
-                      
+                     
                         </ul>
                     );
                 },
@@ -832,7 +971,6 @@ const FactureList = () => {
         ],
         []
     );
-
     return (
         <div className="page-content">
             <DeleteModal show={deleteModal} onDeleteClick={handleDelete} onCloseClick={() => setDeleteModal(false)} />
@@ -932,464 +1070,1083 @@ const FactureList = () => {
                                         theadClass="table-light text-muted text-uppercase"
                                     />
                                 )}
-                                <Modal isOpen={detailModal} toggle={() => setDetailModal(false)} size="lg" centered>
-                                    <ModalHeader toggle={() => setDetailModal(false)} className="border-0 pb-2">
-                                        <div className="d-flex justify-content-between align-items-center w-100">
-                                            <div>
-                                                <h5 className="mb-1">Facture #{selectedFacture?.numeroFacture}</h5>
-                                                <div className="d-flex align-items-center">
-                                                    <StatusBadge status={selectedFacture?.status} />
-                                                    <small className="text-muted ms-2">{moment(selectedFacture?.dateFacture).format("DD MMM YYYY")}</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </ModalHeader>
-                                    <ModalBody className="pt-0">
-                                        {selectedFacture && (
-                                            <div className="facture-details">
-                                                <Row className="g-3 mb-3">
-                                                    <Col md={6}>
-                                                        <Card className="border shadow-sm">
-                                                            <CardBody className="p-3">
-                                                                <h6 className="text-uppercase text-muted fs-12 mb-3">Fournisseur</h6>
-                                                                <div className="d-flex align-items-center">
-                                                                    <div className="flex-grow-1">
-                                                                        <h5 className="mb-1">{selectedFacture.fournisseur?.raison_sociale}</h5>
-                                                                        <p className="text-muted mb-1 small">
-                                                                            <i className="ri-map-pin-line me-1"></i>
-                                                                            {selectedFacture.fournisseur?.adresse}, {selectedFacture.fournisseur?.ville}
-                                                                        </p>
-                                                                        <p className="text-muted mb-0 small">
-                                                                            <i className="ri-file-text-line me-1"></i>
-                                                                            MF: {selectedFacture.fournisseur?.matricule_fiscal}
-                                                                        </p>
-                                                                    </div>
-                                                                </div>
-                                                            </CardBody>
-                                                        </Card>
-                                                    </Col>
-                                                    <Col md={6}>
-                                                        <Card className="border shadow-sm">
-                                                            <CardBody className="p-3">
-                                                                <h6 className="text-uppercase text-muted fs-12 mb-3">Informations</h6>
-                                                                <div className="row g-2">
-                                                                    <div className="col-6">
-                                                                        <p className="mb-1 small"><span className="text-muted">Créé le:</span><br />{moment(selectedFacture.createdAt).format("DD/MM/YYYY")}</p>
-                                                                    </div>
-                                                                    <div className="col-6">
-                                                                        <p className="mb-1 small"><span className="text-muted">Mode règlement:</span><br />{selectedFacture.modeReglement || 'Non spécifié'}</p>
-                                                                    </div>
-                                                                    <div className="col-6">
-                                                                        <p className="mb-1 small"><span className="text-muted">Échéance:</span><br />{selectedFacture.dateEcheance ? moment(selectedFacture.dateEcheance).format("DD/MM/YYYY") : 'Non spécifiée'}</p>
-                                                                    </div>
-                                                                    <div className="col-6">
-                                                                        <p className="mb-1 small"><span className="text-muted">Statut:</span><br /><StatusBadge status={selectedFacture.status} /></p>
-                                                                    </div>
-                                                                    {selectedFacture.conditionPaiement && (
-                                                                        <div className="col-6">
-                                                                            <p className="mb-1 small"><span className="text-muted">Condition de paiement:</span><br />{selectedFacture.conditionPaiement} jours</p>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </CardBody>
-                                                        </Card>
-                                                    </Col>
-                                                </Row>
-                                                {selectedFacture.notes && (
-                                                    <Card className="border shadow-sm mb-3">
-                                                        <CardBody className="p-3">
-                                                            <h6 className="text-uppercase text-muted fs-12 mb-2">Notes</h6>
-                                                            <p className="mb-0">{selectedFacture.notes}</p>
-                                                        </CardBody>
-                                                    </Card>
-                                                )}
-                                                <Card className="border shadow-sm">
-                                                    <CardBody className="p-0">
-                                                        <div className="table-responsive">
-                                                            <Table className="table table-bordered mb-0">
-                                                                <thead className="table-light">
-                                                                    <tr>
-                                                                        <th className="ps-3">Article</th>
-                                                                        <th>Référence</th>
-                                                                        <th className="text-end">Quantité</th>
-                                                                        <th className="text-end">Prix Unitaire</th>
-                                                                        <th className="text-end">TVA (%)</th>
-                                                                        <th className="text-end">Remise (%)</th>
-                                                                        <th className="text-end">Total HT</th>
-                                                                        <th className="text-end pe-3">Total TTC</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                    {selectedFacture.articles.map((item, index) => {
-                                                                        const montantHTLigne = Number(item.quantite) * Number(item.prixUnitaire) * (1 - (Number(item.remise || 0) / 100));
-                                                                        const montantTTCLigne = montantHTLigne * (1 + (Number(item.tva || 0) / 100));
-                                                                        return (
-                                                                            <tr key={index} className={index % 2 === 0 ? "table-light" : ""}>
-                                                                                <td className="ps-3">
-                                                                                    <div className="d-flex align-items-center">
-                                                                                        <div className="flex-grow-1">
-                                                                                            <h6 className="mb-0 fs-14">{item.article?.designation}</h6>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td><span className="text-muted">{item.article?.reference || '-'}</span></td>
-                                                                                <td className="text-end">{Number(item.quantite)}</td>
-                                                                                <td className="text-end">{Number(item.prixUnitaire).toFixed(2)}</td>
-                                                                                <td className="text-end">{Number(item.tva || 0).toFixed(0)}%</td>
-                                                                                <td className="text-end">{Number(item.remise || 0).toFixed(0)}%</td>
-                                                                                <td className="text-end">{montantHTLigne.toFixed(2)} DT</td>
-                                                                                <td className="text-end pe-3 fw-medium">{montantTTCLigne.toFixed(2)} DT</td>
-                                                                            </tr>
-                                                                        );
-                                                                    })}
-                                                                </tbody>
-                                                            </Table>
-                                                        </div>
-                                                        <div className="border-top p-3 bg-light">
-                                                            <Row className="justify-content-end">
-                                                                <Col xs={12} sm={8} md={6} lg={5}>
-                                                                    <Table className="table table-bordered table-sm mb-0">
-                                                                        <tbody>
-                                                                            <tr>
-                                                                                <th className="text-end text-muted">Sous-total HT:</th>
-                                                                                <td className="text-end">{selectedFacture.totalHT.toFixed(2)} DT</td>
-                                                                            </tr>
-                                                                            <tr>
-                                                                                <th className="text-end text-muted">TVA:</th>
-                                                                                <td className="text-end">{selectedFacture.totalTVA.toFixed(2)} DT</td>
-                                                                            </tr>
-                                                                            {selectedFacture.timbreFiscal && (
-    <tr>
-        <th className="text-end text-muted">Timbre Fiscal:</th>
-        <td className="text-end">1.00 DT</td>
-    </tr>
-)}
-<tr>
-    <th className="text-end text-muted">Total TTC:</th>
-    <td className="text-end fw-medium">
-        {(selectedFacture.totalTTC + (selectedFacture.timbreFiscal && !selectedFacture.remise ? 1 : 0)).toFixed(2)} DT
-    </td>
-</tr>
-{selectedFacture.remise > 0 && (
-    <tr className="table-primary">
-        <th className="text-end text-muted">Total TTC Après Remise:</th>
-        <td className="text-end fw-bold">
-            {((selectedFacture.remiseType === "percentage" 
-                ? selectedFacture.totalTTC * (1 - selectedFacture.remise / 100) 
-                : Number(selectedFacture.remise)) + (selectedFacture.timbreFiscal ? 1 : 0)).toFixed(2)} DT
-        </td>
-    </tr>
-)}
-                                                                            <tr>
-                                                                                <th className="text-end text-muted">Montant payé:</th>
-                                                                                <td className="text-end">{Number(selectedFacture.montantPaye).toFixed(2)} DT</td>
-                                                                            </tr>
-                                                                            <tr className={Number(selectedFacture.resteAPayer) > 0 ? "table-warning" : "table-success"}>
-                                                                                <th className="text-end text-muted">Reste à payer:</th>
-                                                                                <td className="text-end fw-bold">{Number(selectedFacture.resteAPayer).toFixed(2)} DT</td>
-                                                                            </tr>
-                                                                        </tbody>
-                                                                    </Table>
-                                                                </Col>
-                                                            </Row>
-                                                        </div>
-                                                    </CardBody>
-                                                </Card>
-                                            </div>
-                                        )}
-                                    </ModalBody>
-                                    <ModalFooter>
-                                        {selectedFacture && selectedFacture.resteAPayer > 0 && selectedFacture.status !== "Annulee" && selectedFacture.status !== "Payee" && (
-                                            <Button color="success" size="md" onClick={() => openPaymentModal(selectedFacture)}>
-                                                <i className="ri-money-dollar-circle-line me-1"></i> Ajouter Paiement
-                                            </Button>
-                                        )}
-                                        {selectedFacture && (
-                                            <Button color="primary" size="md" onClick={() => openPdfModal(selectedFacture)} className="me-2">
-                                                <i className="ri-file-pdf-line me-1"></i> Imprimer PDF
-                                            </Button>
-                                        )}
-                                        <Button color="secondary" onClick={() => setDetailModal(false)}>Fermer</Button>
-                                    </ModalFooter>
-                                </Modal>
-                                <Modal isOpen={createEditModal} toggle={toggleCreateEditModal} centered size="lg">
-                                    <ModalHeader toggle={toggleCreateEditModal}>{isEdit ? "Modifier Facture" : "Créer Facture"}</ModalHeader>
-                                    <Form onSubmit={validation.handleSubmit}>
-                                        <ModalBody style={{ padding: '20px' }}>
-                                            <Row>
-                                                <Col md={4}>
-                                                    <div className="mb-3">
-                                                        <Label>Numéro de Facture*</Label>
-                                                        <Input name="numeroFacture" value={validation.values.numeroFacture} onChange={validation.handleChange} onBlur={validation.handleBlur} invalid={validation.touched.numeroFacture && !!validation.errors.numeroFacture} readOnly={isEdit} />
-                                                        <FormFeedback>{validation.errors.numeroFacture}</FormFeedback>
-                                                    </div>
-                                                </Col>
-                                                <Col md={4}>
-                                                    <div className="mb-3">
-                                                        <Label>Date de Facture*</Label>
-                                                        <Input type="date" name="dateFacture" value={validation.values.dateFacture} onChange={validation.handleChange} onBlur={validation.handleBlur} invalid={validation.touched.dateFacture && !!validation.errors.dateFacture} />
-                                                    </div>
-                                                </Col>
-                                                <Col md={4}>
-                                                    <div className="mb-3">
-                                                        <Label>Date d'Échéance</Label>
-                                                        <Input type="date" name="dateEcheance" value={validation.values.dateEcheance} onChange={validation.handleChange} onBlur={validation.handleBlur} invalid={validation.touched.dateEcheance && !!validation.errors.dateEcheance} />
-                                                    </div>
-                                                </Col>
-                                            </Row>
-                                            <Row>
-                                                <Col md={6}>
-                                                    <div className="mb-3">
-                                                        <Label>Fournisseur*</Label>
-                                                        <Input type="text" placeholder="Rechercher fournisseur (min 3 caractères)" value={selectedFournisseur ? selectedFournisseur.raison_sociale : fournisseurSearch} onChange={(e) => {
-                                                            if (!e.target.value) {
-                                                                setSelectedFournisseur(null);
-                                                                validation.setFieldValue("fournisseur_id", "");
-                                                            }
-                                                            setFournisseurSearch(e.target.value);
-                                                        }} readOnly={!!selectedFournisseur} />
-                                                        {!selectedFournisseur && fournisseurSearch.length >= 3 && (
-                                                            <div className="search-results mt-2">
-                                                                {filteredFournisseurs.length > 0 ? (
-                                                                    <ul className="list-group">
-                                                                        {filteredFournisseurs.map(f => (
-                                                                            <li key={f.id} className="list-group-item list-group-item-action" onClick={() => {
-                                                                                setSelectedFournisseur(f);
-                                                                                validation.setFieldValue("fournisseur_id", f.id);
-                                                                                setFournisseurSearch("");
-                                                                                setFilteredFournisseurs([]);
-                                                                            }}>{f.raison_sociale}</li>
-                                                                        ))}
-                                                                    </ul>
-                                                                ) : (
-                                                                    <div className="text-muted">Aucun résultat trouvé</div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                        {selectedFournisseur && (
-                                                            <Button color="link" size="sm" className="mt-1 p-0" onClick={() => {
-                                                                setSelectedFournisseur(null);
-                                                                validation.setFieldValue("fournisseur_id", "");
-                                                                setFournisseurSearch("");
-                                                            }}>
-                                                                <i className="ri-close-line"></i> Changer de fournisseur
-                                                            </Button>
-                                                        )}
-                                                        {validation.touched.fournisseur_id && validation.errors.fournisseur_id && (
-                                                            <div className="text-danger">{validation.errors.fournisseur_id}</div>
-                                                        )}
-                                                    </div>
-                                                </Col>
-                                                <Col md={6}>
-                                                    <div className="mb-3">
-                                                        <Label>Condition de paiement</Label>
-                                                        <Input type="text" name="conditionPaiement" placeholder="Ex: 7 jours" value={validation.values.conditionPaiement || ""} onChange={validation.handleChange} onBlur={validation.handleBlur} />
-                                                    </div>
-                                                </Col>
-                                            </Row>
-                                            <Row>
-                                                <Col md={12}>
-                                                    <div className="mb-3">
-                                                        <Label>Notes</Label>
-                                                        <Input type="textarea" name="notes" value={validation.values.notes} onChange={validation.handleChange} />
-                                                    </div>
-                                                </Col>
-                                            </Row>
-                                            <Row>
-                                                <Col md={3}>
-                                                    <FormGroup check>
-                                                        <Input type="checkbox" id="timbreFiscal" checked={timbreFiscal} onChange={(e) => setTimbreFiscal(e.target.checked)} />
-                                                        <Label for="timbreFiscal" check>Timbre Fiscal (1 DT)</Label>
-                                                    </FormGroup>
-                                                </Col>
-                                            </Row>
-                                            <Row className="mt-3">
-                                                <Col md={12}>
-                                                    <h5>Articles</h5>
-                                                    <div className="mb-3">
-                                                        <Input type="text" placeholder="Rechercher article (min 3 caractères)" value={articleSearch} onChange={(e) => setArticleSearch(e.target.value)} />
-                                                        {articleSearch.length >= 3 && (
-                                                            <div className="search-results mt-2">
-                                                                {filteredArticles.length > 0 ? (
-                                                                    <ul className="list-group">
-                                                                        {filteredArticles.map(article => (
-                                                                            <li key={article.id} className="list-group-item list-group-item-action" onClick={() => {
-                                                                                handleAddArticle(article.id.toString());
-                                                                                setArticleSearch("");
-                                                                                setFilteredArticles([]);
-                                                                            }}>{article.reference} - {article.nom} (Stock: {article.qte})</li>
-                                                                        ))}
-                                                                    </ul>
-                                                                ) : (
-                                                                    <div className="text-muted">Aucun résultat trouvé</div>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </Col>
-                                            </Row>
-                                            <Row className="mt-3">
-                                                <Col md={12}>
-                                                    <h5>Remise Globale</h5>
-                                                    <Row>
-                                                        <Col md={3}>
-                                                            <FormGroup check>
-                                                                <Input type="checkbox" id="showRemise" checked={showRemise} onChange={(e) => {
-                                                                    setShowRemise(e.target.checked);
-                                                                    if (!e.target.checked) {
-                                                                        setGlobalRemise(0);
-                                                                    }
-                                                                }} />
-                                                                <Label for="showRemise" check>Appliquer une remise</Label>
-                                                            </FormGroup>
-                                                        </Col>
-                                                        {showRemise && (
-                                                            <>
-                                                                <Col md={3}>
-                                                                    <div className="mb-3">
-                                                                        <Label>Type de remise</Label>
-                                                                        <Input type="select" value={remiseType} onChange={(e) => setRemiseType(e.target.value as "percentage" | "fixed")}>
-                                                                            <option value="percentage">Pourcentage</option>
-                                                                            <option value="fixed">Montant fixe</option>
-                                                                        </Input>
-                                                                    </div>
-                                                                </Col>
-                                                                <Col md={3}>
-                                                                    <div className="mb-3">
-                                                                        <Label>{remiseType === "percentage" ? "Pourcentage de remise" : "Montant de remise (DT)"}</Label>
-                                                                        <Input type="number" min="0" value={globalRemise} onChange={(e) => setGlobalRemise(Number(e.target.value) || 0)} placeholder={remiseType === "percentage" ? "0-100%" : "Montant en DT"} />
-                                                                    </div>
-                                                                </Col>
-                                                            </>
-                                                        )}
-                                                    </Row>
-                                                </Col>
-                                            </Row>
-                                            {selectedArticles.length > 0 && (
-                                                <>
-                                                    <div className="table-responsive">
-                                                        <Table className="table table-bordered">
-                                                            <thead>
-                                                                <tr>
-                                                                    <th>Article</th>
-                                                                    <th>Référence</th>
-                                                                    <th>Quantité</th>
-                                                                    <th>Prix Unitaire</th>
-                                                                    <th>TVA (%)</th>
-                                                                    <th>Remise (%)</th>
-                                                                    <th>Total HT</th>
-                                                                    <th>Total TTC</th>
-                                                                    <th>Action</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody>
-                                                                {selectedArticles.map((item, index) => {
-                                                                    const article = articles.find(a => a.id === item.article_id) || item.articleDetails;
-                                                                    const qty = item.quantite || 1;
-                                                                    const price = item.prixUnitaire || 0;
-                                                                    const tvaRate = item.tva ?? 0;
-                                                                    const remiseRate = item.remise || 0;
-                                                                    const montantHTLigne = qty * price * (1 - (remiseRate / 100));
-                                                                    const montantTTCLigne = montantHTLigne * (1 + (tvaRate / 100));
-                                                                    return (
-                                                                        <tr key={`${item.article_id}-${index}`}>
-                                                                            <td>{article?.designation}</td>
-                                                                            <td>{article?.reference}</td>
-                                                                            <td width="100px">
-                                                                                <Input type="number" min="1" value={item.quantite} onChange={(e) => handleArticleChange(item.article_id, 'quantite', Number(e.target.value))} />
-                                                                            </td>
-                                                                            <td width="120px">
-                                                                                <Input type="number" min="0" step="0.01" value={item.prixUnitaire} onChange={(e) => handleArticleChange(item.article_id, 'prixUnitaire', Number(e.target.value))} />
-                                                                            </td>
-                                                                            <td width="100px">
-                                                                                <Input type="select" value={item.tva ?? ''} onChange={(e) => handleArticleChange(item.article_id, 'tva', e.target.value === '' ? null : Number(e.target.value))}>
-                                                                                    <option value="">Sélectionner TVA</option>
-                                                                                    {tvaOptions.map(option => (
-                                                                                        <option key={option.value ?? 'null'} value={option.value ?? ''}>{option.label}</option>
-                                                                                    ))}
-                                                                                </Input>
-                                                                            </td>
-                                                                            <td width="100px">
-                                                                                <Input type="number" min="0" max="100" value={item.remise ?? 0} onChange={(e) => handleArticleChange(item.article_id, 'remise', Number(e.target.value))} />
-                                                                            </td>
-                                                                            <td>{montantHTLigne.toFixed(2)} DT</td>
-                                                                            <td>{montantTTCLigne.toFixed(2)} DT</td>
-                                                                            <td>
-                                                                                <Button color="danger" size="sm" onClick={() => handleRemoveArticle(item.article_id)}>
-                                                                                    <i className="ri-delete-bin-line"></i>
-                                                                                </Button>
-                                                                            </td>
-                                                                        </tr>
-                                                                    );
-                                                                })}
-                                                            </tbody>
-                                                        </Table>
-                                                    </div>
-                                                    <Row className="mt-3 justify-content-end">
-                                                        <Col xs={12} sm={8} md={6} lg={5}>
-                                                        <Table className="table table-bordered table-sm mb-0">
-    <tbody>
-        <tr>
-            <th className="text-end text-muted">Sous-total HT:</th>
-            <td className="text-end">{subTotal} DT</td>
-        </tr>
-        <tr>
-            <th className="text-end text-muted">TVA:</th>
-            <td className="text-end">{totalTax} DT</td>
-        </tr>
-        {timbreFiscal && !(showRemise && globalRemise > 0) && (
-            <tr>
-                <th className="text-end text-muted">Timbre Fiscal:</th>
-                <td className="text-end">1.00 DT</td>
-            </tr>
+<Modal
+  isOpen={detailModal}
+  toggle={() => setDetailModal(false)}
+  size="xl"
+  centered
+  className="invoice-modal"
+>
+  <ModalHeader toggle={() => setDetailModal(false)} className="border-0 pb-3">
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-info bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-file-text-line text-info fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">
+          Facture #{selectedFacture?.numeroFacture}
+        </h4>
+        <small className="text-muted">
+          {moment(selectedFacture?.dateFacture).format("DD MMM YYYY")}
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+  <ModalBody className="pt-0">
+    {selectedFacture && (
+      <div className="facture-details">
+        <Row className="g-3 mb-4">
+          <Col md={6}>
+            <Card className="border-0 shadow-sm h-100">
+              <CardBody className="p-4">
+                <h6 className="fw-semibold mb-3 text-primary">
+                  <i className="ri-user-line me-2"></i>
+                  Informations Fournisseur
+                </h6>
+                <div className="d-flex align-items-center">
+                  <div className="flex-grow-1">
+                    <h5 className="mb-1">{selectedFacture.fournisseur?.raison_sociale}</h5>
+                    <p className="text-muted mb-1">
+                      <i className="ri-phone-line me-1"></i>
+                      {selectedFacture.fournisseur?.telephone1 || "N/A"}
+                    </p>
+                    <p className="text-muted mb-0">
+                      <i className="ri-map-pin-line me-1"></i>
+                      {selectedFacture.fournisseur?.adresse || "N/A"}
+                    </p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          </Col>
+          <Col md={6}>
+            <Card className="border-0 shadow-sm h-100">
+              <CardBody className="p-4">
+                <h6 className="fw-semibold mb-3 text-primary">
+                  <i className="ri-information-line me-2"></i>
+                  Informations Facture
+                </h6>
+                <div className="row g-2">
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Mode règlement:</span>
+                      <strong>{selectedFacture.modeReglement || "N/A"}</strong>
+                    </p>
+                  </div>
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Statut:</span>
+                      <StatusBadge status={selectedFacture.status} />
+                    </p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          </Col>
+        </Row>
+        {selectedFacture.notes && (
+          <Card className="border-0 shadow-sm mb-4">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-3 text-primary">
+                <i className="ri-sticky-note-line me-2"></i>
+                Notes
+              </h6>
+              <p className="mb-0 text-muted">{selectedFacture.notes}</p>
+            </CardBody>
+          </Card>
         )}
-        <tr>
-            <th className="text-end text-muted">Total TTC:</th>
-            <td className="text-end fw-medium">{grandTotal} DT</td>
-        </tr>
-        {showRemise && globalRemise > 0 && (
-            <tr>
-                <th className="text-end text-muted">
-                    {remiseType === "percentage" ? `Remise (${globalRemise}%)` : "Remise (Montant fixe)"}
-                </th>
-                <td className="text-end text-danger">
-                    - {remiseType === "percentage" 
-                        ? (Number(grandTotal) * (globalRemise / 100)).toFixed(2)
-                        : (Number(grandTotal) - Number(globalRemise)).toFixed(2)} DT
-                </td>
-            </tr>
-        )}
-        {showRemise && globalRemise > 0 && (
-            <>
-                {timbreFiscal && (
-                    <tr>
-                        <th className="text-end text-muted">Timbre Fiscal:</th>
-                        <td className="text-end">1.00 DT</td>
-                    </tr>
+        <Card className="border-0 shadow-sm">
+          <CardBody className="p-0">
+            <div className="table-responsive">
+              <Table className="table table-hover mb-0">
+                <thead className="table-dark">
+                  <tr>
+                    <th className="ps-4">Article</th>
+                    <th>Référence</th>
+                    <th className="text-end">Quantité</th>
+                    <th className="text-end">Prix Unitaire HT</th>
+                    <th className="text-end">Prix Unitaire TTC</th>
+                    <th className="text-end">TVA (%)</th>
+                    <th className="text-end">Total HT</th>
+                    <th className="text-end pe-4">Total TTC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedFacture.articles.map((item, index) => {
+                    const quantite = Number(item.quantite) || 0;
+                    const priceHT = Number(item.prixUnitaire) || 0;
+                    const tvaRate = Number(item.tva || 0);
+                    const remiseRate = Number(item.remise || 0);
+                    const priceTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
+                   
+                    const montantSousTotalHT = Math.round(quantite * priceHT * 1000) / 1000;
+                    const montantNetHT = Math.round(quantite * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
+                    const montantTTCLigne = Math.round(quantite * priceTTC * 1000) / 1000;
+                    return (
+                      <tr key={index} className={index % 2 === 0 ? "bg-light" : ""}>
+                        <td className="ps-4">
+                          <div className="d-flex align-items-center">
+                            <div className="flex-grow-1">
+                              <h6 className="mb-0 fw-semibold fs-6">{item.article?.designation}</h6>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <Badge color="light" className="text-dark">
+                            {item.article?.reference || '-'}
+                          </Badge>
+                        </td>
+                        <td className="text-end fw-semibold">{quantite}</td>
+                        <td className="text-end">{priceHT.toFixed(3)} DT</td>
+                        <td className="text-end">{priceTTC.toFixed(3)} DT</td>
+                        <td className="text-end">{tvaRate}%</td>
+                        <td className="text-end fw-semibold">{montantNetHT.toFixed(3)} DT</td>
+                        <td className="text-end pe-4 fw-semibold text-primary">{montantTTCLigne.toFixed(3)} DT</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
+            <div className="border-top p-4">
+              <Row className="justify-content-end">
+                <Col xs={8} sm={6} md={5} lg={4}>
+                  {(() => {
+                    let sousTotalHTValue = 0;
+                    let netHTValue = 0;
+                    let totalTaxValue = 0;
+                    let grandTotalValue = 0;
+                    selectedFacture.articles.forEach((article) => {
+                      const qty = Number(article.quantite) || 0;
+                      const tvaRate = Number(article.tva || 0);
+                      const remiseRate = Number(article.remise || 0);
+                     
+                      const priceHT = Number(article.prixUnitaire) || 0;
+                      const priceTTC = Number(article.prix_ttc) || priceHT * (1 + tvaRate / 100);
+                      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
+                      const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
+                      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
+                      const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
+                      sousTotalHTValue += montantSousTotalHT;
+                      netHTValue += montantNetHT;
+                      totalTaxValue += montantTVA;
+                      grandTotalValue += montantTTCLigne;
+                    });
+                    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
+                    netHTValue = Math.round(netHTValue * 1000) / 1000;
+                    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+                    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
+                    const remiseValue = Number(selectedFacture.remise) || 0;
+                    const remiseTypeValue = selectedFacture.remiseType || "percentage";
+                   
+                    let finalTotalValue = grandTotalValue;
+                    let discountAmountValue = 0;
+                    let netHTAfterDiscount = netHTValue;
+                    let totalTaxAfterDiscount = totalTaxValue;
+                    let discountPercentage = 0;
+                    if (remiseValue > 0) {
+                      if (remiseTypeValue === "percentage") {
+                        discountAmountValue = Math.round(netHTValue * (remiseValue / 100) * 1000) / 1000;
+                        netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
+                       
+                        const discountRatio = netHTAfterDiscount / netHTValue;
+                        totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
+                       
+                        finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
+                       
+                      } else if (remiseTypeValue === "fixed") {
+                        finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
+                       
+                        const tvaToHtRatio = totalTaxValue / netHTValue;
+                        const htAfterDiscount = Math.round(finalTotalValue / (1 + tvaToHtRatio) * 1000) / 1000;
+                       
+                        discountAmountValue = Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
+                        netHTAfterDiscount = htAfterDiscount;
+                        totalTaxAfterDiscount = Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+                       
+                        discountPercentage = Math.round((discountAmountValue / netHTValue) * 100 * 100) / 100;
+                      }
+                    }
+                    // Add timbre fiscal
+                    if (selectedFacture.timbreFiscal) {
+                      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+                    }
+                    const displayNetHT = remiseValue > 0 ? netHTAfterDiscount : netHTValue;
+                    const displayTotalTax = remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
+                    return (
+                      <Table className="table-sm table-borderless mb-0">
+                        <tbody>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">Sous-total H.T.:</th>
+                            <td className="text-end fw-semibold fs-6">{sousTotalHTValue.toFixed(3)} DT</td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">Net H.T.:</th>
+                            <td className="text-end fw-semibold fs-6">{displayNetHT.toFixed(3)} DT</td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">TVA:</th>
+                            <td className="text-end fw-semibold fs-6">{displayTotalTax.toFixed(3)} DT</td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">Total TTC:</th>
+                            <td className="text-end fw-semibold fs-6 text-dark">
+                              {grandTotalValue.toFixed(3)} DT
+                            </td>
+                          </tr>
+                          {remiseValue > 0 && (
+                            <tr className="real-time-update">
+                              <th className="text-end text-muted fs-6">
+                                {remiseTypeValue === "percentage"
+                                  ? `Remise (${remiseValue}%)`
+                                  : `Remise (Montant fixe) ${discountPercentage}%`}
+                              </th>
+                              <td className="text-end text-danger fw-bold fs-6">
+                                - {discountAmountValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                          {selectedFacture.timbreFiscal && (
+                            <tr className="real-time-update">
+                              <th className="text-end text-muted fs-6">Timbre Fiscal:</th>
+                              <td className="text-end fw-semibold fs-6">1.000 DT</td>
+                            </tr>
+                          )}
+                         
+                          {remiseValue > 0 && (
+                            <tr className="final-total real-time-update border-top">
+                              <th className="text-end fs-5">NET À PAYER:</th>
+                              <td className="text-end fw-bold fs-5 text-primary">
+                                {finalTotalValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                          {!remiseValue && (
+                            <tr className="final-total real-time-update border-top">
+                              <th className="text-end fs-5">NET À PAYER:</th>
+                              <td className="text-end fw-bold fs-5 text-primary">
+                                {finalTotalValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                          {/* Payment Information */}
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">Montant payé:</th>
+                            <td className="text-end fw-semibold fs-6">
+                              {Number(selectedFacture.montantPaye).toFixed(3)} DT
+                            </td>
+                          </tr>
+                          <tr className={`real-time-update ${Number(selectedFacture.resteAPayer) > 0 ? "table-warning" : "table-success"}`}>
+                            <th className="text-end text-muted fs-6">Reste à payer:</th>
+                            <td className="text-end fw-bold fs-6">
+                              {Number(selectedFacture.resteAPayer).toFixed(3)} DT
+                            </td>
+                          </tr>
+                        </tbody>
+                      </Table>
+                    );
+                  })()}
+                </Col>
+              </Row>
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+    )}
+  </ModalBody>
+  <ModalFooter className="border-0 pt-4">
+    {selectedFacture &&
+      selectedFacture.resteAPayer > 0 &&
+      selectedFacture.status !== "Annulee" &&
+      selectedFacture.status !== "Payee" && (
+        <Button
+          color="success"
+          size="md"
+          onClick={() => openPaymentModal(selectedFacture)}
+          className="btn-invoice btn-invoice-success me-2"
+        >
+          <i className="ri-money-dollar-circle-line me-2"></i> Paiement
+        </Button>
+      )}
+   
+    <Button
+      color="primary"
+      onClick={() => selectedFacture && openPdfModal(selectedFacture)}
+      className="btn-invoice btn-invoice-primary me-2"
+      disabled={!selectedFacture}
+    >
+      <i className="ri-file-pdf-line me-2"></i> Imprimer PDF
+    </Button>
+   
+    <Button
+      color="light"
+      onClick={() => setDetailModal(false)}
+      className="btn-invoice"
+    >
+      <i className="ri-close-line me-2"></i> Fermer
+    </Button>
+  </ModalFooter>
+</Modal>
+<Modal
+  isOpen={createEditModal}
+  toggle={toggleCreateEditModal}
+  centered
+  size="xl"
+  className="invoice-modal"
+  style={{ maxWidth: '1200px' }}
+>
+  <ModalHeader toggle={toggleCreateEditModal} className="border-0 pb-3">
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-file-list-3-line text-primary fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">
+          {isEdit ? "Modifier Facture" : "Créer Nouvelle Facture"}
+        </h4>
+        <small className="text-muted">
+          {isEdit ? "Modifier les détails de la facture existante" : "Créer une nouvelle facture fournisseur"}
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+  <Form onSubmit={validation.handleSubmit} className="invoice-form">
+    <ModalBody className="pt-0">
+      {/* Header Information Section */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-information-line me-2"></i>
+            Informations Générales
+          </h5>
+          <Row className="align-items-center">
+            {/* Numéro de Facture */}
+            <Col md={4}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Numéro de Facture*</Label>
+                <Input
+                  name="numeroFacture"
+                  value={validation.values.numeroFacture}
+                  onChange={validation.handleChange}
+                  invalid={
+                    validation.touched.numeroFacture &&
+                    !!validation.errors.numeroFacture
+                  }
+                  readOnly={isEdit}
+                  className="form-control-lg"
+                  placeholder="FAC-2024-001"
+                />
+                <FormFeedback className="fs-6">
+                  {validation.errors.numeroFacture}
+                </FormFeedback>
+              </div>
+            </Col>
+            {/* Date de Facture */}
+            <Col md={4}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Date de Facture*</Label>
+                <Input
+                  type="date"
+                  name="dateFacture"
+                  value={validation.values.dateFacture}
+                  onChange={validation.handleChange}
+                  invalid={
+                    validation.touched.dateFacture &&
+                    !!validation.errors.dateFacture
+                  }
+                  className="form-control-lg"
+                />
+                {validation.touched.dateFacture && validation.errors.dateFacture && (
+                  <div className="text-danger fs-6 mt-1">
+                    {validation.errors.dateFacture as string}
+                  </div>
                 )}
-                <tr className="table-primary">
-                    <th className="text-end text-muted">Total TTC Après Remise:</th>
-                    <td className="text-end fw-bold">{finalTotal} DT</td>
-                </tr>
-            </>
-        )}
-    </tbody>
-</Table>
-                                                        </Col>
-                                                    </Row>
-                                                </>
-                                            )}
-                                        </ModalBody>
-                                        <ModalFooter>
-                                            <Button color="light" onClick={toggleCreateEditModal}>
-                                                <i className="ri-close-line align-bottom me-1"></i> Annuler
-                                            </Button>
-                                            <Button color="primary" type="submit" disabled={selectedArticles.length === 0 || !selectedFournisseur}>
-                                                <i className="ri-save-line align-bottom me-1"></i> {isEdit ? "Modifier" : "Enregistrer"}
-                                            </Button>
-                                        </ModalFooter>
-                                    </Form>
-                                </Modal>
+              </div>
+            </Col>
+            {/* Timbre Fiscal */}
+            <Col md={4}>
+        <div className="mb-3">
+          <Label className="form-label-lg fw-semibold d-block text-center mb-5">
+          </Label>
+          <div className="d-flex justify-content-center align-items-center">
+            <div className="form-check form-switch form-switch-lg">
+              <Input
+                type="checkbox"
+                id="timbreFiscal"
+                checked={timbreFiscal}
+                onChange={(e) => setTimbreFiscal(e.target.checked)}
+                className="form-check-input"
+                style={{
+                  width: "48px",
+                  height: "24px",
+                  cursor: "pointer"
+                }}
+              />
+              <Label
+                for="timbreFiscal"
+                className="form-check-label fw-semibold fs-6 ms-2"
+              >
+                Timbre Fiscal
+              </Label>
+            </div>
+          </div>
+          <div className="text-center mt-2">
+            <Badge
+              color={timbreFiscal ? "success" : "secondary"}
+              className="fs-6"
+            >
+              {timbreFiscal ? "Activé (+1.000 DT)" : "Désactivé"}
+            </Badge>
+          </div>
+        </div>
+      </Col>
+     
+          </Row>
+        </CardBody>
+      </Card>
+      {/* Fournisseur Section */}
+      <Row className="g-3 mb-4">
+        <Col md={12}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-3 text-primary">
+                <i className="ri-user-line me-2"></i>
+                Informations Fournisseur
+              </h6>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Fournisseur*</Label>
+                <div className="position-relative">
+                  <Input
+                    type="text"
+                    placeholder="Rechercher fournisseur..."
+                    value={selectedFournisseur ? selectedFournisseur.raison_sociale : fournisseurSearch}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        setSelectedFournisseur(null);
+                        validation.setFieldValue("fournisseur_id", "");
+                      }
+                      setFournisseurSearch(e.target.value);
+                    }}
+                    onFocus={() => {
+                      if (fournisseurSearch.length >= 1) {
+                        setFilteredFournisseurs(fournisseurs);
+                      }
+                    }}
+                    readOnly={!!selectedFournisseur}
+                    className="form-control-lg"
+                  />
+                  {selectedFournisseur && (
+                    <Button
+                      color="link"
+                      size="sm"
+                      className="position-absolute end-0 top-50 translate-middle-y text-danger p-0 me-3"
+                      onClick={() => {
+                        setSelectedFournisseur(null);
+                        validation.setFieldValue("fournisseur_id", "");
+                        setFournisseurSearch("");
+                      }}
+                    >
+                      <i className="ri-close-line fs-5"></i>
+                    </Button>
+                  )}
+                </div>
+               
+                {/* Scrollable Dropdown Results */}
+                {!selectedFournisseur && fournisseurSearch.length >= 1 && (
+                  <div
+                    className="search-results mt-2 border rounded shadow-sm"
+                    style={{
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                      position: "absolute",
+                      width: "100%",
+                      zIndex: 1000,
+                      backgroundColor: "white"
+                    }}
+                  >
+                    {filteredFournisseurs.length > 0 ? (
+                      <ul className="list-group list-group-flush">
+                        {filteredFournisseurs.map((f) => (
+                          <li
+                            key={f.id}
+                            className="list-group-item list-group-item-action"
+                            onClick={() => {
+                              setSelectedFournisseur(f);
+                              validation.setFieldValue("fournisseur_id", f.id);
+                              setFournisseurSearch("");
+                              setFilteredFournisseurs([]);
+                            }}
+                            style={{ cursor: "pointer", padding: "10px 15px" }}
+                          >
+                            <div className="d-flex justify-content-between align-items-center">
+                              <span className="fw-medium">{f.raison_sociale}</span>
+                              <small className="text-muted">{f.telephone1}</small>
+                            </div>
+                            {f.adresse && (
+                              <small className="text-muted d-block mt-1">
+                                <i className="ri-map-pin-line me-1"></i>
+                                {f.adresse}
+                              </small>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-muted p-3 text-center">
+                        <i className="ri-search-line me-1"></i>
+                        Aucun résultat trouvé
+                      </div>
+                    )}
+                  </div>
+                )}
+               
+                {validation.touched.fournisseur_id && validation.errors.fournisseur_id && (
+                  <div className="text-danger mt-1 fs-6">
+                    <i className="ri-error-warning-line me-1"></i>
+                    {validation.errors.fournisseur_id}
+                  </div>
+                )}
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
+      </Row>
+      {/* <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <h5 className="fw-semibold text-primary mb-0">
+              <i className="ri-coupon-line me-2"></i>
+              Remise Globale
+            </h5>
+            <div className="form-check form-switch form-switch-lg">
+              <Input
+                type="checkbox"
+                id="showRemise"
+                checked={showRemise}
+                onChange={(e) => {
+                  setShowRemise(e.target.checked);
+                  if (!e.target.checked) {
+                    setGlobalRemise(0);
+                  }
+                }}
+                className="form-check-input"
+              />
+              <Label for="showRemise" check className="form-check-label fw-semibold fs-6">
+                Appliquer une remise
+              </Label>
+            </div>
+          </div>
+          {showRemise && (
+            <Row className="g-3 mt-3">
+              <Col md={4}>
+                <div className="mb-3">
+                  <Label className="form-label-lg fw-semibold">Type de remise</Label>
+                  <Input
+                    type="select"
+                    value={remiseType}
+                    onChange={(e) =>
+                      setRemiseType(e.target.value as "percentage" | "fixed")
+                    }
+                    className="form-control-lg"
+                  >
+                    <option value="percentage">Pourcentage (%)</option>
+                    <option value="fixed">Montant fixe (DT)</option>
+                  </Input>
+                </div>
+              </Col>
+              <Col md={4}>
+                <div className="mb-3">
+                  <Label className="form-label-lg fw-semibold">
+                    {remiseType === "percentage" ? "Pourcentage de remise" : "Montant de remise (DT)"}
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step={remiseType === "percentage" ? "1" : "0.001"}
+                    value={globalRemise === 0 ? "" : globalRemise}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === "") {
+                        setGlobalRemise(0);
+                      } else {
+                        const numValue = Number(value);
+                        if (!isNaN(numValue) && numValue >= 0) {
+                          setGlobalRemise(numValue);
+                        }
+                      }
+                    }}
+                    placeholder={remiseType === "percentage" ? "0-100%" : "Montant en DT"}
+                    className="form-control-lg"
+                  />
+                </div>
+              </Col>
+              <Col md={4}>
+                {showRemise && globalRemise > 0 && (
+                  <div className="p-3 bg-primary bg-opacity-10 rounded border">
+                    <div className="text-center">
+                      <small className="text-muted d-block">Remise appliquée</small>
+                      <strong className="fs-5 text-primary">
+                        {remiseType === "percentage"
+                          ? `${globalRemise}%`
+                          : `${Number(globalRemise).toFixed(3)} DT`}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+              </Col>
+            </Row>
+          )}
+        </CardBody>
+      </Card> */}
+    
+      {/* Articles Section */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-shopping-cart-line me-2"></i>
+            Articles
+          </h5>
+         
+       {/* Enhanced Search Results for Facture Modal */}
+<div className="mb-4">
+  <Label className="form-label-lg fw-semibold">Rechercher Article</Label>
+  <div className="search-box position-relative">
+    <Input
+      type="text"
+      placeholder="Rechercher article..."
+      value={articleSearch}
+      onChange={(e) => setArticleSearch(e.target.value)}
+      className="form-control-lg ps-5"
+    />
+    <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3 fs-5 text-muted"></i>
+  </div>
+ 
+  {/* Scrollable Dropdown Results */}
+  {articleSearch.length >= 1 && (
+    <div
+      className="search-results mt-2 border rounded shadow-sm"
+      style={{
+        maxHeight: "300px",
+        overflowY: "auto",
+        position: "relative",
+        zIndex: 1000,
+        backgroundColor: "white"
+      }}
+    >
+      {filteredArticles.length > 0 ? (
+        <ul className="list-group list-group-flush">
+          {filteredArticles.map((article) => (
+            <li
+              key={article.id}
+              className="list-group-item list-group-item-action"
+              onClick={() => {
+                handleAddArticle(article.id.toString());
+                setArticleSearch("");
+                setFilteredArticles([]);
+              }}
+              style={{
+                cursor: "pointer",
+                padding: "12px 15px",
+                opacity: selectedArticles.some(item => item.article_id === article.id) ? 0.6 : 1
+              }}
+            >
+              <div className="d-flex justify-content-between align-items-center">
+                <div className="flex-grow-1">
+                  <strong className="d-block">{article.designation}</strong>
+                  <small className="text-muted">
+                    Réf: {article.reference} | Stock: {article.qte} |
+                    HT: {(Number(article.pua_ht) || 0).toFixed(3)} DT
+                  </small>
+                </div>
+                {selectedArticles.some(item => item.article_id === article.id) ? (
+                  <Badge color="secondary" className="fs-6">
+                    <i className="ri-check-line me-1"></i>
+                    Ajouté
+                  </Badge>
+                ) : (
+                  <Badge color="success" className="fs-6">
+                    <i className="ri-add-line me-1"></i>
+                    Ajouter
+                  </Badge>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="text-muted p-3 text-center">
+          <i className="ri-search-line me-2"></i>
+          Aucun article trouvé
+        </div>
+      )}
+    </div>
+  )}
+</div>
+          {/* Articles Table */}
+            {/* Articles Table */}
+{selectedArticles.length > 0 && (
+  <div className="articles-table">
+    <div className="table-responsive" style={{ maxHeight: "500px", overflow: "auto" }}>
+      <Table className="table table-hover mb-0">
+        <thead className="table-dark" style={{ position: "sticky", top: 0, zIndex: 10 }}>
+          <tr>
+            <th style={{ width: "25%", minWidth: "200px" }}>Article</th>
+            <th style={{ width: "10%", minWidth: "100px" }}>Référence</th>
+            <th style={{ width: "8%", minWidth: "80px" }}>Quantité</th>
+            <th style={{ width: "12%", minWidth: "120px" }}>Prix Unitaire HT</th>
+            <th style={{ width: "12%", minWidth: "120px" }}>Prix Unitaire TTC</th>
+            <th style={{ width: "8%", minWidth: "80px" }}>TVA (%)</th>
+            <th style={{ width: "10%", minWidth: "100px" }}>Total HT</th>
+            <th style={{ width: "10%", minWidth: "100px" }}>Total TTC</th>
+            <th style={{ width: "5%", minWidth: "60px" }}>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {selectedArticles.map((item, index) => {
+            const article = articles.find((a) => a.id === item.article_id) || item.articleDetails;
+           
+            const qty = item.quantite === "" ? 0 : Number(item.quantite) || 0;
+           
+            let priceHT = Number(item.prixUnitaire) || 0;
+            let priceTTC = Number(item.prixTTC) || 0;
+           
+            if (editingHT[item.article_id] !== undefined) {
+              const editingValue = parseNumericInput(editingHT[item.article_id]);
+              if (!isNaN(editingValue) && editingValue >= 0) {
+                priceHT = parseFloat(editingValue.toFixed(3));
+                const tvaRate = Number(item.tva) || 0;
+                const tvaAmount = tvaRate > 0 ? parseFloat((priceHT * tvaRate / 100).toFixed(3)) : 0;
+                priceTTC = parseFloat((priceHT + tvaAmount).toFixed(3));
+              }
+            } else if (editingTTC[item.article_id] !== undefined) {
+              const editingValue = parseNumericInput(editingTTC[item.article_id]);
+              if (!isNaN(editingValue) && editingValue >= 0) {
+                priceTTC = parseFloat(editingValue.toFixed(3));
+                const tvaRate = Number(item.tva) || 0;
+                if (tvaRate > 0) {
+                  const coefficient = 1 + (tvaRate / 100);
+                  priceHT = parseFloat((priceTTC / coefficient).toFixed(3));
+                } else {
+                  priceHT = priceTTC;
+                }
+              }
+            }
+            const montantHTLigne = (qty * priceHT).toFixed(3);
+            const montantTTCLigne = (qty * priceTTC).toFixed(3);
+            return (
+              <tr key={`${item.article_id}-${index}`} className="align-middle">
+                <td style={{ width: "25%" }}>
+                  <div className="d-flex align-items-center">
+                    <div className="flex-grow-1">
+                      <h6 className="mb-0 fw-semibold fs-6">{article?.designation}</h6>
+                    </div>
+                  </div>
+                </td>
+                <td style={{ width: "10%" }}>
+                  <Badge color="light" className="text-dark">
+                    {article?.reference}
+                  </Badge>
+                </td>
+                <td style={{ width: "8%" }}>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={item.quantite}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === "") {
+                        handleArticleChange(item.article_id, "quantite", "");
+                      } else {
+                        const newQty = Math.max(0, Number(value));
+                        handleArticleChange(item.article_id, "quantite", newQty);
+                      }
+                    }}
+                    className="table-input text-center"
+                    style={{ width: "100%", fontSize: "0.9rem" }}
+                  />
+                </td>
+                <td style={{ width: "12%" }}>
+                  <Input
+                    type="text"
+                    value={
+                      editingHT[item.article_id] !== undefined
+                        ? editingHT[item.article_id]
+                        : formatForDisplay(item.prixUnitaire)
+                    }
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (value === "" || /^[0-9]*[,.]?[0-9]*$/.test(value)) {
+                        value = value.replace(".", ",");
+                        const commaCount = (value.match(/,/g) || []).length;
+                        if (commaCount <= 1) {
+                          setEditingHT((prev) => ({
+                            ...prev,
+                            [item.article_id]: value,
+                          }));
+                          const parsed = parseNumericInput(value);
+                          if (!isNaN(parsed) && parsed >= 0) {
+                            handleArticleChange(item.article_id, "prixUnitaire", parsed);
+                          }
+                        }
+                      }
+                    }}
+                    className="table-input text-end"
+                    style={{ width: "100%", fontSize: "0.9rem" }}
+                  />
+                </td>
+                <td style={{ width: "12%" }}>
+                  <Input
+                    type="text"
+                    value={
+                      editingTTC[item.article_id] !== undefined
+                        ? editingTTC[item.article_id]
+                        : formatForDisplay(item.prixTTC)
+                    }
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (value === "" || /^[0-9]*[,.]?[0-9]*$/.test(value)) {
+                        value = value.replace(".", ",");
+                        const commaCount = (value.match(/,/g) || []).length;
+                        if (commaCount <= 1) {
+                          setEditingTTC((prev) => ({
+                            ...prev,
+                            [item.article_id]: value,
+                          }));
+                          const parsed = parseNumericInput(value);
+                          if (!isNaN(parsed) && parsed >= 0) {
+                            handleArticleChange(item.article_id, "prixTTC", parsed);
+                          }
+                        }
+                      }
+                    }}
+                    className="table-input text-end"
+                    style={{ width: "100%", fontSize: "0.9rem" }}
+                  />
+                </td>
+                <td style={{ width: "8%" }}>
+                  <Input
+                    type="select"
+                    value={item.tva ?? ""}
+                    onChange={(e) => {
+                      const newTva = e.target.value === "" ? null : Number(e.target.value);
+                      handleArticleChange(item.article_id, "tva", newTva);
+                    }}
+                    className="table-input"
+                    style={{ width: "100%", fontSize: "0.9rem" }}
+                  >
+                    <option value="">Sélectionner</option>
+                    {tvaOptions.map((option) => (
+                      <option key={option.value ?? "null"} value={option.value ?? ""}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Input>
+                </td>
+                <td style={{ width: "10%" }} className="text-end fw-semibold">
+                  {montantHTLigne} DT
+                </td>
+                <td style={{ width: "10%" }} className="text-end fw-semibold text-primary">
+                  {montantTTCLigne} DT
+                </td>
+                <td style={{ width: "5%" }}>
+                  <Button
+                    color="danger"
+                    size="sm"
+                    onClick={() => handleRemoveArticle(item.article_id)}
+                    className="btn-invoice-danger"
+                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.8rem" }}
+                  >
+                    <i className="ri-delete-bin-line"></i>
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </Table>
+    </div>
+  </div>
+)}
+          {/* Calculation Summary */}
+          {selectedArticles.length > 0 && (
+            <div className="calculation-summary mt-4">
+              <h6 className="fw-semibold mb-3 text-primary">
+                <i className="ri-calculator-line me-2"></i>
+                Récapitulatif
+              </h6>
+             
+              <Row>
+                {/* Left Side - Remise Global */}
+                <Col md={6}>
+                  <div className="remise-global-section h-100">
+                    <h6 className="fw-semibold">
+                      <i className="ri-coupon-line me-2"></i>
+                      Remise Globale
+                    </h6>
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                      <Label className="form-label fw-semibold mb-0">Activer remise</Label>
+                      <div className="form-check form-switch">
+                        <Input
+                          type="checkbox"
+                          id="showRemiseSummary"
+                          checked={showRemise}
+                          onChange={(e) => {
+                            setShowRemise(e.target.checked);
+                            if (!e.target.checked) {
+                              setGlobalRemise(0);
+                            }
+                          }}
+                          className="form-check-input"
+                        />
+                      </div>
+                    </div>
+                    {showRemise && (
+                      <div className="row g-2">
+                        <div className="col-12">
+                          <Label className="form-label fw-semibold">Type de remise</Label>
+                          <Input
+                            type="select"
+                            value={remiseType}
+                            onChange={(e) =>
+                              setRemiseType(e.target.value as "percentage" | "fixed")
+                            }
+                            className="form-control-sm"
+                          >
+                            <option value="percentage">Pourcentage (%)</option>
+                            <option value="fixed">Montant fixe (DT)</option>
+                          </Input>
+                        </div>
+                        <div className="col-12">
+                          <Label className="form-label fw-semibold">
+                            {remiseType === "percentage" ? "Pourcentage" : "Montant (DT)"}
+                          </Label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step={remiseType === "percentage" ? "1" : "0.001"}
+                            value={globalRemise === 0 ? "" : globalRemise}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (value === "") {
+                                setGlobalRemise(0);
+                              } else {
+                                const numValue = Number(value);
+                                if (!isNaN(numValue) && numValue >= 0) {
+                                  setGlobalRemise(numValue);
+                                }
+                              }
+                            }}
+                            placeholder={remiseType === "percentage" ? "0-100%" : "Montant"}
+                            className="form-control-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Col>
+                {/* Right Side - Calculations */}
+                <Col md={6}>
+                  <div className="calculation-summary-right">
+                    <Table className="table table-borderless mb-0">
+                      <tbody>
+                        <tr className="real-time-update">
+                          <th className="text-end text-muted fs-6">Sous-total H.T.:</th>
+                          <td className="text-end fw-semibold fs-6">{sousTotalHT.toFixed(3)} DT</td>
+                        </tr>
+                        <tr className="real-time-update">
+                          <th className="text-end text-muted fs-6">Net H.T.:</th>
+                          <td className="text-end fw-semibold fs-6">{netHT.toFixed(3)} DT</td>
+                        </tr>
+                        <tr className="real-time-update">
+                          <th className="text-end text-muted fs-6">TVA:</th>
+                          <td className="text-end fw-semibold fs-6">{totalTax.toFixed(3)} DT</td>
+                        </tr>
+                        <tr className="real-time-update">
+                          <th className="text-end text-muted fs-6">Total TTC:</th>
+                          <td className="text-end fw-semibold fs-6 text-dark">
+                            {grandTotal.toFixed(3)} DT
+                          </td>
+                        </tr>
+                        {showRemise && globalRemise > 0 && (
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">
+                              {remiseType === "percentage"
+                                ? `Remise (${globalRemise}%)`
+                                : `Remise (Montant fixe) ${((discountAmount / netHT) * 100).toFixed(1)}%`}
+                            </th>
+                            <td className="text-end text-danger fw-bold fs-6">
+                              - {discountAmount.toFixed(3)} DT
+                            </td>
+                          </tr>
+                        )}
+                       
+                        {/* Timbre Fiscal */}
+                        {timbreFiscal && (
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">Timbre Fiscal:</th>
+                            <td className="text-end fw-semibold fs-6">1.000 DT</td>
+                          </tr>
+                        )}
+                        <tr className="final-total real-time-update border-top">
+                          <th className="text-end fs-5">NET À PAYER:</th>
+                          <td className="text-end fw-bold fs-5 text-primary">
+                            {finalTotal.toFixed(3)} DT
+                          </td>
+                        </tr>
+                      </tbody>
+                    </Table>
+                  </div>
+                </Col>
+              </Row>
+            </div>
+          )}
+        </CardBody>
+      </Card>
+      {/* Notes Section */}
+     {/* Notes Section */}
+<Card className="border-0 shadow-sm">
+  <CardBody className="p-4">
+    <h5 className="fw-semibold mb-3 text-primary">
+      <i className="ri-sticky-note-line me-2"></i>
+      Notes Additionnelles
+    </h5>
+    <div className="mb-3">
+      <Label className="form-label-lg fw-semibold">Notes</Label>
+      <Input
+        type="textarea"
+        name="notes"
+        value={validation.values.notes}
+        onChange={validation.handleChange}
+        rows="3"
+        className="form-control-lg"
+        placeholder="Ajoutez des notes ou commentaires supplémentaires..."
+      />
+    </div>
+  </CardBody>
+</Card>
+    </ModalBody>
+    <ModalFooter className="border-0 pt-4">
+      <Button
+        color="light"
+        onClick={toggleCreateEditModal}
+        className="btn-invoice fs-6 px-4"
+      >
+        <i className="ri-close-line me-2"></i>
+        Annuler
+      </Button>
+      <Button
+        color="primary"
+        type="submit"
+        className="btn-invoice btn-invoice-primary fs-6 px-4"
+        disabled={selectedArticles.length === 0 || !selectedFournisseur}
+      >
+        <i className="ri-save-line me-2"></i>
+        {isEdit ? "Modifier la Facture" : "Créer la Facture"}
+      </Button>
+    </ModalFooter>
+  </Form>
+</Modal>
                                 <Modal isOpen={paymentModal} toggle={() => setPaymentModal(false)} centered>
     <ModalHeader toggle={() => setPaymentModal(false)}>Ajouter Paiement - Facture #{selectedFacture?.numeroFacture}</ModalHeader>
     <Form onSubmit={paymentValidation.handleSubmit}>
@@ -1405,11 +2162,11 @@ const FactureList = () => {
                             onChange={handleMontantChange}
                             onBlur={handleMontantBlur}
                             invalid={paymentValidation.touched.montant && !!paymentValidation.errors.montant}
-                            placeholder="0,00"
+                            placeholder="0,000"
                         />
                         <FormFeedback>{paymentValidation.errors.montant}</FormFeedback>
                         <small className="text-muted">
-                            Reste à payer: {selectedFacture?.resteAPayer?.toFixed(2).replace('.', ',')} DT
+                            Reste à payer: {selectedFacture?.resteAPayer?.toFixed(3).replace('.', ',')} DT
                         </small>
                     </div>
                 </Col>
@@ -1484,5 +2241,4 @@ const FactureList = () => {
         </div>
     );
 };
-
 export default FactureList;

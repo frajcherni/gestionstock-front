@@ -1,7 +1,7 @@
 // services/TresorieServices.ts
 import axios from "axios";
 
-const API_BASE = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 // Define interfaces
 export interface VenteComptoire {

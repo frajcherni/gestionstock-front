@@ -14,7 +14,7 @@ import {
   Modal,
   ModalHeader,
   ModalBody,
-  ModalFooter
+  ModalFooter,
 } from "reactstrap";
 import * as Yup from "yup";
 import { useFormik } from "formik";
@@ -35,6 +35,7 @@ interface User {
   company_email: string;
   company_website: string;
   company_logo: string;
+  company_gsm: string; // Added GSM field
   created_at: string;
   updated_at: string;
   token: string;
@@ -47,10 +48,12 @@ interface FormValues {
   company_name: string;
   company_email: string;
   company_phone: string;
+  company_gsm: string; // Added GSM field
   company_address: string;
   company_city: string;
   company_website: string;
   company_logo: File | null;
+  company_tax_id: string;
 }
 
 interface PasswordFormValues {
@@ -66,6 +69,7 @@ const UserProfile = () => {
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [passwordModal, setPasswordModal] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const API_BASE = process.env.REACT_APP_API_BASE;
 
   // Debug: log the userProfile structure
   useEffect(() => {
@@ -81,7 +85,7 @@ const UserProfile = () => {
     if (file) {
       // Update formik value
       validation.setFieldValue("company_logo", file);
-      
+
       // Create preview
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -109,20 +113,21 @@ const UserProfile = () => {
       formData.append("company_name", values.company_name);
       formData.append("company_email", values.company_email);
       formData.append("company_phone", values.company_phone);
+      formData.append("company_gsm", values.company_gsm); // Added GSM field
       formData.append("company_address", values.company_address);
       formData.append("company_city", values.company_city);
       formData.append("company_website", values.company_website);
-      formData.append('id', userProfile.id.toString());
+      formData.append("id", userProfile.id.toString());
+      formData.append("company_tax_id", values.company_tax_id); // Add this line
 
       if (values.company_logo) {
         formData.append("company_logo", values.company_logo);
       }
 
-      const response = await fetch("http://54.37.159.225:5000/api/Auth/profile", {
-        
+      const response = await fetch(`${API_BASE}/Auth/profile`, {
         method: "PUT",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: formData,
       });
@@ -133,18 +138,17 @@ const UserProfile = () => {
         // Update sessionStorage with new user data
         sessionStorage.setItem("authUser", JSON.stringify(data.user));
         setSuccess("Profile updated successfully!");
-        
+
         // Clear success message after 3 seconds
         setTimeout(() => {
           setSuccess("");
         }, 3000);
-        
+
         // Reload page to reflect changes
         window.location.reload();
       } else {
         setError(data.message || "Error updating profile");
       }
-
     } catch (err) {
       console.error("Error updating profile:", err);
       setError("Error updating profile");
@@ -157,11 +161,11 @@ const UserProfile = () => {
       setError("");
       setSuccess("");
 
-      const response = await fetch("http://54.37.159.225:5000/api/auth/change-password", {
+      const response = await fetch(`${API_BASE}/api/auth/change-password`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           currentPassword: values.currentPassword,
@@ -175,14 +179,13 @@ const UserProfile = () => {
         setSuccess("Password updated successfully!");
         setPasswordModal(false);
         passwordValidation.resetForm();
-        
+
         setTimeout(() => {
           setSuccess("");
         }, 3000);
       } else {
         setError(data.message || "Error changing password");
       }
-
     } catch (err) {
       console.error("Error changing password:", err);
       setError("Error changing password");
@@ -199,8 +202,11 @@ const UserProfile = () => {
       company_name: userProfile?.company_name || "",
       company_email: userProfile?.company_email || "",
       company_phone: userProfile?.company_phone || "",
+      company_gsm: userProfile?.company_gsm || "", // Added GSM field
       company_address: userProfile?.company_address || "",
       company_city: userProfile?.company_city || "",
+      company_tax_id: userProfile?.company_tax_id || "", // Add this line
+
       company_website: userProfile?.company_website || "",
       company_logo: null,
     } as FormValues,
@@ -209,8 +215,11 @@ const UserProfile = () => {
       first_name: Yup.string().required("First name is required"),
       last_name: Yup.string().required("Last name is required"),
       username: Yup.string().required("Username is required"),
-      company_email: Yup.string().email("Invalid email format").required("Company email is required"),
+      company_email: Yup.string()
+        .email("Invalid email format")
+        .required("Company email is required"),
       company_phone: Yup.string().required("Company phone is required"),
+      company_gsm: Yup.string(), // GSM is optional
     }),
     onSubmit: (values: FormValues) => {
       console.log("Submitting form values:", values);
@@ -232,15 +241,13 @@ const UserProfile = () => {
         .min(6, "Password must be at least 6 characters")
         .required("New password is required"),
       confirmPassword: Yup.string()
-        .oneOf([Yup.ref('newPassword')], "Passwords must match")
+        .oneOf([Yup.ref("newPassword")], "Passwords must match")
         .required("Please confirm your password"),
     }),
     onSubmit: (values: PasswordFormValues) => {
       changePassword(values);
     },
   });
-
-
 
   // Show error if no user profile
   if (!userProfile) {
@@ -299,16 +306,18 @@ const UserProfile = () => {
                             onBlur={validation.handleBlur}
                             value={validation.values.company_name}
                             invalid={
-                              validation.touched.company_name && validation.errors.company_name
+                              validation.touched.company_name &&
+                              validation.errors.company_name
                                 ? true
                                 : false
                             }
                           />
-                          {validation.touched.company_name && validation.errors.company_name && (
-                            <FormFeedback type="invalid">
-                              {validation.errors.company_name}
-                            </FormFeedback>
-                          )}
+                          {validation.touched.company_name &&
+                            validation.errors.company_name && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.company_name}
+                              </FormFeedback>
+                            )}
                         </div>
 
                         <div className="form-group mb-3">
@@ -322,16 +331,18 @@ const UserProfile = () => {
                             onBlur={validation.handleBlur}
                             value={validation.values.company_email}
                             invalid={
-                              validation.touched.company_email && validation.errors.company_email
+                              validation.touched.company_email &&
+                              validation.errors.company_email
                                 ? true
                                 : false
                             }
                           />
-                          {validation.touched.company_email && validation.errors.company_email && (
-                            <FormFeedback type="invalid">
-                              {validation.errors.company_email}
-                            </FormFeedback>
-                          )}
+                          {validation.touched.company_email &&
+                            validation.errors.company_email && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.company_email}
+                              </FormFeedback>
+                            )}
                         </div>
 
                         <div className="form-group mb-3">
@@ -345,16 +356,34 @@ const UserProfile = () => {
                             onBlur={validation.handleBlur}
                             value={validation.values.company_phone}
                             invalid={
-                              validation.touched.company_phone && validation.errors.company_phone
+                              validation.touched.company_phone &&
+                              validation.errors.company_phone
                                 ? true
                                 : false
                             }
                           />
-                          {validation.touched.company_phone && validation.errors.company_phone && (
-                            <FormFeedback type="invalid">
-                              {validation.errors.company_phone}
-                            </FormFeedback>
-                          )}
+                          {validation.touched.company_phone &&
+                            validation.errors.company_phone && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.company_phone}
+                              </FormFeedback>
+                            )}
+                        </div>
+
+                        <div className="form-group mb-3">
+                          <Label className="form-label">Company GSM</Label>
+                          <Input
+                            name="company_gsm"
+                            className="form-control"
+                            placeholder="Enter Company GSM/Mobile"
+                            type="text"
+                            onChange={validation.handleChange}
+                            onBlur={validation.handleBlur}
+                            value={validation.values.company_gsm}
+                          />
+                          <small className="text-muted">
+                            Optional mobile number for SMS notifications
+                          </small>
                         </div>
 
                         <div className="form-group mb-3">
@@ -368,6 +397,22 @@ const UserProfile = () => {
                             onBlur={validation.handleBlur}
                             value={validation.values.company_address}
                           />
+                        </div>
+                        {/* Add these fields in the Company Information section */}
+                        <div className="form-group mb-3">
+                          <Label className="form-label">Matricule Fiscal</Label>
+                          <Input
+                            name="company_tax_id"
+                            className="form-control"
+                            placeholder="Enter Tax ID"
+                            type="text"
+                            onChange={validation.handleChange}
+                            onBlur={validation.handleBlur}
+                            value={validation.values.company_tax_id}
+                          />
+                          <small className="text-muted">
+                            Company tax identification number
+                          </small>
                         </div>
 
                         <div className="form-group mb-3">
@@ -398,8 +443,9 @@ const UserProfile = () => {
                       </Col>
 
                       <Col lg="6">
+                        <h5>User Information</h5>
                         <div className="form-group mb-3">
-                          <Label className="form-label">Login *</Label>
+                          <Label className="form-label">Username *</Label>
                           <Input
                             name="username"
                             className="form-control"
@@ -409,16 +455,68 @@ const UserProfile = () => {
                             onBlur={validation.handleBlur}
                             value={validation.values.username}
                             invalid={
-                              validation.touched.username && validation.errors.username
+                              validation.touched.username &&
+                              validation.errors.username
                                 ? true
                                 : false
                             }
                           />
-                          {validation.touched.username && validation.errors.username && (
-                            <FormFeedback type="invalid">
-                              {validation.errors.username}
-                            </FormFeedback>
-                          )}
+                          {validation.touched.username &&
+                            validation.errors.username && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.username}
+                              </FormFeedback>
+                            )}
+                        </div>
+
+                        <div className="form-group mb-3">
+                          <Label className="form-label">First Name *</Label>
+                          <Input
+                            name="first_name"
+                            className="form-control"
+                            placeholder="Enter First Name"
+                            type="text"
+                            onChange={validation.handleChange}
+                            onBlur={validation.handleBlur}
+                            value={validation.values.first_name}
+                            invalid={
+                              validation.touched.first_name &&
+                              validation.errors.first_name
+                                ? true
+                                : false
+                            }
+                          />
+                          {validation.touched.first_name &&
+                            validation.errors.first_name && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.first_name}
+                              </FormFeedback>
+                            )}
+                        </div>
+
+                        <div className="form-group mb-3">
+                          <Label className="form-label">Last Name *</Label>
+                          <Input
+                            name="last_name"
+                            className="form-control"
+                            placeholder="Enter Last Name"
+                            type="text"
+                            onChange={validation.handleChange}
+                            onBlur={validation.handleBlur}
+                            value={validation.values.last_name}
+                            invalid={
+                              validation.touched.last_name &&
+                              validation.errors.last_name
+                                ? true
+                                : false
+                            }
+                          />
+                          {validation.touched.last_name &&
+                            validation.errors.last_name && (
+                              <FormFeedback type="invalid">
+                                {validation.errors.last_name}
+                              </FormFeedback>
+                            )}
                         </div>
 
                         <div className="form-group mb-3">
@@ -441,13 +539,17 @@ const UserProfile = () => {
                             <Label className="form-label">Logo Preview</Label>
                             <div>
                               <img
-                                src={`http://54.37.159.225:5000/uploads/${logoPreview}` }
+                                src={
+                                  logoPreview.startsWith("data:")
+                                    ? logoPreview
+                                    : `${API_BASE}/uploads/${logoPreview}`
+                                }
                                 alt="Logo Preview"
                                 className="img-thumbnail"
-                                style={{ 
-                                  maxWidth: "200px", 
+                                style={{
+                                  maxWidth: "200px",
                                   maxHeight: "200px",
-                                  borderRadius: "0" // Remove rounded corners
+                                  borderRadius: "0",
                                 }}
                               />
                             </div>
@@ -456,18 +558,17 @@ const UserProfile = () => {
                       </Col>
                     </Row>
 
-                    <div className="text-center mt-4 ">
+                    <div className="text-center mt-4">
                       <Button type="submit" color="primary">
                         Update Profile
                       </Button>
                       &nbsp;
-                      <Button 
-                        color="outline-primary" 
+                      <Button
+                        color="outline-primary"
                         onClick={() => setPasswordModal(true)}
                       >
                         Change Password
                       </Button>
-
                     </div>
                   </Form>
                 </CardBody>
@@ -478,8 +579,13 @@ const UserProfile = () => {
       </div>
 
       {/* Change Password Modal */}
-      <Modal isOpen={passwordModal} toggle={() => setPasswordModal(!passwordModal)}>
-        <ModalHeader toggle={() => setPasswordModal(false)}>Change Password</ModalHeader>
+      <Modal
+        isOpen={passwordModal}
+        toggle={() => setPasswordModal(!passwordModal)}
+      >
+        <ModalHeader toggle={() => setPasswordModal(false)}>
+          Change Password
+        </ModalHeader>
         <Form
           onSubmit={(e) => {
             e.preventDefault();
@@ -499,16 +605,18 @@ const UserProfile = () => {
                 onBlur={passwordValidation.handleBlur}
                 value={passwordValidation.values.currentPassword}
                 invalid={
-                  passwordValidation.touched.currentPassword && passwordValidation.errors.currentPassword
+                  passwordValidation.touched.currentPassword &&
+                  passwordValidation.errors.currentPassword
                     ? true
                     : false
                 }
               />
-              {passwordValidation.touched.currentPassword && passwordValidation.errors.currentPassword && (
-                <FormFeedback type="invalid">
-                  {passwordValidation.errors.currentPassword}
-                </FormFeedback>
-              )}
+              {passwordValidation.touched.currentPassword &&
+                passwordValidation.errors.currentPassword && (
+                  <FormFeedback type="invalid">
+                    {passwordValidation.errors.currentPassword}
+                  </FormFeedback>
+                )}
             </div>
 
             <div className="form-group mb-3">
@@ -522,16 +630,18 @@ const UserProfile = () => {
                 onBlur={passwordValidation.handleBlur}
                 value={passwordValidation.values.newPassword}
                 invalid={
-                  passwordValidation.touched.newPassword && passwordValidation.errors.newPassword
+                  passwordValidation.touched.newPassword &&
+                  passwordValidation.errors.newPassword
                     ? true
                     : false
                 }
               />
-              {passwordValidation.touched.newPassword && passwordValidation.errors.newPassword && (
-                <FormFeedback type="invalid">
-                  {passwordValidation.errors.newPassword}
-                </FormFeedback>
-              )}
+              {passwordValidation.touched.newPassword &&
+                passwordValidation.errors.newPassword && (
+                  <FormFeedback type="invalid">
+                    {passwordValidation.errors.newPassword}
+                  </FormFeedback>
+                )}
             </div>
 
             <div className="form-group mb-3">
@@ -545,20 +655,26 @@ const UserProfile = () => {
                 onBlur={passwordValidation.handleBlur}
                 value={passwordValidation.values.confirmPassword}
                 invalid={
-                  passwordValidation.touched.confirmPassword && passwordValidation.errors.confirmPassword
+                  passwordValidation.touched.confirmPassword &&
+                  passwordValidation.errors.confirmPassword
                     ? true
                     : false
                 }
               />
-              {passwordValidation.touched.confirmPassword && passwordValidation.errors.confirmPassword && (
-                <FormFeedback type="invalid">
-                  {passwordValidation.errors.confirmPassword}
-                </FormFeedback>
-              )}
+              {passwordValidation.touched.confirmPassword &&
+                passwordValidation.errors.confirmPassword && (
+                  <FormFeedback type="invalid">
+                    {passwordValidation.errors.confirmPassword}
+                  </FormFeedback>
+                )}
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button type="button" color="secondary" onClick={() => setPasswordModal(false)}>
+            <Button
+              type="button"
+              color="secondary"
+              onClick={() => setPasswordModal(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" color="primary">

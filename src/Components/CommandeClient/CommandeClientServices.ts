@@ -1,13 +1,13 @@
 import { BonCommandeClient } from "../Article/Interfaces";
 
-const API_URL = "http://54.37.159.225:5000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
 
 // *************************************** BON COMMANDE CLIENT
 export const fetchBonsCommandeClient = async (): Promise<BonCommandeClient[]> => {
     debugger
     try {
-        const response = await fetch(`${API_URL}/bons-commande-client/getAllBonCommandeClient`);
+        const response = await fetch(`${API_BASE}/bons-commande-client/getAllBonCommandeClient`);
         if (!response.ok) {
             throw new Error('Failed to fetch client orders');
         }
@@ -20,7 +20,7 @@ export const fetchBonsCommandeClient = async (): Promise<BonCommandeClient[]> =>
 
 export const fetchNextCommandeNumber = async (): Promise<string> => {
     
-    const response = await fetch(`${API_URL}/bons-commande-client/getnumbercommande`);
+    const response = await fetch(`${API_BASE}/bons-commande-client/getnumbercommande`);
     if (!response.ok) throw new Error("Failed to fetch next commande number");
     const data = await response.json();
     return data.numeroCommande;
@@ -29,7 +29,7 @@ export const fetchNextCommandeNumber = async (): Promise<string> => {
 export const createBonCommandeClient = async (bonCommande: Omit<BonCommandeClient, 'id'>): Promise<BonCommandeClient> => {
     
     try {
-        const response = await fetch(`${API_URL}/bons-commande-client/addBonCommandeClient`, {
+        const response = await fetch(`${API_BASE}/bons-commande-client/addBonCommandeClient`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -50,7 +50,7 @@ export const createBonCommandeClient = async (bonCommande: Omit<BonCommandeClien
 export const createBonCommandeClientBasedOnDevis = async (bonCommande: Omit<BonCommandeClient, 'id'>): Promise<BonCommandeClient> => {
     
     try {
-        const response = await fetch(`${API_URL}/bons-commande-client/createBonCommandeClientBasedOnDevis`, {
+        const response = await fetch(`${API_BASE}/bons-commande-client/createBonCommandeClientBasedOnDevis`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -69,28 +69,31 @@ export const createBonCommandeClientBasedOnDevis = async (bonCommande: Omit<BonC
 };
 
 export const updateBonCommandeClient = async (id: number, bonCommande: Partial<BonCommandeClient>): Promise<BonCommandeClient> => {
-   
     try {
-        const response = await fetch(`${API_URL}/bons-commande-client/${id}`, {
+        const response = await fetch(`${API_BASE}/bons-commande-client/${id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(bonCommande),
         });
+        
         if (!response.ok) {
-            throw new Error('Failed to update client order');
+            // Try to get the error message from backend response
+            const errorData = await response.json();
+            const errorMessage = errorData.message || `Failed to update client order: ${response.status} ${response.statusText}`;
+            throw new Error(errorMessage);
         }
+        
         return await response.json();
     } catch (error) {
         console.error('Error updating client order:', error);
         throw error;
     }
 };
-
 export const deleteBonCommandeClient = async (id: number): Promise<void> => {
     try {
-        const response = await fetch(`${API_URL}/bons-commande-client/${id}`, {
+        const response = await fetch(`${API_BASE}/bons-commande-client/${id}`, {
             method: 'DELETE',
         });
         if (!response.ok) {
@@ -109,7 +112,7 @@ export const deleteBonCommandeClient = async (id: number): Promise<void> => {
 export const createDevis = async (bonCommande: Omit<BonCommandeClient, 'id'>): Promise<BonCommandeClient> => {
     
     try {
-        const response = await fetch(`${API_URL}/devis/addBonCommandeClient`, {
+        const response = await fetch(`${API_BASE}/devis/addBonCommandeClient`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -129,7 +132,7 @@ export const createDevis = async (bonCommande: Omit<BonCommandeClient, 'id'>): P
 
 export const deleteDevis = async (id: number): Promise<void> => {
     try {
-        const response = await fetch(`${API_URL}/devis/deleteDevisClient/${id}`, {
+        const response = await fetch(`${API_BASE}/devis/deleteDevisClient/${id}`, {
             method: 'DELETE',
         });
         if (!response.ok) {
@@ -144,7 +147,7 @@ export const deleteDevis = async (id: number): Promise<void> => {
 export const fetchDevis = async (): Promise<BonCommandeClient[]> => {
     
     try {
-        const response = await fetch(`${API_URL}/devis/getAllBonCommandeClient`);
+        const response = await fetch(`${API_BASE}/devis/getAllBonCommandeClient`);
         if (!response.ok) {
             throw new Error('Failed to fetch client orders');
         }
@@ -158,7 +161,7 @@ export const fetchDevis = async (): Promise<BonCommandeClient[]> => {
 export const updateDevis = async (id: number, bonCommande: Partial<BonCommandeClient>): Promise<BonCommandeClient> => {
     debugger
      try {
-         const response = await fetch(`${API_URL}/devis/${id}`, {
+         const response = await fetch(`${API_BASE}/devis/${id}`, {
              method: 'PUT',
              headers: {
                  'Content-Type': 'application/json',
@@ -188,7 +191,7 @@ export const updateDevis = async (id: number, bonCommande: Partial<BonCommandeCl
 
 export const fetchVenteComptoire = async (): Promise<BonCommandeClient[]> => {
     try {
-        const response = await fetch(`${API_URL}/VenteComptoire/getAllVenteComptoire`);
+        const response = await fetch(`${API_BASE}/VenteComptoire/getAllVenteComptoire`);
         if (!response.ok) {
             throw new Error('Failed to fetch client orders');
         }
@@ -203,7 +206,7 @@ export const fetchVenteComptoire = async (): Promise<BonCommandeClient[]> => {
 export const CreateVenteComptoire = async (bonCommande: Omit<BonCommandeClient, 'id'>): Promise<BonCommandeClient> => {
     try {
         debugger
-        const response = await fetch(`${API_URL}/VenteComptoire/addVenteComptoire`, {
+        const response = await fetch(`${API_BASE}/VenteComptoire/addVenteComptoire`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -223,7 +226,7 @@ export const CreateVenteComptoire = async (bonCommande: Omit<BonCommandeClient, 
 
 export const updateventecomptoire = async (id: number, bonCommande: Partial<BonCommandeClient>): Promise<BonCommandeClient> => {
     try {
-        const response = await fetch(`${API_URL}/VenteComptoire/updateventecomptoire/${id}`, {
+        const response = await fetch(`${API_BASE}/VenteComptoire/updateventecomptoire/${id}`, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -243,7 +246,7 @@ export const updateventecomptoire = async (id: number, bonCommande: Partial<BonC
 
 export const deleteventecomptoire = async (id: number): Promise<void> => {
     try {
-        const response = await fetch(`${API_URL}/VenteComptoire/deleteventecomptoire/${id}`, {
+        const response = await fetch(`${API_BASE}/VenteComptoire/deleteventecomptoire/${id}`, {
             method: 'DELETE',
         });
         if (!response.ok) {
@@ -261,7 +264,7 @@ export const deleteventecomptoire = async (id: number): Promise<void> => {
 
 
 export const fetchNextVenteComptoireNumber = async (): Promise<string> => {
-    const response = await fetch(`${API_URL}/VenteComptoire/fetchNextVenteComptoireNumber`);
+    const response = await fetch(`${API_BASE}/VenteComptoire/fetchNextVenteComptoireNumber`);
     if (!response.ok) throw new Error("Failed to fetch next commande number");
     const data = await response.json();
     return data.numeroCommande;

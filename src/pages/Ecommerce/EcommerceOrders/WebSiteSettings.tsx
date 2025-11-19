@@ -50,6 +50,7 @@ const WebsiteArticlesManager = () => {
     const [imagePreviews, setImagePreviews] = useState<string[]>([]);
     const [selectedImages, setSelectedImages] = useState<File[]>([]);
     const searchContainerRef = useRef<HTMLDivElement>(null);
+    const API_BASE = process.env.REACT_APP_API_BASE;
 
     // Add image preview modal state
 const [previewModal, setPreviewModal] = useState(false);
@@ -342,14 +343,14 @@ const validation = useFormik({
                         <div className="d-flex align-items-center">
                             {mainImage ? (
                                 <img 
-                                    src={`http://54.37.159.225:5000/${mainImage.replace(/\\/g, "/")}`}
+                                    src={`${API_BASE}/${mainImage.replace(/\\/g, "/")}`}
                                     alt={article.nom}
                                     className="rounded"
                                     style={{ width: '50px', height: '50px', objectFit: 'cover' }}
                                 />
                             ) : hasAdditionalImages ? (
                                 <img 
-                                    src={`http://54.37.159.225:5000/${article.website_images[0].replace(/\\/g, "/")}`}
+                                    src={`${API_BASE}/${article.website_images[0].replace(/\\/g, "/")}`}
                                     alt={article.nom}
                                     className="rounded"
                                     style={{ width: '50px', height: '50px', objectFit: 'cover' }}
@@ -700,7 +701,7 @@ const validation = useFormik({
                 <Col md={3} key={index} className="mb-2">
                     <div className="position-relative">
                         <img 
-                            src={preview.startsWith('data:') ? preview : `http://54.37.159.225:5000/${preview.replace(/\\/g, "/")}`}
+                            src={preview.startsWith('data:') ? preview : `${API_BASE}/${preview.replace(/\\/g, "/")}`}
                             alt={`Preview ${index + 1}`}
                             className="img-fluid rounded border"
                             style={{ 
@@ -709,7 +710,7 @@ const validation = useFormik({
                                 width: '100%',
                                 cursor: 'pointer' 
                             }}
-                            onClick={() => handleImagePreview(preview.startsWith('data:') ? preview : `http://54.37.159.225:5000/${preview.replace(/\\/g, "/")}`)}
+                            onClick={() => handleImagePreview(preview.startsWith('data:') ? preview : `${API_BASE}/${preview.replace(/\\/g, "/")}`)}
                         />
                         <Button
                             color="danger"
@@ -736,7 +737,7 @@ const validation = useFormik({
         <Label className="form-label">Image principale:</Label>
         <div className="border rounded p-2">
             <img 
-                src={`http://54.37.159.225:5000/${selectedArticle.image.replace(/\\/g, "/")}`}
+                src={`${API_BASE}/${selectedArticle.image.replace(/\\/g, "/")}`}
                 alt={selectedArticle.nom}
                 className="img-fluid rounded"
                 style={{ 
@@ -744,7 +745,7 @@ const validation = useFormik({
                     objectFit: 'cover',
                     cursor: 'pointer'
                 }}
-                onClick={() => handleImagePreview(`http://54.37.159.225:5000/${selectedArticle.image.replace(/\\/g, "/")}`)}
+                onClick={() => handleImagePreview(`${API_BASE}/${selectedArticle.image.replace(/\\/g, "/")}`)}
             />
             <small className="text-muted d-block mt-1">
                 Image principale de l'article
