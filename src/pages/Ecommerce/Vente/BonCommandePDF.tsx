@@ -29,25 +29,32 @@ const styles = StyleSheet.create({
   page: {
     flexDirection: "column",
     backgroundColor: "#FFFFFF",
-    padding: 25,
+    padding: 20,
     fontSize: 11,
     fontFamily: "Helvetica",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 8,
     borderBottom: "1pt solid #000",
-    paddingBottom: 8,
+    paddingBottom: 6,
   },
   commandeDetails: {
-    marginBottom: 8,
+    marginBottom: 6,
   },
   commandeDetailItem: {
-    marginBottom: 3,
+    marginBottom: 2,
   },
   commandeDetailLabel: {
     fontSize: 13,
+  },
+  N: {
+    fontSize: 15,
+  },
+  commandeNumberValue: {
+    fontSize: 16,
+    fontWeight: "bold",
   },
   companyInfo: {
     width: "60%",
@@ -59,8 +66,8 @@ const styles = StyleSheet.create({
   clientVendeurSection: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
-    marginTop: 5,
+    marginBottom: 8,
+    marginTop: 3,
   },
   vendeurInfo: {
     width: "35%",
@@ -68,22 +75,22 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 12,
-    marginBottom: 4,
-    fontWeight: "bold",
+    marginBottom: 3,
+    fontWeight: "normal",
   },
   clientText: {
     fontSize: 10,
-    marginBottom: 2,
+    marginBottom: 1,
     fontWeight: "bold",
   },
   vendeurText: {
     fontSize: 10,
-    marginBottom: 2,
+    marginBottom: 1,
     fontWeight: "bold",
   },
   tableContainer: {
-    marginBottom: 20,
-    marginTop: 8,
+    marginBottom: 15,
+    marginTop: 16, // Increased from 6 to 16 (approx 1cm down)
     borderTop: "1pt solid #ddd",
     borderLeft: "1pt solid #ddd",
     borderRight: "1pt solid #ddd",
@@ -91,13 +98,13 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: "row",
     backgroundColor: "#00aeef",
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
   tableRow: {
     flexDirection: "row",
     borderBottom: "1pt solid #ddd",
-    paddingVertical: 8,
-    minHeight: 28,
+    paddingVertical: 6,
+    minHeight: 24,
   },
   tableColHeader: {
     paddingHorizontal: 4,
@@ -120,149 +127,119 @@ const styles = StyleSheet.create({
   colTVA: { width: "8%" },
   colPUTTC: { width: "10%", textAlign: "right" },
   colMontantTTC: { width: "10%", textAlign: "right" },
-  summarySection: {
+  summaryArea: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: 160,
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 8,
   },
-  totalsContainer: {
-    width: "40%",
-  },
-  tvaBreakdownContainer: {
+  leftColumn: { 
     width: "50%",
+    flexDirection: "column",
   },
-  totalsBox: {
-    padding: 10,
-    border: "1pt solid #ddd",
-  },
-  tvaBreakdownTable: {
+  tvaTable: {
     borderTop: "1pt solid #ddd",
     borderLeft: "1pt solid #ddd",
     borderRight: "1pt solid #ddd",
+    width: "100%",
   },
-  tvaBreakdownHeader: {
+  tvaHeader: {
     flexDirection: "row",
     backgroundColor: "#00aeef",
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  tvaBreakdownRow: {
+  tvaRow: {
     flexDirection: "row",
     borderBottom: "1pt solid #ddd",
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  tvaColTaux: {
-    width: "25%",
-    fontSize: 10,
-    textAlign: "center",
-    paddingHorizontal: 4,
+  tvaHeaderTaux: { width: "25%", fontSize: 10, fontWeight: "bold", textAlign: "center", color: "#fff", paddingHorizontal: 4 },
+  tvaHeaderBase: { width: "35%", fontSize: 10, fontWeight: "bold", textAlign: "right", color: "#fff", paddingHorizontal: 4 },
+  tvaHeaderMontant: { width: "40%", fontSize: 10, fontWeight: "bold", textAlign: "right", color: "#fff", paddingHorizontal: 4 },
+  tvaColTaux: { width: "25%", fontSize: 10, textAlign: "center", paddingHorizontal: 4 },
+  tvaColBase: { width: "35%", fontSize: 10, textAlign: "right", paddingHorizontal: 4 },
+  tvaColMontant: { width: "40%", fontSize: 10, textAlign: "right", paddingHorizontal: 4 },
+  paymentBoxUnderTVA: {
+    width: "100%",
+    border: "1pt solid #ddd",
+    borderTop: "none",
+    marginTop: 8,
+    alignSelf: 'flex-start',
   },
-  tvaColBase: {
-    width: "35%",
-    fontSize: 10,
-    textAlign: "right",
-    paddingHorizontal: 4,
-  },
-  tvaColMontant: {
-    width: "40%",
-    fontSize: 10,
-    textAlign: "right",
-    paddingHorizontal: 4,
-  },
-  tvaHeaderTaux: {
-    width: "25%",
-    fontSize: 10,
-    fontWeight: "bold",
-    textAlign: "center",
-    color: "#ffffff",
-    paddingHorizontal: 4,
-  },
-  tvaHeaderBase: {
-    width: "35%",
-    fontSize: 10,
-    fontWeight: "bold",
-    textAlign: "right",
-    color: "#ffffff",
-    paddingHorizontal: 4,
-  },
-  tvaHeaderMontant: {
-    width: "40%",
-    fontSize: 10,
-    fontWeight: "bold",
-    textAlign: "right",
-    color: "#ffffff",
-    paddingHorizontal: 4,
-  },
-  summaryRow: {
+  paymentHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 4,
+    backgroundColor: "#00aeef",
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
-  summaryLabel: {
-    fontSize: 11,
+  paymentTitle: {
+    fontSize: 8,
+    fontWeight: "bold",
+    color: "#ffffff",
+    textAlign: "center",
+    width: "100%",
   },
-  summaryValue: {
-    fontSize: 11,
+  paymentContent: {
+    padding: 3,
   },
+  paymentLine: {
+    fontSize: 8,
+    marginBottom: 2,
+  },
+  totalsContainer: { width: "40%" },
+  totalsBox: { 
+    padding: 8, 
+    border: "1pt solid #ddd",
+    width: "100%",
+  },
+  summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 3 },
+  summaryLabel: { fontSize: 11 },
+  summaryValue: { fontSize: 11 },
   netAPayerContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    backgroundColor: "#00aeef",
     marginTop: 8,
-    paddingTop: 8,
     borderTop: "2pt solid #333",
-    paddingHorizontal: 10,
-    marginHorizontal: -10,
-    marginBottom: -10,
-    paddingBottom: 10,
+    marginHorizontal: -8,
+    marginBottom: -8,
   },
-  netAPayerLabel: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#ffffff",
-    width: "60%",
+  netAPayerLabel: { 
+    fontSize: 12, 
+    fontWeight: "bold", 
+    backgroundColor: "#00aeef",
+    color: "#ffffff", 
+    width: "50%",
+    paddingVertical: 8,
+    paddingLeft: 8,
   },
-  netAPayerValue: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#ffffff",
-    textAlign: "right",
-    width: "40%",
+  netAPayerValue: { 
+    fontSize: 12, 
+    fontWeight: "bold", 
+    textAlign: "right", 
+    width: "50%",
+    paddingVertical: 6,
+    paddingRight: 8,
   },
   cachetSignatureSection: {
     flexDirection: "row",
     justifyContent: "space-around",
     position: "absolute",
-    bottom: 85,
-    left: 25,
-    right: 25,
+    bottom: 75,
+    left: 20,
+    right: 20,
   },
-  signatureContainer: {
-    width: "35%",
-    alignItems: "center",
-  },
-  cachetContainer: {
-    width: "35%",
-    alignItems: "center",
-  },
-  signatureText: {
-    fontSize: 11,
-    marginBottom: 3,
-    fontWeight: "bold",
-  },
-  cachetText: {
-    fontSize: 11,
-    marginBottom: 3,
-    fontWeight: "bold",
-  },
-  subText: {
-    fontSize: 9,
-    fontStyle: "italic",
-  },
+  signatureContainer: { width: "35%", alignItems: "center" },
+  cachetContainer: { width: "35%", alignItems: "center" },
+  signatureText: { fontSize: 11, marginBottom: 2, fontWeight: "bold" },
+  cachetText: { fontSize: 11, marginBottom: 2, fontWeight: "bold" },
+  subText: { fontSize: 9, fontStyle: "italic" },
   footer: {
     position: "absolute",
     bottom: 5,
-    left: 25,
-    right: 25,
+    left: 20,
+    right: 20,
     textAlign: "center",
     fontSize: 8,
     borderTop: "1pt solid #ddd",
@@ -273,53 +250,43 @@ const styles = StyleSheet.create({
   },
   amountInWords: {
     position: "absolute",
-    left: 25,
-    right: 25,
+    bottom: 115,
+    left: 20,
+    right: 20,
     padding: 8,
     border: "1pt solid #ddd",
   },
-  amountText: {
-    fontSize: 10,
-    textAlign: "center",
-    lineHeight: 1.4,
-  },
-  pageNumber: {
-    position: "absolute",
-    bottom: 5,
-    left: 25,
-    fontSize: 8,
-  },
-  boldText: {
-    fontWeight: "bold",
-  },
+  amountText: { fontSize: 10, textAlign: "center" },
+  pageNumber: { position: "absolute", bottom: 5, left: 20, fontSize: 8 },
+  boldText: { fontWeight: "bold" },
   clientInfoContainer: {
     width: "60%",
     alignItems: "flex-start",
     left: "180",
   },
-  clientLine: {
-    fontSize: 10,
-    marginBottom: 2,
+  clientLine: { fontSize: 10, marginBottom: 1, fontWeight: "bold", flexWrap: "wrap" },
+  clientLineItem: { fontSize: 10, marginBottom: 1, fontWeight: "bold" },
+  continuationHeader: { 
+    fontSize: 10, 
+    textAlign: "center", 
+    marginBottom: 8, 
     fontWeight: "bold",
-    flexWrap: "wrap",
+    backgroundColor: "#f0f0f0",
+    padding: 5,
+    border: "1pt solid #ddd"
   },
-  paymentInfo: {
-    position: "absolute",
-    left: 25,
-    right: 25,
-    fontSize: 9,
+  vendeurPaymentContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
   },
-  paymentText: {
-    marginBottom: 4,
-    textAlign: "center",
-    lineHeight: 1.3,
+  vendeurContainer: {
+    width: '55%',
   },
-  continuationHeader: {
-    fontSize: 10,
-    textAlign: "center",
-    marginBottom: 10,
-    fontWeight: "bold",
-  },
+  paymentContainerAboveTable: {
+    width: '40%',
+  }
 });
 
 interface BonCommandePDFProps {
@@ -352,32 +319,37 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         discountAmount: 0,
         retentionAmount: 0,
         netAPayer: 0,
-        tvaBreakdown: {},
+        acompteTotal: 0,
+        resteAPayer: 0,
+        totalPaye: 0,
+        tvaBreakdown: {} as { [key: number]: { base: number; montant: number } },
+        hasRetention: false,
       };
     }
-
+  
     let sousTotalHTValue = 0;
     let netHTValue = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
     const tvaBreakdown: { [key: number]: { base: number; montant: number } } = {};
-
+  
     bonCommande.articles.forEach((article) => {
       const qty = Number(article.quantite) || 0;
       const tvaRate = Number(article.tva) || 0;
       const remiseRate = Number(article.remise) || 0;
       const priceHT = Number(article.prixUnitaire) || 0;
       const priceTTC = Number(article.prix_ttc) || priceHT * (1 + tvaRate / 100);
+      
       const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
       const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
       const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
       const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-
+  
       sousTotalHTValue += montantSousTotalHT;
       netHTValue += montantNetHT;
       totalTaxValue += montantTVA;
       grandTotalValue += montantTTCLigne;
-
+  
       if (tvaRate > 0) {
         if (!tvaBreakdown[tvaRate]) {
           tvaBreakdown[tvaRate] = { base: 0, montant: 0 };
@@ -386,33 +358,33 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         tvaBreakdown[tvaRate].montant += montantTVA;
       }
     });
-
+  
     sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
     netHTValue = Math.round(netHTValue * 1000) / 1000;
     totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
     grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-
+  
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
     let netHTAfterDiscount = netHTValue;
     let totalTaxAfterDiscount = totalTaxValue;
-
+  
     const remiseValue = Number(bonCommande.remise) || 0;
     const remiseTypeValue = bonCommande.remiseType || "percentage";
-
+  
     if (remiseValue > 0) {
       if (remiseTypeValue === "percentage") {
         discountAmountValue = Math.round(netHTValue * (remiseValue / 100) * 1000) / 1000;
         netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
         const discountRatio = netHTAfterDiscount / netHTValue;
         totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-
+        
         Object.keys(tvaBreakdown).forEach((rate) => {
           const tvaRate = parseFloat(rate);
           tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
           tvaBreakdown[tvaRate].montant = Math.round(tvaBreakdown[tvaRate].montant * discountRatio * 1000) / 1000;
         });
-
+        
         finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
       } else if (remiseTypeValue === "fixed") {
         finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
@@ -421,8 +393,8 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         discountAmountValue = Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
         netHTAfterDiscount = htAfterDiscount;
         totalTaxAfterDiscount = Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+        
         const discountRatio = netHTAfterDiscount / netHTValue;
-
         Object.keys(tvaBreakdown).forEach((rate) => {
           const tvaRate = parseFloat(rate);
           tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
@@ -430,18 +402,27 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         });
       }
     }
-
-    let retentionAmountValue = 0;
-    let netAPayerValue = finalTotalValue;
-
-    if (finalTotalValue > 1000) {
-      retentionAmountValue = Math.round(finalTotalValue * 0.01 * 1000) / 1000;
-      netAPayerValue = Math.round((finalTotalValue - retentionAmountValue) * 1000) / 1000;
-    }
-
+  
+    // Use the montant_retention from the database directly but DON'T reduce from net à payer
+    const retentionAmountValue = Number(bonCommande.montantRetenue) || 0;
+    
+    // DON'T reduce retention from net à payer - keep netAPayer as finalTotal
+    const netAPayerValue = Math.round(finalTotalValue * 1000) / 1000;
+  
     const displayNetHT = remiseValue > 0 ? netHTAfterDiscount : netHTValue;
     const displayTotalTax = remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
-
+  
+    // Calculate acompte total (EXCLUDE RETENUE from payment methods)
+    const acompteTotal = bonCommande.paymentMethods 
+      ? bonCommande.paymentMethods.reduce((sum: number, pm: any) => 
+          pm.method !== "retenue" ? sum + (Number(pm.amount) || 0) : sum, 0)
+      : 0;
+  
+    // Calculate reste à payer
+    const totalPayments = bonCommande.paiements?.reduce((sum, p) => sum + Number(p.montant), 0) || 0;
+    const totalPaye = acompteTotal + totalPayments;
+    const resteAPayerValue = Math.max(0, netAPayerValue - totalPaye);
+  
     return {
       sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
       netHT: Math.round(displayNetHT * 1000) / 1000,
@@ -451,7 +432,11 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
       discountAmount: Math.round(discountAmountValue * 1000) / 1000,
       retentionAmount: retentionAmountValue,
       netAPayer: netAPayerValue,
-      tvaBreakdown,
+      acompteTotal,
+      resteAPayer: resteAPayerValue,
+      totalPaye,
+      tvaBreakdown: tvaBreakdown as { [key: number]: { base: number; montant: number } },
+      hasRetention: bonCommande.hasRetenue || false,
     };
   };
 
@@ -464,7 +449,11 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
     discountAmount,
     retentionAmount,
     netAPayer,
+    acompteTotal,
+    resteAPayer,
+    totalPaye,
     tvaBreakdown,
+    hasRetention,
   } = calculateTotals();
 
   const formatCurrency = (amount: number) => {
@@ -472,207 +461,383 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
   };
 
   const numberToWords = (num: number): string => {
-    const units = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf"];
-    const teens = ["dix", "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf"];
-    const tens = ["", "dix", "vingt", "trente", "quarante", "cinquante", "soixante", "soixante-dix", "quatre-vingt", "quatre-vingt-dix"];
-
+    const units = [
+      "",
+      "un",
+      "deux",
+      "trois",
+      "quatre",
+      "cinq",
+      "six",
+      "sept",
+      "huit",
+      "neuf",
+    ];
+    const teens = [
+      "dix",
+      "onze",
+      "douze",
+      "treize",
+      "quatorze",
+      "quinze",
+      "seize",
+      "dix-sept",
+      "dix-huit",
+      "dix-neuf",
+    ];
+    const tens = [
+      "",
+      "dix",
+      "vingt",
+      "trente",
+      "quarante",
+      "cinquante",
+      "soixante",
+      "soixante-dix",
+      "quatre-vingt",
+      "quatre-vingt-dix",
+    ];
+    
     const integerPart = Math.floor(num);
     if (integerPart === 0) return "Zéro dinars zéro millime uniquement";
-
+    
     let words = "";
-
+    
+    // Handle thousands
     if (integerPart >= 1000) {
       const thousands = Math.floor(integerPart / 1000);
-      words +=
-        thousands === 1
-          ? "mille"
-          : (thousands < 10
-              ? units[thousands]
-              : thousands < 20
-              ? teens[thousands - 10]
-              : tens[Math.floor(thousands / 10)] +
-                (thousands % 10 > 0
-                  ? "-" +
-                    (Math.floor(thousands / 10) === 7 || Math.floor(thousands / 10) === 9
-                      ? teens[thousands % 10]
-                      : units[thousands % 10])
-                  : "")) + " mille";
+      if (thousands === 1) {
+        words += "mille";
+      } else {
+        words += numberToWords(thousands).replace(" dinars zéro millime uniquement", "") + " mille";
+      }
       if (integerPart % 1000 > 0) words += " ";
     }
-
+    
     const remainder = integerPart % 1000;
+    
+    // Handle hundreds
     if (remainder >= 100) {
-      words +=
-        (Math.floor(remainder / 100) === 1
-          ? "cent"
-          : units[Math.floor(remainder / 100)] + " cent") +
-        (remainder % 100 > 0 ? " " : "");
+      const hundreds = Math.floor(remainder / 100);
+      if (hundreds === 1) {
+        words += "cent";
+      } else {
+        words += units[hundreds] + " cent";
+      }
+      if (remainder % 100 > 0) words += " ";
     }
-
+    
+    // Handle tens and units
     const smallRemainder = remainder % 100;
     if (smallRemainder > 0) {
-      words +=
-        smallRemainder < 10
-          ? units[smallRemainder]
-          : smallRemainder < 20
-          ? teens[smallRemainder - 10]
-          : tens[Math.floor(smallRemainder / 10)] +
-            (smallRemainder % 10 > 0
-              ? "-" +
-                (Math.floor(smallRemainder / 10) === 7 || Math.floor(smallRemainder / 10) === 9
-                  ? teens[smallRemainder % 10]
-                  : units[smallRemainder % 10])
-              : "");
+      if (smallRemainder < 10) {
+        words += units[smallRemainder];
+      } else if (smallRemainder < 20) {
+        words += teens[smallRemainder - 10];
+      } else {
+        const tensDigit = Math.floor(smallRemainder / 10);
+        const unitsDigit = smallRemainder % 10;
+        
+        if (tensDigit === 7 || tensDigit === 9) {
+          // Special cases for 70-79 and 90-99
+          words += tens[tensDigit - 1];
+          if (unitsDigit === 1) {
+            words += "-et-onze";
+          } else if (unitsDigit > 1) {
+            words += "-" + teens[unitsDigit];
+          } else {
+            words += "-dix";
+          }
+        } else {
+          words += tens[tensDigit];
+          if (unitsDigit > 0) {
+            if (unitsDigit === 1 && tensDigit !== 8 && tensDigit !== 9) {
+              words += "-et-un";
+            } else {
+              words += "-" + units[unitsDigit];
+            }
+          }
+        }
+      }
     }
-
+    
     words += " dinars zéro millime";
     return words.charAt(0).toUpperCase() + words.slice(1) + " uniquement";
   };
 
   const amountInWords = numberToWords(netAPayer);
-  const totalPayments = bonCommande.paiements?.reduce((sum, p) => sum + Number(p.montant), 0) || 0;
-  const resteAPayer = Math.max(0, netAPayer - totalPayments);
   const hasPayments = bonCommande.paiements && bonCommande.paiements.length > 0;
-  const hasDiscount = Number(bonCommande.remise) > 0;
-  const hasRetention = retentionAmount > 0;
-  const hasTvaBreakdown = Object.keys(tvaBreakdown).length > 0;
+  
+  // PAGINATION LOGIC
+  const totalArticles = bonCommande?.articles?.length || 0;
+  
+  // Determine pagination based on total articles
+  let articlesFirstPage: any[] = [];
+  let articlesSecondPage: any[] = [];
+  let needsSecondPage = false;
+  let totalPages = 1;
 
-  // Calculate dynamic positions for bottom content
-  const calculateBottomPositions = () => {
-    const basePositions = {
-      signatureBottom: 85,
-      amountInWordsBottom: 135,
-      paymentBottom: 140,
-      summaryBottom: 165
-    };
+  if (totalArticles <= 10) {
+    // Single page: show all articles (up to 10)
+    articlesFirstPage = bonCommande?.articles?.slice(0, 10) || [];
+    needsSecondPage = false;
+    totalPages = 1;
+  } else {
+    // Multiple pages: show 15 on first page, rest on second page
+    articlesFirstPage = bonCommande?.articles?.slice(0, 15) || [];
+    articlesSecondPage = bonCommande?.articles?.slice(15) || [];
+    needsSecondPage = true;
+    totalPages = 2;
+  }
 
-    // Adjust for payments
-    if (hasPayments) {
-      const paymentLinesCount = bonCommande.paiements?.length || 0;
-      basePositions.summaryBottom += 60;
-      basePositions.amountInWordsBottom += 45;
-      basePositions.paymentBottom += 40;
-    }
-
-    // Adjust for TVA breakdown
-    if (hasTvaBreakdown) {
-      basePositions.summaryBottom += 20;
-    }
-
-    // Adjust for retention
-    if (hasRetention) {
-      basePositions.summaryBottom += 10;
-    }
-
-    // Adjust for discount
-    if (hasDiscount) {
-      basePositions.summaryBottom += 10;
-    }
-
-    return basePositions;
+  // Function to wrap client info text if it exceeds 25 characters
+  const wrapClientText = (text: string, maxLength: number = 25): string[] => {
+    if (!text || text.length <= maxLength) return [text];
+    
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let currentLine = "";
+    
+    words.forEach((word) => {
+      if ((currentLine + " " + word).length > maxLength) {
+        if (currentLine) lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = currentLine ? currentLine + " " + word : word;
+      }
+    });
+    
+    if (currentLine) lines.push(currentLine);
+    return lines;
   };
-
-  const bottomPositions = calculateBottomPositions();
 
   const renderTVABreakdown = () => {
     const tvaRates = Object.keys(tvaBreakdown)
       .map((rate) => parseFloat(rate))
       .sort((a, b) => a - b);
     if (tvaRates.length === 0) return null;
-
     return (
-      <View style={styles.tvaBreakdownContainer}>
-        <View style={styles.tvaBreakdownTable}>
-          <View style={styles.tvaBreakdownHeader}>
-            <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-            <Text style={styles.tvaHeaderBase}>Base HT</Text>
-            <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-          </View>
-          {tvaRates.map((rate) => (
-            <View style={styles.tvaBreakdownRow} key={rate}>
-              <Text style={styles.tvaColTaux}>{rate}%</Text>
-              <Text style={styles.tvaColBase}>
-                {formatCurrency(tvaBreakdown[rate].base)} DT
-              </Text>
-              <Text style={styles.tvaColMontant}>
-                {formatCurrency(tvaBreakdown[rate].montant)} DT
-              </Text>
-            </View>
-          ))}
+      <View style={styles.tvaTable}>
+        <View style={styles.tvaHeader}>
+          <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
+          <Text style={styles.tvaHeaderBase}>Base HT</Text>
+          <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
         </View>
+        {tvaRates.map((rate) => (
+          <View style={styles.tvaRow} key={rate}>
+            <Text style={styles.tvaColTaux}>{rate}%</Text>
+            <Text style={styles.tvaColBase}>
+              {formatCurrency(tvaBreakdown[rate]?.base || 0)} DT
+            </Text>
+            <Text style={styles.tvaColMontant}>
+              {formatCurrency(tvaBreakdown[rate]?.montant || 0)} DT
+            </Text>
+          </View>
+        ))}
       </View>
     );
   };
 
-  const renderSummarySection = () => (
-    <View
-      style={[
-        styles.summarySection,
-        {
-          position: "absolute",
-          bottom: bottomPositions.summaryBottom,
-          left: 25,
-          right: 25,
-        },
-      ]}
-    >
-      {renderTVABreakdown()}
-      <View style={styles.totalsContainer}>
-        <View style={styles.totalsBox}>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total H.T.:</Text>
-            <Text style={styles.summaryValue}>
-              {formatCurrency(sousTotalHT)} DT
+  const renderPaymentBoxUnderTVA = () => {
+    const paiements = bonCommande.paiements || [];
+    const paymentMethods = bonCommande.paymentMethods || [];
+    
+    const hasPayments = paiements.length > 0 || paymentMethods.length > 0;
+    
+    const paymentLines: JSX.Element[] = [];
+    const descs: JSX.Element[][] = [];
+    const summableModes = ["Espèces", "Virement", "Espece", "especes", "virement"];
+    
+    // Process payment methods (acompte) - EXCLUDE RETENUE
+    paymentMethods.forEach((pm: any) => {
+      const method = pm.method;
+      const amount = Number(pm.amount) || 0;
+      
+      // Skip retenue method - we'll handle it separately at the end
+      if (method === "retenue") {
+        return;
+      }
+      
+      if (summableModes.includes(method)) {
+        // These will be handled in the grouping below
+      } else {
+        // For non-summable methods like cheque, traite
+        const elements: JSX.Element[] = [];
+        
+        if (method === "cheque") {
+          elements.push(<Text key="cheque">chèque </Text>);
+          elements.push(
+            <Text key="banque" style={styles.boldText}>
+              {pm.banque || ''}
             </Text>
-          </View>
-          {hasDiscount && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>
-                {bonCommande.remiseType === "percentage"
-                  ? `Remise (${bonCommande.remise}%)`
-                  : "Remise"}
-                :
-              </Text>
-              <Text style={styles.summaryValue}>
-                - {formatCurrency(discountAmount)} DT
-              </Text>
-            </View>
-          )}
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Net H.T.:</Text>
-            <Text style={styles.summaryValue}>{formatCurrency(netHT)} DT</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>TVA:</Text>
-            <Text style={styles.summaryValue}>
-              {formatCurrency(totalTax)} DT
+          );
+          elements.push(<Text key="n"> N° </Text>);
+          elements.push(
+            <Text key="numero" style={styles.boldText}>
+              {pm.numero || ''}
             </Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Total TTC:</Text>
-            <Text style={styles.summaryValue}>
-              {formatCurrency(grandTotal)} DT
+          );
+        } else if (method === "traite") {
+          elements.push(<Text key="traite">traite N° </Text>);
+          elements.push(
+            <Text key="numero" style={styles.boldText}>
+              {pm.numero || ''}
             </Text>
-          </View>
-          {hasRetention && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Retention (1%):</Text>
-              <Text style={styles.summaryValue}>
-                {formatCurrency(retentionAmount)} DT
-              </Text>
-            </View>
-          )}
-          <View style={styles.netAPayerContainer}>
-            <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
-            <Text style={styles.netAPayerValue}>
-              {formatCurrency(netAPayer)} DT
+          );
+          elements.push(<Text key="echeance1"> échéance </Text>);
+          elements.push(
+            <Text key="echeance2" style={styles.boldText}>
+              {pm.dateEcheance
+                ? moment(pm.dateEcheance).format("DD/MM/YYYY")
+                : "Non spécifiée"}
             </Text>
-          </View>
+          );
+        } else {
+          // For other methods
+          const methodLabel = getMethodLabel(method);
+          elements.push(
+            <Text key="mode" style={styles.boldText}>
+              {methodLabel}
+            </Text>
+          );
+        }
+        
+        elements.push(<Text key="montant1"> d'un montant de </Text>);
+        elements.push(
+          <Text key="montant2" style={styles.boldText}>
+            {formatCurrency(amount)} DT
+          </Text>
+        );
+        
+        descs.push(elements);
+      }
+    });
+  
+    // Process additional paiements
+    paiements.forEach((p) => {
+      if (summableModes.includes(p.modePaiement)) {
+        // These will be handled in grouping
+      } else {
+        descs.push(getPaymentDesc(p));
+      }
+    });
+  
+    // Group summable payments
+    const summable: { [key: string]: number } = {};
+    
+    // Sum payment methods (EXCLUDE RETENUE)
+    paymentMethods.forEach((pm: any) => {
+      const method = pm.method;
+      if (method !== "retenue" && summableModes.includes(method)) {
+        const methodLabel = getMethodLabel(method);
+        if (!summable[methodLabel]) summable[methodLabel] = 0;
+        summable[methodLabel] += Number(pm.amount) || 0;
+      }
+    });
+    
+    // Sum additional paiements
+    paiements.forEach((p) => {
+      if (summableModes.includes(p.modePaiement)) {
+        const methodLabel = getPaymentModeLabel(p.modePaiement);
+        if (!summable[methodLabel]) summable[methodLabel] = 0;
+        summable[methodLabel] += Number(p.montant);
+      }
+    });
+  
+    // Add summable payments to descs
+    Object.keys(summable).forEach((mode) => {
+      const elements: JSX.Element[] = [];
+      elements.push(
+        <Text key="mode" style={styles.boldText}>
+          {mode}
+        </Text>
+      );
+      elements.push(<Text key="montant1"> d'un montant de </Text>);
+      elements.push(
+        <Text key="montant2" style={styles.boldText}>
+          {formatCurrency(summable[mode])} DT
+        </Text>
+      );
+      descs.push(elements);
+    });
+  
+    // ADD RETENTION AS THE LAST ITEM IF has_retenue IS TRUE
+    if (hasRetention && retentionAmount > 0) {
+      const retentionElements: JSX.Element[] = [
+        <Text key="retenue">Retenue à la source d'un montant de </Text>,
+        <Text key="retenueAmount" style={styles.boldText}>
+          {formatCurrency(retentionAmount)} DT
+        </Text>
+      ];
+      descs.push(retentionElements);
+    }
+  
+    // Build payment lines
+    if (descs.length > 0) {
+      const firstLineElements: JSX.Element[] = [
+        <Text key="intro">Commande payée par </Text>,
+      ];
+     
+      const firstLine = [...firstLineElements, ...descs[0]];
+      paymentLines.push(
+        <Text key="first" style={styles.paymentLine}>
+          {firstLine}
+        </Text>
+      );
+      for (let i = 1; i < descs.length; i++) {
+        paymentLines.push(
+          <Text key={`pay${i}`} style={styles.paymentLine}>
+            {descs[i]}
+          </Text>
+        );
+      }
+    }
+  
+    // Always show reste à payer
+    paymentLines.push(
+      <Text key="reste" style={[styles.paymentLine, styles.boldText]}>
+        Reste à payer: {formatCurrency(resteAPayer)} DT
+      </Text>
+    );
+  
+    return (
+      <View style={styles.paymentBoxUnderTVA}>
+        <View style={styles.paymentHeader}>
+          <Text style={styles.paymentTitle}>INFORMATIONS DE PAIEMENTS</Text>
+        </View>
+        <View style={styles.paymentContent}>
+          {paymentLines}
         </View>
       </View>
-    </View>
-  );
-
+    );
+  };
+  
+  // Helper functions
+  const getMethodLabel = (method: string): string => {
+    const labels: { [key: string]: string } = {
+      "especes": "Espèces",
+      "cheque": "Chèque",
+      "virement": "Virement",
+      "traite": "Traite",
+      "carte": "Carte",
+      "tpe": "TPE",
+      "retenue": "Retenue à la source"
+    };
+    return labels[method] || method;
+  };
+  
+  const getPaymentModeLabel = (mode: string): string => {
+    const labels: { [key: string]: string } = {
+      "Espece": "Espèces",
+      "Cheque": "Chèque",
+      "Virement": "Virement",
+      "Traite": "Traite",
+      "Retention": "Retention à la source",
+      "Autre": "Autre"
+    };
+    return labels[mode] || mode;
+  };
+  
   const getPaymentDesc = (p: any): JSX.Element[] => {
     const elements: JSX.Element[] = [];
     if (p.modePaiement === "Cheque") {
@@ -716,9 +881,10 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         </Text>
       );
     } else {
+      const modeLabel = getPaymentModeLabel(p.modePaiement);
       elements.push(
         <Text key="mode" style={styles.boldText}>
-          {p.modePaiement}
+          {modeLabel}
         </Text>
       );
       elements.push(<Text key="montant1"> d'un montant de </Text>);
@@ -731,138 +897,92 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
     return elements;
   };
 
-  const renderPaymentInfo = () => {
-    if (!hasPayments) return null;
-
-    const paiements = bonCommande.paiements || [];
-    const paymentLines: JSX.Element[] = [];
-    const descs: JSX.Element[][] = [];
-    const summableModes = ["Espèces", "Virement"];
-    const summable: { [key: string]: number } = {};
-    const nonSummable: any[] = [];
-
-    paiements.forEach((p) => {
-      if (summableModes.includes(p.modePaiement)) {
-        if (!summable[p.modePaiement]) summable[p.modePaiement] = 0;
-        summable[p.modePaiement] += Number(p.montant);
-      } else {
-        nonSummable.push(p);
-      }
-    });
-
-    Object.keys(summable).forEach((mode) => {
-      const elements: JSX.Element[] = [];
-      elements.push(
-        <Text key="mode" style={styles.boldText}>
-          {mode}
-        </Text>
-      );
-      elements.push(<Text key="montant1"> d'un montant de </Text>);
-      elements.push(
-        <Text key="montant2" style={styles.boldText}>
-          {formatCurrency(summable[mode])} DT
-        </Text>
-      );
-      descs.push(elements);
-    });
-
-    nonSummable.forEach((p) => {
-      descs.push(getPaymentDesc(p));
-    });
-
-    if (descs.length > 0) {
-      const firstLineElements: JSX.Element[] = [
-        <Text key="intro">Commande payée par </Text>,
-      ];
-      if (descs.length > 1) {
-        firstLineElements.push(
-          <Text key="suivants">les paiements suivants: </Text>
-        );
-      }
-      const firstLine = [...firstLineElements, ...descs[0]];
-      paymentLines.push(
-        <Text key="first" style={styles.paymentText}>
-          {firstLine}
-        </Text>
-      );
-      for (let i = 1; i < descs.length; i++) {
-        paymentLines.push(
-          <Text key={`pay${i}`} style={styles.paymentText}>
-            {descs[i]}
-          </Text>
-        );
-      }
-    }
-
-    if (resteAPayer > 0) {
-      paymentLines.push(
-        <Text key="reste" style={[styles.paymentText, { fontWeight: 'bold' }]}>
-          Reste à payer: {formatCurrency(resteAPayer)} DT
-        </Text>
-      );
-    } else {
-      paymentLines.push(
-        <Text key="entier" style={[styles.paymentText, { fontWeight: 'bold' }]}>
-          Commande entièrement payée
-        </Text>
-      );
-    }
-
+  const renderSummarySection = () => {
+    const bottomPos = 160;
+    
     return (
-      <View style={[styles.paymentInfo, { bottom: bottomPositions.paymentBottom }]}>
-        {paymentLines}
+      <View style={[styles.summaryArea, { bottom: bottomPos }]}>
+        <View style={styles.leftColumn}>
+          {renderTVABreakdown()}
+          {renderPaymentBoxUnderTVA()}
+        </View>
+        <View style={styles.totalsContainer}>
+          <View style={styles.totalsBox}>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Total H.T.:</Text>
+              <Text style={styles.summaryValue}>
+                {formatCurrency(sousTotalHT)} DT
+              </Text>
+            </View>
+            {Number(bonCommande.remise) > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  {bonCommande.remiseType === "percentage"
+                    ? `Remise (${bonCommande.remise}%)`
+                    : "Remise"}
+                  :
+                </Text>
+                <Text style={styles.summaryValue}>
+                  - {formatCurrency(discountAmount)} DT
+                </Text>
+              </View>
+            )}
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Net H.T.:</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(netHT)} DT</Text>
+            </View>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>TVA:</Text>
+              <Text style={styles.summaryValue}>
+                {formatCurrency(totalTax)} DT
+              </Text>
+            </View>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Total TTC:</Text>
+              <Text style={styles.summaryValue}>
+                {formatCurrency(grandTotal)} DT
+              </Text>
+            </View>
+            
+            {/* ADD RESTE À PAYER IN TOTALS BOX */}
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Reste à payer:</Text>
+                <Text style={styles.summaryValue}>
+                  {formatCurrency(resteAPayer)} DT
+                </Text>
+              </View>
+            
+            
+            {/* Affichage de l'acompte s'il existe */}
+            {acompteTotal > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Acompte:</Text>
+                <Text style={styles.summaryValue}>
+                   {formatCurrency(acompteTotal)} DT
+                </Text>
+              </View>
+            )}
+            
+            {/* NET À PAYER as table */}
+            <View style={styles.netAPayerContainer}>
+              <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
+              <Text style={styles.netAPayerValue}>
+                {formatCurrency(netAPayer)} DT
+              </Text>
+            </View>
+          </View>
+        </View>
       </View>
     );
   };
 
-  const wrapText = (text: string, maxLength: number = 25): string[] => {
-    if (!text || text.length <= maxLength) return [text];
-    const words = text.split(" ");
-    const lines: string[] = [];
-    let currentLine = "";
-
-    words.forEach((word) => {
-      if ((currentLine + " " + word).length > maxLength) {
-        if (currentLine) lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = currentLine ? currentLine + " " + word : word;
-      }
-    });
-
-    if (currentLine) lines.push(currentLine);
-    return lines;
-  };
-
-  // Pagination logic
-  const articlesPerPage = 12;
-  const articleChunks: any[][] = [];
-  const articles = bonCommande?.articles || [];
-  const totalArticles = articles.length;
-  
-  // Special case: exactly 8 articles
-  const isExactly8Articles = totalArticles === 8;
-  
-  if (isExactly8Articles) {
-    articleChunks.push(articles);
-  } else {
-    const isSpecialCase = totalArticles >= 9 && totalArticles <= 13;
-    if (isSpecialCase) {
-      articleChunks.push(articles);
-    } else {
-      for (let i = 0; i < totalArticles; i += articlesPerPage) {
-        articleChunks.push(articles.slice(i, i + articlesPerPage));
-      }
-    }
-  }
-
-  // If no articles, still create one page
-  if (articleChunks.length === 0) {
-    articleChunks.push([]);
-  }
-
-  const renderTable = (articles: any[], pageIndex: number) => (
+  const renderTable = (articles: any[], pageIndex: number, isContinuation: boolean = false) => (
     <View style={styles.tableContainer}>
+      {isContinuation && (
+        <View style={styles.continuationHeader}>
+          <Text>SUITE DE LA COMMANDE - PAGE {pageIndex + 1}</Text>
+        </View>
+      )}
       <View style={styles.tableHeader}>
         <View style={[styles.colN, styles.tableColHeader]}>
           <Text>N°</Text>
@@ -892,7 +1012,6 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
           <Text>M.TTC</Text>
         </View>
       </View>
-
       {articles.map((item, index) => {
         const qty = Number(item.quantite) || 0;
         const qteLiv = Number(item.quantiteLivree) || 0;
@@ -900,11 +1019,20 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
         const tvaRate = Number(item.tva) || 0;
         const prixTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
         const montantTTC = Math.round(qty * prixTTC * 1000) / 1000;
-
+        
+        // Calculate global index based on pagination
+        let globalIndex;
+        if (pageIndex === 0) {
+          globalIndex = index;
+        } else {
+          // For second page, start from 15 (since first page shows 15 articles)
+          globalIndex = 15 + index;
+        }
+        
         return (
           <View style={styles.tableRow} key={index}>
             <View style={[styles.colN, styles.tableCol]}>
-              <Text>{pageIndex * articlesPerPage + index + 1}</Text>
+              <Text>{globalIndex + 1}</Text>
             </View>
             <View style={[styles.colArticle, styles.tableCol]}>
               <Text>{item.article?.reference || "-"}</Text>
@@ -933,143 +1061,76 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
           </View>
         );
       })}
-
-      {articles.length === 0 && (
-        <View style={styles.tableRow}>
-          <View
-            style={[styles.colDesignation, styles.tableCol, { width: "100%" }]}
-          >
-            <Text>Aucun article</Text>
-          </View>
-        </View>
-      )}
     </View>
   );
 
   const safeBonCommande = bonCommande || {};
   const safeCompanyInfo = companyInfo || {};
-
+  
   const renderPageHeader = (pageIndex: number) => (
     <>
       <View style={styles.header}>
         <View style={styles.companyInfo}>
-          {safeCompanyInfo.logo && (
-            <Image src={safeCompanyInfo.logo} style={styles.logo} />
+          {companyInfo.logo && (
+            <Image src={companyInfo.logo} style={styles.logo} />
           )}
         </View>
       </View>
-
-      {pageIndex === 0 && (
-        <>
-          <View style={styles.commandeDetails}>
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <View>
-                <View style={styles.commandeDetailItem}>
-                  <Text style={styles.commandeDetailLabel}>
-                    N°:{" "}
-                    <Text style={styles.boldText}>
-                      {safeBonCommande.numeroCommande || "N/A"}
-                    </Text>
-                  </Text>
-                </View>
-                <View style={styles.commandeDetailItem}>
-                  <Text style={styles.commandeDetailLabel}>
-                    Date:{" "}
-                    <Text style={styles.boldText}>
-                      {safeBonCommande.dateCommande
-                        ? moment(safeBonCommande.dateCommande).format("DD/MM/YYYY")
-                        : "N/A"}
-                    </Text>
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.clientInfoContainer}>
-                <Text style={styles.sectionTitle}>CLIENT</Text>
-                {safeBonCommande.clientWebsite ? (
-                  <>
-                    {safeBonCommande.clientWebsite.nomPrenom &&
-                      wrapText(safeBonCommande.clientWebsite.nomPrenom).map(
-                        (line, index) => (
-                          <Text
-                            style={styles.clientLine}
-                            key={`nomPrenom-${index}`}
-                          >
-                            {line}
-                          </Text>
-                        )
-                      )}
-                    {safeBonCommande.clientWebsite.telephone && (
-                      <Text style={styles.clientLine}>
-                        Tél: {safeBonCommande.clientWebsite.telephone}
-                      </Text>
-                    )}
-                    {safeBonCommande.clientWebsite.email && (
-                      <Text style={styles.clientLine}>
-                        Email: {safeBonCommande.clientWebsite.email}
-                      </Text>
-                    )}
-                  </>
-                ) : safeBonCommande.client ? (
-                  <>
-                    {safeBonCommande.client.raison_sociale &&
-                      wrapText(safeBonCommande.client.raison_sociale).map(
-                        (line, index) => (
-                          <Text
-                            style={styles.clientLine}
-                            key={`raison-${index}`}
-                          >
-                            {line}
-                          </Text>
-                        )
-                      )}
-                    {safeBonCommande.client.matricule_fiscal && (
-                      <Text style={styles.clientLine}>
-                        MF: {safeBonCommande.client.matricule_fiscal}
-                      </Text>
-                    )}
-                    {safeBonCommande.client.adresse &&
-                      wrapText(safeBonCommande.client.adresse).map(
-                        (line, index) => (
-                          <Text
-                            style={styles.clientLine}
-                            key={`adresse-${index}`}
-                          >
-                            {line}
-                          </Text>
-                        )
-                      )}
-                    {safeBonCommande.client.telephone1 && (
-                      <Text style={styles.clientLine}>
-                        Tél: {safeBonCommande.client.telephone1}
-                      </Text>
-                    )}
-                  </>
-                ) : null}
-              </View>
+      <View style={styles.commandeDetails}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <View>
+            <View style={styles.commandeDetailItem}>
+              <Text style={styles.N}>
+                N°: <Text style={styles.commandeNumberValue}>{bonCommande.numeroCommande || "N/A"}</Text>
+              </Text>
             </View>
-          </View>
-
-          <View style={styles.clientVendeurSection}>
-            <View style={styles.vendeurInfo}>
-              <Text style={styles.sectionTitle}>VENDEUR</Text>
-              {safeBonCommande.vendeur && (
-                <Text style={styles.vendeurText}>
-                  {[safeBonCommande.vendeur.nom, safeBonCommande.vendeur.prenom]
-                    .filter(Boolean)
-                    .join(" ")}
+            <View style={styles.commandeDetailItem}>
+              <Text style={styles.commandeDetailLabel}>
+                Date: <Text style={styles.boldText}>
+                  {bonCommande.dateCommande ? moment(bonCommande.dateCommande).format("DD/MM/YYYY") : "N/A"}
                 </Text>
-              )}
+              </Text>
             </View>
           </View>
-        </>
-      )}
+          <View style={styles.clientInfoContainer}>
+            <Text style={styles.sectionTitle}>CLIENT</Text>
+            {bonCommande.client && (
+              <>
+                {bonCommande.client.raison_sociale && (
+                  wrapClientText(bonCommande.client.raison_sociale).map((line, index) => (
+                    <Text key={`raison-${index}`} style={styles.clientLineItem}>
+                      {line}
+                    </Text>
+                  ))
+                )}
+                {bonCommande.client.matricule_fiscal && (
+                  <Text style={styles.clientLineItem}>MF: {bonCommande.client.matricule_fiscal}</Text>
+                )}
+                {bonCommande.client.adresse && (
+                  wrapClientText(bonCommande.client.adresse).map((line, index) => (
+                    <Text key={`adresse-${index}`} style={styles.clientLineItem}>
+                      {line}
+                    </Text>
+                  ))
+                )}
+                {bonCommande.client.telephone1 && (
+                  <Text style={styles.clientLineItem}>Tél: {bonCommande.client.telephone1}</Text>
+                )}
+              </>
+            )}
+          </View>
+        </View>
+      </View>
+      <View style={styles.vendeurPaymentContainer}>
+        <View style={styles.vendeurContainer}>
+          <Text style={styles.sectionTitle}>VENDEUR</Text>
+          {bonCommande.vendeur && (
+            <Text style={styles.vendeurText}>
+              {[bonCommande.vendeur.nom, bonCommande.vendeur.prenom].filter(Boolean).join(" ")}
+            </Text>
+          )}
+        </View>
+      </View>
     </>
   );
 
@@ -1099,64 +1160,51 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
     </View>
   );
 
-  const renderSummaryContent = () => (
-    <>
-      {renderSummarySection()}
-      <View style={[styles.amountInWords, { bottom: bottomPositions.amountInWordsBottom }]}>
-        <Text style={styles.amountText}>
-          Arrêtée le présent bon de commande à la somme de : {amountInWords}
-        </Text>
-      </View>
-      {renderPaymentInfo()}
-      <View style={styles.cachetSignatureSection}>
-        <View style={styles.signatureContainer}>
-          <Text style={styles.signatureText}>Signature & Cachet</Text>
-          <Text style={styles.subText}>Du Responsable</Text>
+  const renderSummaryContent = () => {
+    const amountBottom = 115;
+    
+    return (
+      <>
+        {renderSummarySection()}
+        <View style={[styles.amountInWords, { bottom: amountBottom }]}>
+          <Text style={styles.amountText}>
+            Arrêté le présent bon de commande à la somme de : {amountInWords}
+          </Text>
         </View>
-        <View style={styles.cachetContainer}>
-          <Text style={styles.cachetText}>Le Client</Text>
-          <Text style={styles.subText}>Reçu conforme</Text>
-          <Text style={styles.subText}>Signature & Cachet</Text>
+        <View style={styles.cachetSignatureSection}>
+          <View style={styles.signatureContainer}>
+            <Text style={styles.signatureText}>Signature & Cachet</Text>
+            <Text style={styles.subText}>Du Responsable</Text>
+          </View>
+          <View style={styles.cachetContainer}>
+            <Text style={styles.cachetText}>Le Client</Text>
+            <Text style={styles.subText}>Reçu conforme</Text>
+            <Text style={styles.subText}>Signature & Cachet</Text>
+          </View>
         </View>
-      </View>
-    </>
-  );
-
-  let addExtraSummaryPage = false;
-  const lastChunkLength = articleChunks.length > 0 ? articleChunks[articleChunks.length - 1].length : 0;
-  
-  // For exactly 8 articles, always use 2 pages
-  if (isExactly8Articles) {
-    addExtraSummaryPage = true;
-  } else if (lastChunkLength >= 9) {
-    addExtraSummaryPage = true;
-  }
-  
-  const totalPages = articleChunks.length + (addExtraSummaryPage ? 1 : 0);
+      </>
+    );
+  };
 
   return (
     <Document>
-      {articleChunks.map((articles, pageIndex) => (
-        <Page key={pageIndex} size="A4" style={styles.page}>
-          {renderPageHeader(pageIndex)}
-          {renderTable(articles, pageIndex)}
-          {!addExtraSummaryPage &&
-            pageIndex === articleChunks.length - 1 &&
-            renderSummaryContent()}
-          {renderFooter()}
-          <Text style={styles.pageNumber}>
-            Page {pageIndex + 1} sur {totalPages}
-          </Text>
-        </Page>
-      ))}
-      {addExtraSummaryPage && (
-        <Page key={articleChunks.length} size="A4" style={styles.page}>
-          {renderPageHeader(articleChunks.length)}
+      {/* FIRST PAGE */}
+      <Page key={0} size="A4" style={styles.page}>
+        {renderPageHeader(0)}
+        {renderTable(articlesFirstPage, 0)}
+        {!needsSecondPage && renderSummaryContent()}
+        {renderFooter()}
+        <Text style={styles.pageNumber}>Page 1 sur {totalPages}</Text>
+      </Page>
+
+      {/* SECOND PAGE - Only if needed */}
+      {needsSecondPage && (
+        <Page key={1} size="A4" style={styles.page}>
+          {renderPageHeader(1)}
+          {renderTable(articlesSecondPage, 1, true)}
           {renderSummaryContent()}
           {renderFooter()}
-          <Text style={styles.pageNumber}>
-            Page {articleChunks.length + 1} sur {totalPages}
-          </Text>
+          <Text style={styles.pageNumber}>Page 2 sur {totalPages}</Text>
         </Page>
       )}
     </Document>

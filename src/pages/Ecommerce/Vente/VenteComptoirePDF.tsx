@@ -15,25 +15,32 @@ const styles = StyleSheet.create({
   page: {
     flexDirection: 'column',
     backgroundColor: '#FFFFFF',
-    padding: 25,
+    padding: 20,
     fontSize: 11,
     fontFamily: 'Helvetica',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 8,
     borderBottom: '1pt solid #000',
-    paddingBottom: 8,
+    paddingBottom: 6,
   },
   commandeDetails: {
-    marginBottom: 8,
+    marginBottom: 6,
   },
   commandeDetailItem: {
-    marginBottom: 3,
+    marginBottom: 2,
   },
   commandeDetailLabel: {
     fontSize: 13,
+  },
+  N: {
+    fontSize: 15,
+  },
+  commandeNumberValue: {
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   companyInfo: {
     width: '60%'
@@ -45,8 +52,8 @@ const styles = StyleSheet.create({
   clientVendeurSection: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
-    marginTop: 5,
+    marginBottom: 8,
+    marginTop: 3,
   },
   vendeurInfo: {
     width: '35%',
@@ -54,22 +61,22 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 12,
-    marginBottom: 4,
-    fontWeight: 'bold',
+    marginBottom: 3,
+    fontWeight: 'normal',
   },
   clientText: {
     fontSize: 10,
-    marginBottom: 2,
+    marginBottom: 1,
     fontWeight: 'bold',
   },
   vendeurText: {
     fontSize: 10,
-    marginBottom: 2,
+    marginBottom: 1,
     fontWeight: 'bold',
   },
   tableContainer: {
-    marginBottom: 20,
-    marginTop: 8,
+    marginBottom: 15,
+    marginTop: 6,
     borderTop: '1pt solid #ddd',
     borderLeft: '1pt solid #ddd',
     borderRight: '1pt solid #ddd',
@@ -77,13 +84,13 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#00aeef',
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
   tableRow: {
     flexDirection: 'row',
     borderBottom: '1pt solid #ddd',
-    paddingVertical: 8,
-    minHeight: 28,
+    paddingVertical: 6,
+    minHeight: 24,
   },
   tableColHeader: {
     paddingHorizontal: 4,
@@ -99,88 +106,56 @@ const styles = StyleSheet.create({
   },
   colN: { width: '5%' },
   colArticle: { width: '15%', textAlign: 'left' },
-  colDesignation: { width: '30%', textAlign: 'left' },
+  colDesignation: { width: '22%', textAlign: 'left' },
   colQuantite: { width: '8%' },
-  colPUHT: { width: '12%', textAlign: 'right' },
+  colPUHT: { width: '10%', textAlign: 'right' },
   colTVA: { width: '8%' },
-  colPUTTC: { width: '12%', textAlign: 'right' },
+  colPUTTC: { width: '10%', textAlign: 'right' },
   colMontantTTC: { width: '10%', textAlign: 'right' },
-  summarySection: {
+  summaryArea: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 160,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 8,
   },
-  totalsContainer: {
-    width: '40%',
-  },
-  tvaBreakdownContainer: {
+  leftColumn: { 
     width: '50%',
+    flexDirection: 'column',
   },
-  totalsBox: {
-    padding: 10,
-    border: '1pt solid #ddd',
-  },
-  tvaBreakdownTable: {
+  tvaTable: {
     borderTop: '1pt solid #ddd',
     borderLeft: '1pt solid #ddd',
     borderRight: '1pt solid #ddd',
+    width: '100%',
   },
-  tvaBreakdownHeader: {
+  tvaHeader: {
     flexDirection: 'row',
     backgroundColor: '#00aeef',
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  tvaBreakdownRow: {
+  tvaRow: {
     flexDirection: 'row',
     borderBottom: '1pt solid #ddd',
-    paddingVertical: 6,
+    paddingVertical: 5,
   },
-  tvaColTaux: {
-    width: '25%',
-    fontSize: 10,
-    textAlign: 'center',
-    paddingHorizontal: 4,
-  },
-  tvaColBase: {
-    width: '35%',
-    fontSize: 10,
-    textAlign: 'right',
-    paddingHorizontal: 4,
-  },
-  tvaColMontant: {
-    width: '40%',
-    fontSize: 10,
-    textAlign: 'right',
-    paddingHorizontal: 4,
-  },
-  tvaHeaderTaux: {
-    width: '25%',
-    fontSize: 10,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    color: '#ffffff',
-    paddingHorizontal: 4,
-  },
-  tvaHeaderBase: {
-    width: '35%',
-    fontSize: 10,
-    fontWeight: 'bold',
-    textAlign: 'right',
-    color: '#ffffff',
-    paddingHorizontal: 4,
-  },
-  tvaHeaderMontant: {
-    width: '40%',
-    fontSize: 10,
-    fontWeight: 'bold',
-    textAlign: 'right',
-    color: '#ffffff',
-    paddingHorizontal: 4,
+  tvaHeaderTaux: { width: '25%', fontSize: 10, fontWeight: 'bold', textAlign: 'center', color: '#fff', paddingHorizontal: 4 },
+  tvaHeaderBase: { width: '35%', fontSize: 10, fontWeight: 'bold', textAlign: 'right', color: '#fff', paddingHorizontal: 4 },
+  tvaHeaderMontant: { width: '40%', fontSize: 10, fontWeight: 'bold', textAlign: 'right', color: '#fff', paddingHorizontal: 4 },
+  tvaColTaux: { width: '25%', fontSize: 10, textAlign: 'center', paddingHorizontal: 4 },
+  tvaColBase: { width: '35%', fontSize: 10, textAlign: 'right', paddingHorizontal: 4 },
+  tvaColMontant: { width: '40%', fontSize: 10, textAlign: 'right', paddingHorizontal: 4 },
+  totalsContainer: { width: '40%' },
+  totalsBox: { 
+    padding: 8, 
+    border: '1pt solid #ddd',
+    width: '100%',
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4
+    marginBottom: 3
   },
   summaryLabel: {
     fontSize: 11,
@@ -191,35 +166,35 @@ const styles = StyleSheet.create({
   netAPayerContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: '#00aeef',
     marginTop: 8,
-    paddingTop: 8,
     borderTop: '2pt solid #333',
-    paddingHorizontal: 10,
-    marginHorizontal: -10,
-    marginBottom: -10,
-    paddingBottom: 10,
+    marginHorizontal: -8,
+    marginBottom: -8,
   },
   netAPayerLabel: {
     fontSize: 12,
     fontWeight: 'bold',
+    backgroundColor: '#00aeef',
     color: '#ffffff',
-    width: '60%',
+    width: '50%',
+    paddingVertical: 8,
+    paddingLeft: 8,
   },
   netAPayerValue: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#ffffff',
     textAlign: 'right',
-    width: '40%',
+    width: '50%',
+    paddingVertical: 6,
+    paddingRight: 8,
   },
   cachetSignatureSection: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     position: 'absolute',
-    bottom: 85,
-    left: 25,
-    right: 25,
+    bottom: 75,
+    left: 20,
+    right: 20,
   },
   signatureContainer: {
     width: '35%',
@@ -231,12 +206,12 @@ const styles = StyleSheet.create({
   },
   signatureText: {
     fontSize: 11,
-    marginBottom: 3,
+    marginBottom: 2,
     fontWeight: 'bold',
   },
   cachetText: {
     fontSize: 11,
-    marginBottom: 3,
+    marginBottom: 2,
     fontWeight: 'bold',
   },
   subText: {
@@ -246,8 +221,8 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute',
     bottom: 5,
-    left: 25,
-    right: 25,
+    left: 20,
+    right: 20,
     textAlign: 'center',
     fontSize: 8,
     borderTop: '1pt solid #ddd',
@@ -258,21 +233,20 @@ const styles = StyleSheet.create({
   },
   amountInWords: {
     position: 'absolute',
-    bottom: 135,
-    left: 25,
-    right: 25,
+    bottom: 115,
+    left: 20,
+    right: 20,
     padding: 8,
     border: '1pt solid #ddd',
   },
   amountText: {
     fontSize: 10,
     textAlign: 'center',
-    fontStyle: 'italic',
   },
   pageNumber: {
     position: 'absolute',
     bottom: 5,
-    left: 25,
+    left: 20,
     fontSize: 8,
   },
   boldText: {
@@ -285,16 +259,21 @@ const styles = StyleSheet.create({
   },
   clientLine: {
     fontSize: 10,
-    marginBottom: 2,
+    marginBottom: 1,
     fontWeight: 'bold',
     flexWrap: 'wrap'
   },
-  // Add continuation header style for subsequent pages
-  continuationHeader: {
-    fontSize: 10,
-    textAlign: 'center',
-    marginBottom: 10,
-    fontWeight: 'bold',
+  vendeurPaymentContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  vendeurContainer: {
+    width: '55%',
+  },
+  paymentContainerAboveTable: {
+    width: '40%',
   }
 });
 
@@ -314,7 +293,6 @@ interface FactureVentePDFProps {
 }
 
 const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyInfo }) => {
-  // Calculate totals exactly like in BonCommandeClientList useMemo
   const calculateTotals = () => {
     if (!bonCommande?.articles || bonCommande.articles.length === 0) {
       return {
@@ -334,7 +312,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     let grandTotalValue = 0;
     const tvaBreakdown: { [key: number]: { base: number; montant: number } } = {};
 
-    // Calculate initial totals with proper rounding
     bonCommande.articles.forEach((article) => {
       const qty = Number(article.quantite) || 0;
       const tvaRate = Number(article.tva) || 0;
@@ -343,7 +320,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       const priceHT = Number(article.prixUnitaire) || 0;
       const priceTTC = priceHT * (1 + tvaRate / 100);
 
-      // Calculate line amounts exactly like bon commande
       const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
       const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
       const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
@@ -363,7 +339,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       }
     });
 
-    // Round accumulated values
     sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
     netHTValue = Math.round(netHTValue * 1000) / 1000;
     totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
@@ -374,7 +349,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     let netHTAfterDiscount = netHTValue;
     let totalTaxAfterDiscount = totalTaxValue;
 
-    // Apply remise logic with proper rounding exactly like bon commande
     const remiseValue = Number(bonCommande.remise) || 0;
     const remiseTypeValue = bonCommande.remiseType || "percentage";
 
@@ -386,7 +360,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         const discountRatio = netHTAfterDiscount / netHTValue;
         totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
         
-        // Update TVA breakdown with discounted amounts
         Object.keys(tvaBreakdown).forEach(rate => {
           const tvaRate = parseFloat(rate);
           tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
@@ -407,7 +380,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         
         const discountRatio = netHTAfterDiscount / netHTValue;
         
-        // Update TVA breakdown with discounted amounts
         Object.keys(tvaBreakdown).forEach(rate => {
           const tvaRate = parseFloat(rate);
           tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
@@ -416,7 +388,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       }
     }
 
-    // Use discounted values for final display
     const displayNetHT = remiseValue > 0 ? netHTAfterDiscount : netHTValue;
     const displayTotalTax = remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
 
@@ -433,12 +404,10 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
 
   const { sousTotalHT, netHT, totalTax, grandTotal, finalTotal, discountAmount, tvaBreakdown } = calculateTotals();
 
-  // Format currency with 3 decimal places
   const formatCurrency = (amount: number) => {
     return amount.toFixed(3);
   };
 
-  // Number to words conversion (same as BonCommandePDF)
   const numberToWords = (num: number): string => {
     const units = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf'];
     const teens = ['dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
@@ -452,7 +421,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     
     let words = '';
     
-    // Handle thousands
     if (integerPart >= 1000) {
       const thousands = Math.floor(integerPart / 1000);
       if (thousands === 1) {
@@ -481,7 +449,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       }
     }
     
-    // Handle hundreds for the remainder
     const remainder = integerPart % 1000;
     if (remainder >= 100) {
       const hundreds = Math.floor(remainder / 100);
@@ -496,7 +463,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       }
     }
     
-    // Handle tens and units for the small remainder
     const smallRemainder = remainder % 100;
     if (smallRemainder > 0) {
       if (smallRemainder < 10) {
@@ -524,7 +490,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
 
   const amountInWords = numberToWords(finalTotal);
 
-  // Text wrapping function
   const wrapText = (text: string, maxLength: number = 25): string[] => {
     if (!text || text.length <= maxLength) return [text];
     const words = text.split(' ');
@@ -544,7 +509,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     return lines;
   };
 
-  // Pagination logic - same as BonCommandePDF and FacturePDF
   const articlesPerPage = 12;
   const articleChunks: any[][] = [];
   const articles = bonCommande?.articles || [];
@@ -553,7 +517,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     articleChunks.push(articles.slice(i, i + articlesPerPage));
   }
   
-  // If no articles, still create one page
   if (articleChunks.length === 0) {
     articleChunks.push([]);
   }
@@ -577,7 +540,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         const tvaRate = Number(item.tva) || 0;
         const remiseRate = Number(item.remise) || 0;
         
-        // Calculate exactly like bon commande
         const prixTTC = priceHT * (1 + tvaRate / 100);
         const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
         const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
@@ -603,7 +565,6 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         );
       })}
       
-      {/* Empty state */}
       {articles.length === 0 && (
         <View style={styles.tableRow}>
           <View style={[styles.colDesignation, styles.tableCol, { width: '100%' }]}>
@@ -618,58 +579,66 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     const tvaRates = Object.keys(tvaBreakdown).map(rate => parseFloat(rate)).sort((a, b) => a - b);
   
     if (tvaRates.length === 0) {
-      // Show empty TVA table with 0 values when no TVA rates
       return (
-        <View style={styles.tvaBreakdownContainer}>
-          <View style={styles.tvaBreakdownTable}>
-            <View style={styles.tvaBreakdownHeader}>
-              <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-              <Text style={styles.tvaHeaderBase}>Base HT</Text>
-              <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-            </View>
-            <View style={styles.tvaBreakdownRow}>
-              <Text style={styles.tvaColTaux}>-</Text>
-              <Text style={styles.tvaColBase}>0,000 DT</Text>
-              <Text style={styles.tvaColMontant}>0,000 DT</Text>
-            </View>
+        <View style={styles.tvaTable}>
+          <View style={styles.tvaHeader}>
+            <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
+            <Text style={styles.tvaHeaderBase}>Base HT</Text>
+            <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
+          </View>
+          <View style={styles.tvaRow}>
+            <Text style={styles.tvaColTaux}>-</Text>
+            <Text style={styles.tvaColBase}>0,000 DT</Text>
+            <Text style={styles.tvaColMontant}>0,000 DT</Text>
           </View>
         </View>
       );
     }
     
     return (
-      <View style={styles.tvaBreakdownContainer}>
-        <View style={styles.tvaBreakdownTable}>
-          <View style={styles.tvaBreakdownHeader}>
-            <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-            <Text style={styles.tvaHeaderBase}>Base HT</Text>
-            <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-          </View>
-         
-          {tvaRates.map(rate => (
-            <View style={styles.tvaBreakdownRow} key={rate}>
-              <Text style={styles.tvaColTaux}>{rate}%</Text>
-              <Text style={styles.tvaColBase}>{formatCurrency(tvaBreakdown[rate].base)} DT</Text>
-              <Text style={styles.tvaColMontant}>
-                {formatCurrency(tvaBreakdown[rate].montant)} DT
-              </Text>
-            </View>
-          ))}
+      <View style={styles.tvaTable}>
+        <View style={styles.tvaHeader}>
+          <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
+          <Text style={styles.tvaHeaderBase}>Base HT</Text>
+          <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
         </View>
+         
+        {tvaRates.map(rate => (
+          <View style={styles.tvaRow} key={rate}>
+            <Text style={styles.tvaColTaux}>{rate}%</Text>
+            <Text style={styles.tvaColBase}>{formatCurrency(tvaBreakdown[rate].base)} DT</Text>
+            <Text style={styles.tvaColMontant}>
+              {formatCurrency(tvaBreakdown[rate].montant)} DT
+            </Text>
+          </View>
+        ))}
       </View>
     );
   };
 
   const renderSummarySection = () => {
+    const bottomPos = 160;
+    
     return (
-      <View style={styles.summarySection}>
-        {renderTVABreakdown()}
+      <View style={[styles.summaryArea, { bottom: bottomPos }]}>
+        <View style={styles.leftColumn}>
+          {renderTVABreakdown()}
+        </View>
         <View style={styles.totalsContainer}>
           <View style={styles.totalsBox}>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Sous-total H.T.:</Text>
+              <Text style={styles.summaryLabel}>Total H.T.:</Text>
               <Text style={styles.summaryValue}>{formatCurrency(sousTotalHT)} DT</Text>
             </View>
+
+            {Number(bonCommande.remise) > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  {bonCommande.remiseType === "percentage" ? `Remise (${bonCommande.remise}%)` : "Remise"}:
+                </Text>
+                <Text style={styles.summaryValue}>- {formatCurrency(discountAmount)} DT</Text>
+              </View>
+            )}
             
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Net H.T.:</Text>
@@ -686,15 +655,7 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
               <Text style={styles.summaryValue}>{formatCurrency(grandTotal)} DT</Text>
             </View>
 
-            {Number(bonCommande.remise) > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {bonCommande.remiseType === "percentage" ? `Remise (${bonCommande.remise}%)` : "Remise (Montant fixe)"}:
-                </Text>
-                <Text style={styles.summaryValue}>- {formatCurrency(discountAmount)} DT</Text>
-              </View>
-            )}
-
+            {/* NET À PAYER as table - Same design as BC */}
             <View style={styles.netAPayerContainer}>
               <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
               <Text style={styles.netAPayerValue}>{formatCurrency(finalTotal)} DT</Text>
@@ -710,28 +671,20 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
 
   const renderPageHeader = (pageIndex: number) => (
     <>
-      {/* Show continuation header for pages after the first */}
-      {pageIndex > 0 && (
-        <View style={styles.continuationHeader}>
-          <Text>Suite de la Facture de Vente - Page {pageIndex + 1}</Text>
-        </View>
-      )}
-      
       <View style={styles.header}>
         <View style={styles.companyInfo}>
           {safeCompanyInfo.logo && <Image src={safeCompanyInfo.logo} style={styles.logo} />}
         </View>
       </View>
       
-      {/* Only show full header details on first page */}
       {pageIndex === 0 && (
         <>
           <View style={styles.commandeDetails}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View>
                 <View style={styles.commandeDetailItem}>
-                  <Text style={styles.commandeDetailLabel}>
-                    N°: <Text style={styles.boldText}>{safeBonCommande.numeroCommande || 'N/A'}</Text>
+                  <Text style={styles.N}>
+                    N°: <Text style={styles.commandeNumberValue}>{safeBonCommande.numeroCommande || 'N/A'}</Text>
                   </Text>
                 </View>
                 <View style={styles.commandeDetailItem}>
@@ -783,8 +736,8 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
             </View>
           </View>
           
-          <View style={styles.clientVendeurSection}>
-            <View style={styles.vendeurInfo}>
+          <View style={styles.vendeurPaymentContainer}>
+            <View style={styles.vendeurContainer}>
               <Text style={styles.sectionTitle}>VENDEUR</Text>
               {safeBonCommande.vendeur && (
                 <Text style={styles.vendeurText}>
@@ -792,11 +745,74 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
                 </Text>
               )}
             </View>
+            <View style={styles.paymentContainerAboveTable}>
+              {/* Empty - same as BC design */}
+            </View>
           </View>
         </>
       )}
     </>
   );
+
+  const renderFooter = () => (
+    <View style={styles.footer}>
+      <Text style={styles.footerLine}>
+        {[safeCompanyInfo.name, safeCompanyInfo.address, safeCompanyInfo.city, safeCompanyInfo.phone, safeCompanyInfo.gsm, safeCompanyInfo.taxId]
+          .filter(Boolean)
+          .join(' - ')}
+      </Text>
+      {safeCompanyInfo.email && safeCompanyInfo.website ? (
+        <Text style={styles.footerLine}>
+          Email: {safeCompanyInfo.email} | Site: {safeCompanyInfo.website}
+        </Text>
+      ) : safeCompanyInfo.email ? (
+        <Text style={styles.footerLine}>Email: {safeCompanyInfo.email}</Text>
+      ) : safeCompanyInfo.website ? (
+        <Text style={styles.footerLine}>Site: {safeCompanyInfo.website}</Text>
+      ) : null}
+    </View>
+  );
+
+  const renderSummaryContent = () => {
+    const amountBottom = 115;
+    
+    return (
+      <>
+        {renderSummarySection()}
+        <View style={[styles.amountInWords, { bottom: amountBottom }]}>
+          <Text style={styles.amountText}>
+            Arrêtée la présente facture à la somme de : {amountInWords}
+          </Text>
+        </View>
+        <View style={styles.cachetSignatureSection}>
+          <View style={styles.signatureContainer}>
+            <Text style={styles.signatureText}>Signature & Cachet</Text>
+            <Text style={styles.subText}>Du Responsable</Text>
+          </View>
+          <View style={styles.cachetContainer}>
+            <Text style={styles.cachetText}>Le Client</Text>
+            <Text style={styles.subText}>Reçu conforme</Text>
+            <Text style={styles.subText}>Signature & Cachet</Text>
+          </View>
+        </View>
+      </>
+    );
+  };
+
+  let addExtraSummaryPage = false;
+  
+  if (articleChunks.length > 1) {
+    addExtraSummaryPage = true;
+  } else if (articleChunks.length === 1) {
+    const articlesOnLastPage = articleChunks[0].length;
+    const maxArticlesForSinglePage = 10;
+    
+    if (articlesOnLastPage > maxArticlesForSinglePage) {
+      addExtraSummaryPage = true;
+    }
+  }
+
+  const totalPages = articleChunks.length + (addExtraSummaryPage ? 1 : 0);
 
   return (
     <Document>
@@ -805,53 +821,27 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
           {renderPageHeader(pageIndex)}
           {renderTable(articles, pageIndex)}
           
-          {/* Summary, amount in words, signatures only on last page */}
-          {pageIndex === articleChunks.length - 1 && (
-            <>
-              {renderSummarySection()}
-              
-              <View style={styles.amountInWords}>
-                <Text style={styles.amountText}>
-                  Arrêtée la présente facture à la somme de : {amountInWords}
-                </Text>
-              </View>
-              
-              <View style={styles.cachetSignatureSection}>
-                <View style={styles.signatureContainer}>
-                  <Text style={styles.signatureText}>Signature & Cachet</Text>
-                  <Text style={styles.subText}>Du Responsable</Text>
-                </View>
-                <View style={styles.cachetContainer}>
-                  <Text style={styles.cachetText}>Le Client</Text>
-                  <Text style={styles.subText}>Reçu conforme</Text>
-                  <Text style={styles.subText}>Signature & Cachet</Text>
-                </View>
-              </View>
-            </>
-          )}
+          {!addExtraSummaryPage &&
+            pageIndex === articleChunks.length - 1 &&
+            renderSummaryContent()}
           
-          <View style={styles.footer}>
-            <Text style={styles.footerLine}>
-              {[safeCompanyInfo.name, safeCompanyInfo.address, safeCompanyInfo.city, safeCompanyInfo.phone , safeCompanyInfo.gsm , safeCompanyInfo.taxId]
-                .filter(Boolean)
-                .join(' - ')}
-            </Text>
-            {safeCompanyInfo.email && safeCompanyInfo.website ? (
-              <Text style={styles.footerLine}>
-                Email: {safeCompanyInfo.email} | Site: {safeCompanyInfo.website}
-              </Text>
-            ) : safeCompanyInfo.email ? (
-              <Text style={styles.footerLine}>Email: {safeCompanyInfo.email}</Text>
-            ) : safeCompanyInfo.website ? (
-              <Text style={styles.footerLine}>Site: {safeCompanyInfo.website}</Text>
-            ) : null}
-          </View>
-          
+          {renderFooter()}
           <Text style={styles.pageNumber}>
-            Page {pageIndex + 1} sur {articleChunks.length}
+            Page {pageIndex + 1} sur {totalPages}
           </Text>
         </Page>
       ))}
+      
+      {addExtraSummaryPage && (
+        <Page key={articleChunks.length} size="A4" style={styles.page}>
+          {renderPageHeader(articleChunks.length)}
+          {renderSummaryContent()}
+          {renderFooter()}
+          <Text style={styles.pageNumber}>
+            Page {articleChunks.length + 1} sur {totalPages}
+          </Text>
+        </Page>
+      )}
     </Document>
   );
 };

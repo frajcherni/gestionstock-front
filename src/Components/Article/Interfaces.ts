@@ -180,6 +180,12 @@ export interface BonLivraison {
     articles: BonLivraisonArticle[];
     createdAt?: string;
     updatedAt?: string;
+    livraisonInfo?: {
+      voiture: string;
+      serie: string;
+      chauffeur: string;
+      cin: string;
+    };
 }
 
 export interface Vendeur {
@@ -228,9 +234,13 @@ export interface PaiementClient {
     updated_at?: string;
     client_id: number;
     vendeur_id: number;
+    acompte? : number;
     client?: Client;
+    hasRetenue: boolean;
+    montantRetenue: number;
     vendeur?: Vendeur;
     totalTTC : number;
+    totalTTCAfterRemise :number;
       modeReglement: "especes" | "cheque" | "virement" | "carte" | "traite" | "autre";
       numeroReglement?: string;
       dateEcheance?: string;
@@ -356,7 +366,20 @@ export interface FactureClient {
     remiseType?: "percentage" | "fixed";
     montantPaye: number;
     resteAPayer: number;
+    hasRetenue: boolean;
+    montantRetenue: number;
+    totalTTCAfterRemise : number;
+    paymentMethods?: Array<{
+      id: string;
+      method: "especes" | "cheque" | "virement" | "traite";
+      amount: number;
+      numero?: string;
+      banque?: string;
+      dateEcheance?: string;
+    }>;
+    totalPaymentAmount?: number;
     createdAt: string;
+    
     updatedAt: string;
 }
 

@@ -38,14 +38,14 @@ export const fetchFactureClientById = async (id: number): Promise<FactureClient>
 
 
 export const createFacture = async (factureData: any): Promise<FactureClient> => {
+    debugger
     try {
         // Validate and map articles array
         const articles = factureData.articles?.map((item: any) => ({
             article_id: Number(item.article_id),
             quantite: Number(item.quantite),
             prix_unitaire: Number(item.prixUnitaire || item.prix_unitaire),
-            prix_ttc: Number(item.prix_ttc ), // Map prixUnitaire to prix_unitaire
-            // Map prixUnitaire to prix_unitaire
+            prix_ttc: Number(item.prix_ttc),
             tva: item.tva ? Number(item.tva) : undefined,
             remise: item.remise ? Number(item.remise) : undefined
         })) || [];
@@ -53,13 +53,24 @@ export const createFacture = async (factureData: any): Promise<FactureClient> =>
         if (!articles.length) {
             throw new Error("Les articles sont requis");
         }
-debugger
+
+        // Process payment methods
+        const paymentMethods = factureData.paymentMethods?.map((pm: any) => ({
+            method: pm.method,
+            amount: Number(pm.amount || 0),
+            numero: pm.numero || "",
+            banque: pm.banque || "",
+            dateEcheance: pm.dateEcheance || "",
+            tauxRetention: pm.tauxRetention ? Number(pm.tauxRetention) : undefined
+        })) || [];
+
+        debugger;
         const response = await axios.post(`${API_BASE}/factures-client/addAllFacturesClient`, {
             numeroFacture: factureData.numeroFacture,
             dateFacture: factureData.dateFacture,
             dateEcheance: factureData.dateEcheance,
             status: factureData.status,
-            conditions: factureData.conditions || "Net à réception", // Default to avoid missing field
+            conditions: factureData.conditions || "Net à réception",
             client_id: Number(factureData.client_id),
             vendeur_id: factureData.vendeur_id ? Number(factureData.vendeur_id) : undefined,
             bonLivraison_id: factureData.bonLivraison_id ? Number(factureData.bonLivraison_id) : undefined,
@@ -67,19 +78,27 @@ debugger
             modeReglement: factureData.modeReglement,
             totalHT: Number(factureData.totalHT || 0),
             totalTVA: Number(factureData.totalTVA || 0),
-            totalTTC: Number(factureData.totalTTC || 0),
+            totalTTC: Number(factureData.totalTTCAfterRemise || 0),
+            totalTTCAfterRemise: Number(factureData.totalTTCAfterRemise || factureData.totalTTC || 0),
             notes: factureData.notes || undefined,
             remise: Number(factureData.remise || 0),
             remiseType: factureData.remiseType || "percentage",
             montantPaye: Number(factureData.montantPaye || 0),
             timbreFiscal: factureData.timbreFiscal ?? false,
             conditionPaiement: factureData.conditionPaiement || null,
+            // NEW FIELDS
+            paymentMethods: paymentMethods,
+            montantRetenue: Number(factureData.montantRetenue || 0),
+            hasRetenue: factureData.hasRetenue || false,
+            espaceNotes: factureData.espaceNotes || null,
+            totalPaymentAmount: Number(factureData.totalPaymentAmount || 0),
         });
         return response.data;
     } catch (error: any) {
         throw new Error(error.response?.data?.message || "Échec de la création de la facture client");
     }
 };
+
 
 
 

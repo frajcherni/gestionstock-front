@@ -30,7 +30,7 @@ const styles = StyleSheet.create({
     color: '#2c3e50',
   },
   companyInfo: {
-    fontSize: 9, // Increased from 6
+    fontSize: 7.5, // Increased from 6
     marginBottom: 2, // Increased
     color: '#666',
   },
@@ -155,6 +155,7 @@ interface VenteComptoireReceiptPDFProps {
     address: string;
     city: string;
     phone: string;
+    gsm : string
     email: string;
     website: string;
     taxId: string;
@@ -283,7 +284,7 @@ const VenteComptoireReceiptPDF: React.FC<VenteComptoireReceiptPDFProps> = ({
           )}
           <Text style={styles.companyInfo}>{companyInfo.address}</Text>
           <Text style={styles.companyInfo}>
-            {companyInfo.city} • Tél: {companyInfo.phone}
+            {companyInfo.city} - Tél: {companyInfo.phone }  - Gsm : {companyInfo.gsm } - MF {companyInfo.taxId } 
           </Text>
         </View>
 

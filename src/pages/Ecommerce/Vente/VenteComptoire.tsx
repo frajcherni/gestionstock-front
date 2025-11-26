@@ -232,6 +232,63 @@ const VenteComptoire = () => {
     }
   };
 
+// Enhanced phone formatting function
+const formatPhoneInput = (value: string): string => {
+  // Remove all non-digit characters
+  const cleaned = value.replace(/\D/g, '');
+  
+  // Limit to 8 digits (Tunisian phone number length)
+  const limited = cleaned.slice(0, 8);
+  
+  // Format as XX XXX XXX
+  if (limited.length <= 2) {
+    return limited;
+  } else if (limited.length <= 5) {
+    return `${limited.substring(0, 2)} ${limited.substring(2)}`;
+  } else {
+    return `${limited.substring(0, 2)} ${limited.substring(2, 5)} ${limited.substring(5, 8)}`;
+  }
+};
+
+// Enhanced phone detection function
+const isPhoneNumberInput = (value: string): boolean => {
+  // Remove spaces for counting
+  const cleanValue = value.replace(/\s/g, '');
+  
+  // If empty, not a phone number
+  if (!cleanValue) return false;
+  
+  // Count digits
+  const digitCount = (cleanValue.match(/\d/g) || []).length;
+  const totalLength = cleanValue.length;
+  
+  // More lenient detection: if mostly digits OR if it's exactly 8 digits with spaces
+  const isMostlyDigits = digitCount >= totalLength * 0.7;
+  const isEightDigitsWithSpaces = cleanValue.length === 8 && digitCount === 8;
+  const hasEightDigitsTotal = digitCount === 8;
+  
+  return isMostlyDigits || isEightDigitsWithSpaces || hasEightDigitsTotal;
+};
+
+// Display formatting function
+const formatPhoneDisplay = (phone: string | null | undefined): string => {
+  if (!phone) return 'N/A';
+  
+  const cleanPhone = phone.replace(/\D/g, '');
+  if (cleanPhone.length === 8) {
+    return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(2, 5)} ${cleanPhone.substring(5, 8)}`;
+  }
+  return phone;
+};
+  // Function to normalize name for searching (remove accents, etc.)
+  const normalizeName = (name: string): string => {
+    return name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .trim();
+  };
+
   // Add this function
   const calculateTTCForQuickCreate = (
     ht: number,
@@ -270,7 +327,6 @@ const VenteComptoire = () => {
       prev.map((pm) => (pm.id === id ? { ...pm, [field]: value } : pm))
     );
   };
-
 
   const handleCreateArticle = async () => {
     try {
@@ -441,7 +497,7 @@ const VenteComptoire = () => {
       website: userProfile?.company_website || "Site web",
       taxId: userProfile?.company_tax_id || "MF",
       logo: logo,
-      gsm: userProfile?.company_phone_gsm,
+      gsm: userProfile?.company_gsm,
     }),
     [userProfile]
   );
@@ -480,16 +536,27 @@ const VenteComptoire = () => {
     }
   }, [articleSearch, articles]);
 
+  // Enhanced client search functionality
+  // Client search functionality - same as Devis
   useEffect(() => {
-    if (clientSearch.length >= 1) {
-      const filtered = clients.filter(
-        (client) =>
-          client.raison_sociale
-            .toLowerCase()
-            .includes(clientSearch.toLowerCase()) ||
-          (client.telephone1 && client.telephone1.includes(clientSearch)) ||
-          (client.telephone2 && client.telephone2.includes(clientSearch))
-      );
+    if (clientSearch.length >= 3) {
+      const searchTerm = clientSearch.toLowerCase().trim();
+
+      const filtered = clients.filter((client) => {
+        // Search by name (partial match anywhere in the name)
+        const nameMatch =
+          client.raison_sociale?.toLowerCase().includes(searchTerm) ||
+          client.designation?.toLowerCase().includes(searchTerm);
+
+        // Search by phone - remove spaces for comparison
+        const cleanSearchTerm = searchTerm.replace(/\s/g, "");
+        const phoneMatch =
+          client.telephone1?.replace(/\s/g, "").includes(cleanSearchTerm) ||
+          client.telephone2?.replace(/\s/g, "").includes(cleanSearchTerm);
+
+        return nameMatch || phoneMatch;
+      });
+
       setFilteredClients(filtered);
     } else {
       setFilteredClients([]);
@@ -733,94 +800,92 @@ const VenteComptoire = () => {
   // Calculate total amount from all payment methods
 
   // Calculate total payment amount
-// Calculate total payment amount - auto-set single payment to finalTotal
-const totalPaymentAmount = useMemo(() => {
-  if (paymentMethods.length === 1) {
-    // Auto-set single payment amount to finalTotal
-    const singlePayment = paymentMethods[0];
-    if (singlePayment.amount !== finalTotal) {
-      // Update the amount automatically
-      setTimeout(() => {
-        updatePaymentMethod(singlePayment.id, 'amount', finalTotal);
-      }, 0);
-    }
-    return finalTotal;
-  }
-  return paymentMethods.reduce((sum, pm) => sum + (pm.amount || 0), 0);
-}, [paymentMethods, finalTotal]);
-
-// Check if payment total matches - always valid for single payment
-const isPaymentTotalValid = useMemo(() => {
-  if (paymentMethods.length === 1) return true;
-  return Math.abs(totalPaymentAmount - finalTotal) < 0.001;
-}, [totalPaymentAmount, finalTotal, paymentMethods.length]);
-  
-const handleSubmit = async (values: any) => {
-  try {
-    // For single payment method, auto-set amount to finalTotal
-    const processedPaymentMethods = paymentMethods.map(pm => {
-      if (paymentMethods.length === 1) {
-        return { ...pm, amount: finalTotal };
+  // Calculate total payment amount - auto-set single payment to finalTotal
+  const totalPaymentAmount = useMemo(() => {
+    if (paymentMethods.length === 1) {
+      // Auto-set single payment amount to finalTotal
+      const singlePayment = paymentMethods[0];
+      if (singlePayment.amount !== finalTotal) {
+        // Update the amount automatically
+        setTimeout(() => {
+          updatePaymentMethod(singlePayment.id, "amount", finalTotal);
+        }, 0);
       }
-      return pm;
-    });
-
-    const processedTotalPaymentAmount = paymentMethods.length === 1 
-      ? finalTotal 
-      : totalPaymentAmount;
-
-    // Validate payment total only for multiple payments
-    if (paymentMethods.length > 1 && !isPaymentTotalValid) {
-      toast.error(
-        `Le total des paiements (${processedTotalPaymentAmount.toFixed(
-          3
-        )} DT) ne correspond pas au montant à payer (${finalTotal.toFixed(
-          3
-        )} DT)`
-      );
-      return;
+      return finalTotal;
     }
+    return paymentMethods.reduce((sum, pm) => sum + (pm.amount || 0), 0);
+  }, [paymentMethods, finalTotal]);
 
-    const venteData = {
-      ...values,
-      taxMode,
-      client_id: selectedClient?.id,
-      articles: selectedArticles.map((item) => ({
-        article_id: item.article_id,
-        quantite: item.quantite,
-        prix_unitaire: item.prixUnitaire,
-        tva: item.tva,
-        remise: item.remise,
-      })),
-      remise: globalRemise,
-      remiseType: remiseType,
-      totalTVA: totalTax,
-      totalTTC: grandTotal,
-      totalTTCAfterRemise: finalTotal,
-      // Use processed payment data
-      paymentMethods: processedPaymentMethods,
-      totalPaymentAmount: processedTotalPaymentAmount,
-      espaceNotes,
-    };
+  // Check if payment total matches - always valid for single payment
+  const isPaymentTotalValid = useMemo(() => {
+    if (paymentMethods.length === 1) return true;
+    return Math.abs(totalPaymentAmount - finalTotal) < 0.001;
+  }, [totalPaymentAmount, finalTotal, paymentMethods.length]);
 
-    // MISSING: Actual API call to save the data
-    if (isEdit && bonCommande) {
-      await updateventecomptoire(bonCommande.id, venteData);
-      toast.success("Vente modifiée avec succès");
-    } else {
-      await CreateVenteComptoire(venteData);
-      toast.success("Vente créée avec succès");
+  const handleSubmit = async (values: any) => {
+    try {
+      // For single payment method, auto-set amount to finalTotal
+      const processedPaymentMethods = paymentMethods.map((pm) => {
+        if (paymentMethods.length === 1) {
+          return { ...pm, amount: finalTotal };
+        }
+        return pm;
+      });
+
+      const processedTotalPaymentAmount =
+        paymentMethods.length === 1 ? finalTotal : totalPaymentAmount;
+
+      // Validate payment total only for multiple payments
+      if (paymentMethods.length > 1 && !isPaymentTotalValid) {
+        toast.error(
+          `Le total des paiements (${processedTotalPaymentAmount.toFixed(
+            3
+          )} DT) ne correspond pas au montant à payer (${finalTotal.toFixed(
+            3
+          )} DT)`
+        );
+        return;
+      }
+
+      const venteData = {
+        ...values,
+        taxMode,
+        client_id: selectedClient?.id,
+        articles: selectedArticles.map((item) => ({
+          article_id: item.article_id,
+          quantite: item.quantite,
+          prix_unitaire: item.prixUnitaire,
+          tva: item.tva,
+          remise: item.remise,
+        })),
+        remise: globalRemise,
+        remiseType: remiseType,
+        totalTVA: totalTax,
+        totalTTC: grandTotal,
+        totalTTCAfterRemise: finalTotal,
+        // Use processed payment data
+        paymentMethods: processedPaymentMethods,
+        totalPaymentAmount: processedTotalPaymentAmount,
+        espaceNotes,
+      };
+
+      // MISSING: Actual API call to save the data
+      if (isEdit && bonCommande) {
+        await updateventecomptoire(bonCommande.id, venteData);
+        toast.success("Vente modifiée avec succès");
+      } else {
+        await CreateVenteComptoire(venteData);
+        toast.success("Vente créée avec succès");
+      }
+
+      // Close modal and refresh data
+      toggleModal();
+      fetchData();
+    } catch (err) {
+      console.error("Erreur sauvegarde:", err);
+      toast.error(err instanceof Error ? err.message : "Échec de l'opération");
     }
-
-    // Close modal and refresh data
-    toggleModal();
-    fetchData();
-
-  } catch (err) {
-    console.error("Erreur sauvegarde:", err);
-    toast.error(err instanceof Error ? err.message : "Échec de l'opération");
-  }
-};
+  };
 
   const validation = useFormik({
     enableReinitialize: true,
@@ -1147,25 +1212,36 @@ const handleSubmit = async (values: any) => {
                     // In your edit button click handler, replace the payment method initialization:
                     // In your edit button click handler:
                     // In your edit button click handler:
-setPaymentMethods(
-  (bonCommande as any)?.paymentMethods && (bonCommande as any).paymentMethods.length > 0
-    ? (bonCommande as any).paymentMethods.map((pm: any, index: number) => ({
-        id: pm.id || `edit-${index}`,
-        method: pm.method,
-        amount: Number(pm.amount) || 0,
-        numero: pm.numero || '',
-        banque: pm.banque || '',
-        dateEcheance: pm.dateEcheance || '',
-      }))
-    : [{
-        id: '1',
-        method: (bonCommande as any)?.modeReglement || "especes",
-        amount: Number(bonCommande?.totalAfterRemise) || finalTotal,
-        numero: (bonCommande as any)?.numeroReglement || '',
-        banque: (bonCommande as any)?.banqueCheque || '',
-        dateEcheance: (bonCommande as any)?.dateEcheance || '',
-      }]
-);
+                    setPaymentMethods(
+                      (bonCommande as any)?.paymentMethods &&
+                        (bonCommande as any).paymentMethods.length > 0
+                        ? (bonCommande as any).paymentMethods.map(
+                            (pm: any, index: number) => ({
+                              id: pm.id || `edit-${index}`,
+                              method: pm.method,
+                              amount: Number(pm.amount) || 0,
+                              numero: pm.numero || "",
+                              banque: pm.banque || "",
+                              dateEcheance: pm.dateEcheance || "",
+                            })
+                          )
+                        : [
+                            {
+                              id: "1",
+                              method:
+                                (bonCommande as any)?.modeReglement ||
+                                "especes",
+                              amount:
+                                Number(bonCommande?.totalAfterRemise) ||
+                                finalTotal,
+                              numero:
+                                (bonCommande as any)?.numeroReglement || "",
+                              banque: (bonCommande as any)?.banqueCheque || "",
+                              dateEcheance:
+                                (bonCommande as any)?.dateEcheance || "",
+                            },
+                          ]
+                    );
                     setModeReglement(bonCommande.modeReglement || "especes");
                     setNumeroReglement(bonCommande.numeroReglement || "");
                     setDateEcheance(
@@ -1361,23 +1437,158 @@ setPaymentMethods(
                                   <i className="ri-user-line me-2"></i>
                                   Informations Client
                                 </h6>
-                                <div className="d-flex align-items-center">
-                                  <div className="flex-grow-1">
-                                    <h5 className="mb-1">
-                                      {selectedBonCommande.client
-                                        ?.raison_sociale || "N/A"}
-                                    </h5>
-                                    <p className="text-muted mb-1">
-                                      <i className="ri-phone-line me-1"></i>
-                                      {selectedBonCommande.client?.telephone1 ||
-                                        "N/A"}
-                                    </p>
-                                    <p className="text-muted mb-0">
-                                      <i className="ri-map-pin-line me-1"></i>
-                                      {selectedBonCommande.client?.adresse ||
-                                        "N/A"}
-                                    </p>
+
+                                {/* Enhanced Client Search Section */}
+                                {/* Vente Comptoire - Client Search Section */}
+                                {/* Client Search Section - Exact same as Devis */}
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Client*
+                                    {!selectedClient && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-link text-primary p-0 ms-2"
+                                        onClick={() => setClientModal(true)}
+                                        title="Ajouter un nouveau client"
+                                        style={{ fontSize: "0.8rem" }}
+                                      >
+                                        <i className="ri-add-line me-1"></i>
+                                        Nouveau client
+                                      </button>
+                                    )}
+                                  </Label>
+                                  <div className="position-relative">
+                                    <Input
+                                      type="text"
+                                      placeholder="Rechercher client par nom ou téléphone..."
+                                      value={
+                                        selectedClient
+                                          ? selectedClient.raison_sociale
+                                          : clientSearch
+                                      }
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+
+                                        if (!value) {
+                                          setSelectedClient(null);
+                                          validation.setFieldValue(
+                                            "client_id",
+                                            ""
+                                          );
+                                          setClientSearch("");
+                                        } else {
+                                          // Auto-format if it looks like a phone number (mostly digits)
+                                          const digitCount = (
+                                            value.match(/\d/g) || []
+                                          ).length;
+                                          const totalLength = value.length;
+
+                                          if (digitCount >= totalLength * 0.7) {
+                                            // If 70% or more are digits
+                                            const formatted =
+                                              formatPhoneInput(value);
+                                            setClientSearch(formatted);
+                                          } else {
+                                            setClientSearch(value);
+                                          }
+                                        }
+                                      }}
+                                      onFocus={() => {
+                                        if (clientSearch.length >= 1) {
+                                          setFilteredClients(clients);
+                                        }
+                                      }}
+                                      readOnly={!!selectedClient}
+                                      className="form-control-lg"
+                                    />
+                                    {selectedClient && (
+                                      <Button
+                                        color="link"
+                                        size="sm"
+                                        className="position-absolute end-0 top-50 translate-middle-y text-danger p-0 me-3"
+                                        onClick={() => {
+                                          setSelectedClient(null);
+                                          validation.setFieldValue(
+                                            "client_id",
+                                            ""
+                                          );
+                                          setClientSearch("");
+                                        }}
+                                      >
+                                        <i className="ri-close-line fs-5"></i>
+                                      </Button>
+                                    )}
                                   </div>
+
+                                  {/* Scrollable Dropdown Results */}
+                                  {!selectedClient &&
+                                    clientSearch.length >= 1 && (
+                                      <div
+                                        className="search-results mt-2 border rounded shadow-sm"
+                                        style={{
+                                          maxHeight: "200px",
+                                          overflowY: "auto",
+                                          position: "absolute",
+                                          width: "100%",
+                                          zIndex: 1000,
+                                          backgroundColor: "white",
+                                        }}
+                                      >
+                                        {filteredClients.length > 0 ? (
+                                          <ul className="list-group list-group-flush">
+                                            {filteredClients.map((c) => (
+                                              <li
+                                                key={c.id}
+                                                className="list-group-item list-group-item-action"
+                                                onClick={() => {
+                                                  setSelectedClient(c);
+                                                  validation.setFieldValue(
+                                                    "client_id",
+                                                    c.id
+                                                  );
+                                                  setClientSearch("");
+                                                  setFilteredClients([]);
+                                                }}
+                                                style={{
+                                                  cursor: "pointer",
+                                                  padding: "10px 15px",
+                                                }}
+                                              >
+                                                <div className="d-flex justify-content-between align-items-center">
+                                                  <span className="fw-medium">
+                                                    {c.raison_sociale}
+                                                  </span>
+                                                  <small className="text-muted">
+                                                    {formatPhoneDisplay(
+                                                      c.telephone1
+                                                    )}
+                                                  </small>
+                                                </div>
+                                                {c.adresse && (
+                                                  <small className="text-muted d-block mt-1">
+                                                    <i className="ri-map-pin-line me-1"></i>
+                                                    {c.adresse}
+                                                  </small>
+                                                )}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        ) : (
+                                          <div className="text-muted p-3 text-center">
+                                            <i className="ri-search-line me-1"></i>
+                                            Aucun résultat trouvé
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                  {validation.touched.client_id &&
+                                    validation.errors.client_id && (
+                                      <div className="text-danger mt-1 fs-6">
+                                        <i className="ri-error-warning-line me-1"></i>
+                                        {validation.errors.client_id}
+                                      </div>
+                                    )}
                                 </div>
                               </CardBody>
                             </Card>
@@ -1776,8 +1987,7 @@ setPaymentMethods(
                             </div>
                           </CardBody>
                         </Card>
-                     {/* In your detail modal - Payment Information */}
-
+                        {/* In your detail modal - Payment Information */}
                       </div>
                     )}
                   </ModalBody>
@@ -1970,64 +2180,74 @@ setPaymentMethods(
                               </h6>
                               {/* Client Search Section - Updated */}
                               <div className="mb-3">
-                                <Label className="form-label-lg fw-semibold">
-                                  Client*
-                                </Label>
-                                <div className="position-relative">
-                                  <Input
-                                    type="text"
-                                    placeholder="Rechercher par nom, raison sociale ou téléphone..."
-                                    value={
-                                      selectedClient
-                                        ? selectedClient.raison_sociale
-                                        : clientSearch
-                                    }
-                                    onChange={(e) => {
-                                      if (!e.target.value) {
-                                        setSelectedClient(null);
-                                        validation.setFieldValue(
-                                          "client_id",
-                                          ""
-                                        );
-                                      }
-                                      setClientSearch(e.target.value);
-                                    }}
-                                    readOnly={!!selectedClient}
-                                    className="form-control-lg pe-10"
-                                  />
+  <Label className="form-label-lg fw-semibold">
+    Client*
+    {!selectedClient && (
+      <button
+        type="button"
+        className="btn btn-link text-primary p-0 ms-2"
+        onClick={() => setClientModal(true)}
+        title="Ajouter un nouveau client"
+        style={{ fontSize: "0.8rem" }}
+      >
+        <i className="ri-add-line me-1"></i>
+        Nouveau client
+      </button>
+    )}
+  </Label>
+  
+  <div className="position-relative">
+    <Input
+      type="text"
+      placeholder="Rechercher client par nom ou téléphone..."
+      value={
+        selectedClient
+          ? selectedClient.raison_sociale
+          : clientSearch
+      }
+      onChange={(e) => {
+        const value = e.target.value;
 
-                                  {/* Clear button when client is selected */}
-                                  {selectedClient && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                      onClick={() => {
-                                        setSelectedClient(null);
-                                        setClientSearch("");
-                                        validation.setFieldValue(
-                                          "client_id",
-                                          ""
-                                        );
-                                      }}
-                                      title="Changer de client"
-                                    >
-                                      <i className="ri-close-line fs-5"></i>
-                                    </button>
-                                  )}
-
-                                  {/* Add button when no client is selected */}
-                                  {!selectedClient && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                      onClick={() => setClientModal(true)}
-                                      title="Ajouter un nouveau client"
-                                    >
-                                      <i className="ri-add-line fs-5"></i>
-                                    </button>
-                                  )}
-                                </div>
-
+        if (!value) {
+          setSelectedClient(null);
+          validation.setFieldValue("client_id", "");
+          setClientSearch("");
+        } else {
+          // Enhanced phone detection - check if input looks like a phone number
+          const isLikelyPhoneNumber = isPhoneNumberInput(value);
+          
+          if (isLikelyPhoneNumber) {
+            const formatted = formatPhoneInput(value);
+            setClientSearch(formatted);
+          } else {
+            setClientSearch(value);
+          }
+        }
+      }}
+      onFocus={() => {
+        if (clientSearch.length >= 1) {
+          setFilteredClients(clients);
+        }
+      }}
+      readOnly={!!selectedClient}
+      className="form-control-lg"
+    />
+    
+    {selectedClient && (
+      <Button
+        color="link"
+        size="sm"
+        className="position-absolute end-0 top-50 translate-middle-y text-danger p-0 me-3"
+        onClick={() => {
+          setSelectedClient(null);
+          validation.setFieldValue("client_id", "");
+          setClientSearch("");
+        }}
+      >
+        <i className="ri-close-line fs-5"></i>
+      </Button>
+    )}
+  </div>
                                 {/* Client Dropdown Results - Updated to show phone numbers */}
                                 {!selectedClient &&
                                   clientSearch.length >= 1 && (
@@ -2937,9 +3157,6 @@ setPaymentMethods(
                       {/* Payment Method Section */}
                       <Card className="border-0 shadow-sm mb-4">
                         <CardBody className="p-4">
-                    
-
-
                           {/* Chèque - Show number and bank on same line */}
                           {modeReglement === "cheque" && (
                             <Row>
@@ -3083,176 +3300,269 @@ setPaymentMethods(
                           {/* In your detail modal payment section */}
                           {/* Enhanced Payment Method Section */}
                           {/* Simple Payment Method Section */}
-                       {/* Simple Payment Method Section */}
-<Card className="border-0 shadow-sm mb-4">
-  <CardBody className="p-4">
-    <div className="d-flex justify-content-between align-items-center mb-3">
-      <h5 className="fw-semibold text-primary mb-0">
-        <i className="ri-bank-card-line me-2"></i>
-        Modes de Règlement
-      </h5>
-      
-      <Button
-        color="primary"
-        size="sm"
-        onClick={addPaymentMethod}
-        className="btn-invoice-primary"
-      >
-        <i className="ri-add-line me-1"></i>
-        Ajouter Paiement
-      </Button>
-    </div>
+                          {/* Simple Payment Method Section */}
+                          <Card className="border-0 shadow-sm mb-4">
+                            <CardBody className="p-4">
+                              <div className="d-flex justify-content-between align-items-center mb-3">
+                                <h5 className="fw-semibold text-primary mb-0">
+                                  <i className="ri-bank-card-line me-2"></i>
+                                  Modes de Règlement
+                                </h5>
 
-    {/* Payment Methods List */}
-    {paymentMethods.map((payment, index) => (
-      <div key={payment.id} className="border rounded p-3 mb-3 bg-light">
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h6 className="fw-semibold mb-0 text-dark">
-            Paiement #{index + 1}
-          </h6>
-          
-          {paymentMethods.length > 1 && (
-            <Button
-              color="danger"
-              size="sm"
-              onClick={() => removePaymentMethod(payment.id)}
-              className="btn-invoice-danger"
-            >
-              <i className="ri-close-line"></i>
-            </Button>
-          )}
-        </div>
+                                <Button
+                                  color="primary"
+                                  size="sm"
+                                  onClick={addPaymentMethod}
+                                  className="btn-invoice-primary"
+                                >
+                                  <i className="ri-add-line me-1"></i>
+                                  Ajouter Paiement
+                                </Button>
+                              </div>
 
-        <Row className="g-3">
-          {/* Method Type */}
-          <Col md={paymentMethods.length === 1 ? 12 : 3}>
-            <Label className="form-label fw-semibold">Type</Label>
-            <Input
-              type="select"
-              value={payment.method}
-              onChange={(e) =>
-                updatePaymentMethod(payment.id, 'method', e.target.value)
-              }
-              className="form-control"
-            >
-              <option value="especes">Espèces</option>
-              <option value="cheque">Chèque</option>
-              <option value="virement">Virement</option>
-              <option value="traite">Traite</option>
-            </Input>
-          </Col>
+                              {/* Payment Methods List */}
+                              {paymentMethods.map((payment, index) => (
+                                <div
+                                  key={payment.id}
+                                  className="border rounded p-3 mb-3 bg-light"
+                                >
+                                  <div className="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 className="fw-semibold mb-0 text-dark">
+                                      Paiement #{index + 1}
+                                    </h6>
 
-          {/* Montant - Only show when multiple payment methods */}
-          {paymentMethods.length > 1 && (
-            <Col md={3}>
-              <Label className="form-label fw-semibold">Montant (DT)</Label>
-              <Input
-                type="number"
-                step="0.001"
-                min="0"
-                value={payment.amount === 0 ? '' : payment.amount}
-                onChange={(e) => {
-                  const value = e.target.value === '' ? 0 : Number(e.target.value);
-                  updatePaymentMethod(payment.id, 'amount', value);
-                }}
-                placeholder="0.000"
-                className="form-control"
-              />
-            </Col>
-          )}
+                                    {paymentMethods.length > 1 && (
+                                      <Button
+                                        color="danger"
+                                        size="sm"
+                                        onClick={() =>
+                                          removePaymentMethod(payment.id)
+                                        }
+                                        className="btn-invoice-danger"
+                                      >
+                                        <i className="ri-close-line"></i>
+                                      </Button>
+                                    )}
+                                  </div>
 
-          {/* Numéro - Only for cheque and traite */}
-          {(payment.method === 'cheque' || payment.method === 'traite') && (
-            <Col md={paymentMethods.length === 1 ? 6 : 3}>
-              <Label className="form-label fw-semibold">
-                {payment.method === 'cheque' ? 'Numéro Chèque' : 'Numéro Traite'}
-              </Label>
-              <Input
-                type="text"
-                value={payment.numero || ''}
-                onChange={(e) => updatePaymentMethod(payment.id, 'numero', e.target.value)}
-                placeholder={payment.method === 'cheque' ? 'N° chèque' : 'N° traite'}
-                className="form-control"
-              />
-            </Col>
-          )}
+                                  <Row className="g-3">
+                                    {/* Method Type */}
+                                    <Col
+                                      md={paymentMethods.length === 1 ? 12 : 3}
+                                    >
+                                      <Label className="form-label fw-semibold">
+                                        Type
+                                      </Label>
+                                      <Input
+                                        type="select"
+                                        value={payment.method}
+                                        onChange={(e) =>
+                                          updatePaymentMethod(
+                                            payment.id,
+                                            "method",
+                                            e.target.value
+                                          )
+                                        }
+                                        className="form-control"
+                                      >
+                                        <option value="especes">Espèces</option>
+                                        <option value="cheque">Chèque</option>
+                                        <option value="virement">
+                                          Virement
+                                        </option>
+                                        <option value="traite">Traite</option>
+                                      </Input>
+                                    </Col>
 
-          {/* Banque - Only for cheque */}
-          {payment.method === 'cheque' && (
-            <Col md={paymentMethods.length === 1 ? 6 : 3}>
-              <Label className="form-label fw-semibold">Banque</Label>
-              <Input
-                type="text"
-                value={payment.banque || ''}
-                onChange={(e) => updatePaymentMethod(payment.id, 'banque', e.target.value)}
-                placeholder="Nom banque"
-                className="form-control"
-              />
-            </Col>
-          )}
+                                    {/* Montant - Only show when multiple payment methods */}
+                                    {paymentMethods.length > 1 && (
+                                      <Col md={3}>
+                                        <Label className="form-label fw-semibold">
+                                          Montant (DT)
+                                        </Label>
+                                        <Input
+                                          type="number"
+                                          step="0.001"
+                                          min="0"
+                                          value={
+                                            payment.amount === 0
+                                              ? ""
+                                              : payment.amount
+                                          }
+                                          onChange={(e) => {
+                                            const value =
+                                              e.target.value === ""
+                                                ? 0
+                                                : Number(e.target.value);
+                                            updatePaymentMethod(
+                                              payment.id,
+                                              "amount",
+                                              value
+                                            );
+                                          }}
+                                          placeholder="0.000"
+                                          className="form-control"
+                                        />
+                                      </Col>
+                                    )}
 
-          {/* Date Échéance - Only for traite */}
-          {payment.method === 'traite' && (
-            <Col md={paymentMethods.length === 1 ? 6 : 3}>
-              <Label className="form-label fw-semibold">Date Échéance</Label>
-              <Input
-                type="date"
-                value={payment.dateEcheance || moment().format('YYYY-MM-DD')}
-                onChange={(e) => updatePaymentMethod(payment.id, 'dateEcheance', e.target.value)}
-                className="form-control"
-              />
-            </Col>
-          )}
-        </Row>
+                                    {/* Numéro - Only for cheque and traite */}
+                                    {(payment.method === "cheque" ||
+                                      payment.method === "traite") && (
+                                      <Col
+                                        md={paymentMethods.length === 1 ? 6 : 3}
+                                      >
+                                        <Label className="form-label fw-semibold">
+                                          {payment.method === "cheque"
+                                            ? "Numéro Chèque"
+                                            : "Numéro Traite"}
+                                        </Label>
+                                        <Input
+                                          type="text"
+                                          value={payment.numero || ""}
+                                          onChange={(e) =>
+                                            updatePaymentMethod(
+                                              payment.id,
+                                              "numero",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder={
+                                            payment.method === "cheque"
+                                              ? "N° chèque"
+                                              : "N° traite"
+                                          }
+                                          className="form-control"
+                                        />
+                                      </Col>
+                                    )}
 
-        {/* Auto-set amount to finalTotal when only one payment method */}
-        {paymentMethods.length === 1 && (
-          <div className="mt-2">
-            <small className="text-muted">
-              <i className="ri-information-line me-1"></i>
-              Montant automatiquement défini à: <strong>{finalTotal.toFixed(3)} DT</strong>
-            </small>
-          </div>
-        )}
-      </div>
-    ))}
+                                    {/* Banque - Only for cheque */}
+                                    {payment.method === "cheque" && (
+                                      <Col
+                                        md={paymentMethods.length === 1 ? 6 : 3}
+                                      >
+                                        <Label className="form-label fw-semibold">
+                                          Banque
+                                        </Label>
+                                        <Input
+                                          type="text"
+                                          value={payment.banque || ""}
+                                          onChange={(e) =>
+                                            updatePaymentMethod(
+                                              payment.id,
+                                              "banque",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder="Nom banque"
+                                          className="form-control"
+                                        />
+                                      </Col>
+                                    )}
 
-    {/* Payment Summary - Only show when multiple payment methods */}
-    {paymentMethods.length > 1 && (
-      <Card className={isPaymentTotalValid ? "border-success bg-success bg-opacity-10" : "border-warning bg-warning bg-opacity-10"}>
-        <CardBody className="p-3">
-          <Row className="align-items-center">
-            <Col md={8}>
-              <div className="d-flex justify-content-between">
-                <span className="fw-semibold">Total des Paiements:</span>
-                <span className="fw-bold fs-5">{totalPaymentAmount.toFixed(3)} DT</span>
-              </div>
-              <div className="d-flex justify-content-between mt-1">
-                <span className="fw-semibold">Montant à Payer:</span>
-                <span className="fw-bold fs-5">{finalTotal.toFixed(3)} DT</span>
-              </div>
-            </Col>
-            <Col md={4}>
-              <div className="text-end">
-                {isPaymentTotalValid ? (
-                  <Badge color="success" className="fs-6">
-                    <i className="ri-check-line me-1"></i>
-                    Équilibré
-                  </Badge>
-                ) : (
-                  <Badge color="warning" className="fs-6">
-                    <i className="ri-error-warning-line me-1"></i>
-                    Différence: {(totalPaymentAmount - finalTotal).toFixed(3)} DT
-                  </Badge>
-                )}
-              </div>
-            </Col>
-          </Row>
-        </CardBody>
-      </Card>
-    )}
-  </CardBody>
-</Card>
+                                    {/* Date Échéance - Only for traite */}
+                                    {payment.method === "traite" && (
+                                      <Col
+                                        md={paymentMethods.length === 1 ? 6 : 3}
+                                      >
+                                        <Label className="form-label fw-semibold">
+                                          Date Échéance
+                                        </Label>
+                                        <Input
+                                          type="date"
+                                          value={
+                                            payment.dateEcheance ||
+                                            moment().format("YYYY-MM-DD")
+                                          }
+                                          onChange={(e) =>
+                                            updatePaymentMethod(
+                                              payment.id,
+                                              "dateEcheance",
+                                              e.target.value
+                                            )
+                                          }
+                                          className="form-control"
+                                        />
+                                      </Col>
+                                    )}
+                                  </Row>
+
+                                  {/* Auto-set amount to finalTotal when only one payment method */}
+                                  {paymentMethods.length === 1 && (
+                                    <div className="mt-2">
+                                      <small className="text-muted">
+                                        <i className="ri-information-line me-1"></i>
+                                        Montant automatiquement défini à:{" "}
+                                        <strong>
+                                          {finalTotal.toFixed(3)} DT
+                                        </strong>
+                                      </small>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+
+                              {/* Payment Summary - Only show when multiple payment methods */}
+                              {paymentMethods.length > 1 && (
+                                <Card
+                                  className={
+                                    isPaymentTotalValid
+                                      ? "border-success bg-success bg-opacity-10"
+                                      : "border-warning bg-warning bg-opacity-10"
+                                  }
+                                >
+                                  <CardBody className="p-3">
+                                    <Row className="align-items-center">
+                                      <Col md={8}>
+                                        <div className="d-flex justify-content-between">
+                                          <span className="fw-semibold">
+                                            Total des Paiements:
+                                          </span>
+                                          <span className="fw-bold fs-5">
+                                            {totalPaymentAmount.toFixed(3)} DT
+                                          </span>
+                                        </div>
+                                        <div className="d-flex justify-content-between mt-1">
+                                          <span className="fw-semibold">
+                                            Montant à Payer:
+                                          </span>
+                                          <span className="fw-bold fs-5">
+                                            {finalTotal.toFixed(3)} DT
+                                          </span>
+                                        </div>
+                                      </Col>
+                                      <Col md={4}>
+                                        <div className="text-end">
+                                          {isPaymentTotalValid ? (
+                                            <Badge
+                                              color="success"
+                                              className="fs-6"
+                                            >
+                                              <i className="ri-check-line me-1"></i>
+                                              Équilibré
+                                            </Badge>
+                                          ) : (
+                                            <Badge
+                                              color="warning"
+                                              className="fs-6"
+                                            >
+                                              <i className="ri-error-warning-line me-1"></i>
+                                              Différence:{" "}
+                                              {(
+                                                totalPaymentAmount - finalTotal
+                                              ).toFixed(3)}{" "}
+                                              DT
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </Col>
+                                    </Row>
+                                  </CardBody>
+                                </Card>
+                              )}
+                            </CardBody>
+                          </Card>
                         </CardBody>
                       </Card>
 

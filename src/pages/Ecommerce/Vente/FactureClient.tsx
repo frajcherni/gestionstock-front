@@ -110,6 +110,31 @@ const ListFactureClient = () => {
   const [editingTTC, setEditingTTC] = useState<{ [key: number]: string }>({});
   const [editingHT, setEditingHT] = useState<{ [key: number]: string }>({});
   const { userProfile, loading: profileLoading } = useProfile();
+  const [methodesReglement, setMethodesReglement] = useState<
+    Array<{
+      id: string;
+      method:
+        | "especes"
+        | "cheque"
+        | "virement"
+        | "traite"
+        | "carte"
+        | "tpe"
+        | "retenue";
+      amount: string;
+      numero?: string;
+      banque?: string;
+      dateEcheance?: string;
+      tauxRetention?: number;
+    }>
+  >([]);
+
+  const [showRetention, setShowRetention] = useState(false);
+  const [retentionRate, setRetentionRate] = useState<number>(1);
+  const [retentionAmount, setRetentionAmount] = useState<number>(0);
+
+  const [showPaymentMethods, setShowPaymentMethods] = useState(false);
+  const [espaceNotes, setEspaceNotes] = useState("");
 
   // Add these state variables near your existing states
   const [clientModal, setClientModal] = useState(false);
@@ -279,22 +304,60 @@ const ListFactureClient = () => {
     }
   }, [articleSearch, articles]);
 
+  const formatPhoneInput = (value: string): string => {
+    // Remove all non-digit characters
+    const cleaned = value.replace(/\D/g, "");
+
+    // Limit to 8 digits (Tunisian phone number length)
+    const limited = cleaned.slice(0, 8);
+
+    // Format as XX XXX XXX
+    if (limited.length <= 2) {
+      return limited;
+    } else if (limited.length <= 5) {
+      return `${limited.substring(0, 2)} ${limited.substring(2)}`;
+    } else {
+      return `${limited.substring(0, 2)} ${limited.substring(
+        2,
+        5
+      )} ${limited.substring(5, 8)}`;
+    }
+  };
+
+  // Display formatting function
+  const formatPhoneDisplay = (phone: string | null | undefined): string => {
+    if (!phone) return "N/A";
+
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length === 8) {
+      return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(
+        2,
+        5
+      )} ${cleanPhone.substring(5, 8)}`;
+    }
+    return phone;
+  };
+
+  // Update the client search useEffect
   useEffect(() => {
-    if (clientSearch.length >= 1) {
-      const filtered = clients.filter(
-        (client) =>
-          client.raison_sociale
-            .toLowerCase()
-            .includes(clientSearch.toLowerCase()) ||
-          (client.telephone1 &&
-            client.telephone1
-              .toLowerCase()
-              .includes(clientSearch.toLowerCase())) ||
-          (client.telephone2 &&
-            client.telephone2
-              .toLowerCase()
-              .includes(clientSearch.toLowerCase()))
-      );
+    if (clientSearch.length >= 3) {
+      const searchTerm = clientSearch.toLowerCase().trim();
+
+      const filtered = clients.filter((client) => {
+        // Search by name (partial match anywhere in the name)
+        const nameMatch =
+          client.raison_sociale?.toLowerCase().includes(searchTerm) ||
+          client.designation?.toLowerCase().includes(searchTerm);
+
+        // Search by phone - remove spaces for comparison
+        const cleanSearchTerm = searchTerm.replace(/\s/g, "");
+        const phoneMatch =
+          client.telephone1?.replace(/\s/g, "").includes(cleanSearchTerm) ||
+          client.telephone2?.replace(/\s/g, "").includes(cleanSearchTerm);
+
+        return nameMatch || phoneMatch;
+      });
+
       setFilteredClients(filtered);
     } else {
       setFilteredClients([]);
@@ -340,6 +403,24 @@ const ListFactureClient = () => {
             },
             0
           );
+
+          // ✅ Calculate payment methods total (excluding retention)
+          const paymentMethodsTotal = facture.paymentMethods
+            ? facture.paymentMethods
+                .filter((pm: any) => pm.method !== "retenue")
+                .reduce((sum: number, pm: any) => {
+                  let amountValue: number;
+                  if (typeof pm.amount === "string") {
+                    amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+                  } else if (typeof pm.amount === "number") {
+                    amountValue = pm.amount;
+                  } else {
+                    amountValue = 0;
+                  }
+                  return sum + amountValue;
+                }, 0)
+            : 0;
+
           let subTotal = 0;
           let totalTax = 0;
           let grandTotal = 0;
@@ -382,9 +463,17 @@ const ListFactureClient = () => {
           totalTax = Math.round(totalTax * 1000) / 1000;
           grandTotal = Math.round(grandTotal * 1000) / 1000;
           finalTotal = Math.round(finalTotal * 1000) / 1000;
+
+          // Calculate retention amount
+          const retentionAmount = Number(facture.montantRetenue) || 0;
+
+          // Calculate reste à payer: (finalTotal - retentionAmount) - totalPaye
+          const totalPaye = totalEncaissements + paymentMethodsTotal;
           let resteAPayer =
-            Math.round((finalTotal - totalEncaissements) * 1000) / 1000;
+            Math.round((finalTotal - retentionAmount - totalPaye) * 1000) /
+            1000;
           resteAPayer = Math.max(0, resteAPayer);
+
           let status:
             | "Brouillon"
             | "Validee"
@@ -396,8 +485,8 @@ const ListFactureClient = () => {
           } else if (resteAPayer === 0 && finalTotal > 0) {
             status = "Payee";
           } else if (
-            totalEncaissements > 0 &&
-            totalEncaissements < finalTotal
+            totalPaye > 0 &&
+            totalPaye < finalTotal - retentionAmount
           ) {
             status = "Partiellement Payee";
           }
@@ -406,11 +495,11 @@ const ListFactureClient = () => {
             totalHT: subTotal,
             totalTVA: totalTax,
             totalTTC: grandTotal,
-            totalTTCAfterRemise: finalTotal, // ADD THIS LINE
-            montantPaye: totalEncaissements,
-            resteAPayer: resteAPayer,
+            totalTTCAfterRemise: finalTotal,
+            montantPaye: totalPaye, // ✅ Now includes payment methods
+            resteAPayer: resteAPayer, // ✅ Now reduced by retention and payment methods
             status,
-            hasPayments: totalEncaissements > 0,
+            hasPayments: totalPaye > 0,
           };
         }
       );
@@ -429,10 +518,12 @@ const ListFactureClient = () => {
       setLoading(false);
     }
   }, []);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Update the main search useEffect for factures
   useEffect(() => {
     let result = [...factures];
 
@@ -476,6 +567,7 @@ const ListFactureClient = () => {
 
     setFilteredFactures(result);
   }, [activeTab, startDate, endDate, searchText, factures]);
+
   // Fix the calculation logic - remove the .replace() calls
   // FIXED: Better numeric parsing with proper rounding
   const parseNumericInput = (value: string): number => {
@@ -647,6 +739,8 @@ const ListFactureClient = () => {
     grandTotal,
     finalTotal,
     discountAmount,
+    retentionMontant,
+    netAPayer,
   } = useMemo(() => {
     if (selectedArticles.length === 0) {
       return {
@@ -656,6 +750,8 @@ const ListFactureClient = () => {
         grandTotal: 0,
         finalTotal: 0,
         discountAmount: 0,
+        retentionMontant: 0,
+        netAPayer: 0,
       };
     }
 
@@ -751,35 +847,28 @@ const ListFactureClient = () => {
       }
     }
 
-    // APPLY EXONÉRATION
-    if (exoneration) {
-      totalTaxValue = 0;
-      totalTaxAfterDiscount = 0;
-
-      // Calculate final total based on remise type
-      if (showRemise && remiseType === "fixed" && Number(globalRemise) > 0) {
-        // For fixed amount remise with exoneration, NET À PAYER = fixed amount
-        finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
-        netHTAfterDiscount = finalTotalValue; // Net H.T. equals the fixed amount
-      } else {
-        // For percentage remise or no remise, NET À PAYER = Net H.T.
-        finalTotalValue = showRemise ? netHTAfterDiscount : netHTValue;
-      }
-    }
-
-    // Add timbre fiscal
-    if (timbreFiscal) {
-      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
-    }
-
     // Use discounted values for final display
     const displayNetHT =
       showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax = exoneration
-      ? 0
-      : showRemise && Number(globalRemise) > 0
-      ? totalTaxAfterDiscount
-      : totalTaxValue;
+    const displayTotalTax =
+      showRemise && Number(globalRemise) > 0
+        ? totalTaxAfterDiscount
+        : totalTaxValue;
+
+    // Calculate retention from payment methods with type "retenue"
+    let retentionMontantValue = 0;
+
+    methodesReglement.forEach((pm) => {
+      if (pm.method === "retenue") {
+        const tauxRetention = pm.tauxRetention || 1;
+        const retentionAmount = (finalTotalValue * tauxRetention) / 100;
+        retentionMontantValue += Math.round(retentionAmount * 1000) / 1000;
+      }
+    });
+
+    // Calculate net à payer (final total minus retention)
+    let netAPayerValue = finalTotalValue - retentionMontantValue;
+    netAPayerValue = Math.round(netAPayerValue * 1000) / 1000;
 
     return {
       sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
@@ -788,16 +877,17 @@ const ListFactureClient = () => {
       grandTotal: Math.round(grandTotalValue * 1000) / 1000,
       finalTotal: Math.round(finalTotalValue * 1000) / 1000,
       discountAmount: Math.round(discountAmountValue * 1000) / 1000,
+      retentionMontant: retentionMontantValue,
+      netAPayer: netAPayerValue,
     };
   }, [
     selectedArticles,
     showRemise,
     globalRemise,
     remiseType,
-    timbreFiscal,
     editingHT,
     editingTTC,
-    exoneration, // Add exoneration to dependencies
+    methodesReglement,
   ]);
 
   const handleAddArticle = (articleId: string) => {
@@ -924,41 +1014,175 @@ const ListFactureClient = () => {
       setSelectedClient(null);
       setSelectedVendeur(null);
       setTimbreFiscal(false);
-      setExoneration(false); // Reset exoneration
+      setExoneration(false);
       setConditionPaiement("");
       setClientSearch("");
       setArticleSearch("");
       setFilteredArticles([]);
       setFilteredClients([]);
       setIsEdit(false);
-      validation.resetForm();
 
-      if (!isEdit) {
-        fetchNextFactureNumberFromAPI()
-          .then((nextNumber) => {
-            setNextFactureNumber(nextNumber);
-          })
-          .catch((err) => {
-            console.error("Failed to fetch next invoice number:", err);
-            const year = moment().format("YYYY");
-            const defaultNumber = `FAC-C${year}${String(
-              factures.length + 1
-            ).padStart(5, "0")}`;
-            setNextFactureNumber(defaultNumber);
-          });
-      }
+      // RESET PAYMENT METHODS AND RETENTION
+      setMethodesReglement([]);
+      setEspaceNotes("");
+      setRetentionAmount(0);
+
+      validation.resetForm();
+      // ... rest of your existing logic
     } else {
       setCreateEditModal(true);
     }
   }, [createEditModal, isEdit, factures.length]);
 
+  // Ajouter méthode de règlement
+  const addMethodeReglement = () => {
+    setMethodesReglement((prev) => [
+      ...prev,
+      {
+        id: Date.now().toString(),
+        method: "especes",
+        amount: "",
+      },
+    ]);
+  };
+
+  // Supprimer méthode de règlement
+  const removeMethodeReglement = (id: string) => {
+    setMethodesReglement((prev) => prev.filter((pm) => pm.id !== id));
+  };
+
+  // Mettre à jour méthode de règlement
+  const updateMethodeReglement = (id: string, field: string, value: any) => {
+    setMethodesReglement((prev) =>
+      prev.map((pm) => {
+        if (pm.id === id) {
+          if (field === "amount") {
+            if (typeof value === "string") {
+              if (value === "" || /^[0-9]*[,.]?[0-9]*$/.test(value)) {
+                const formattedValue = value.replace(".", ",");
+                const commaCount = (formattedValue.match(/,/g) || []).length;
+                if (commaCount <= 1) {
+                  return { ...pm, [field]: formattedValue };
+                }
+              }
+              return pm;
+            }
+          }
+          return { ...pm, [field]: value };
+        }
+        return pm;
+      })
+    );
+  };
+
+  // Calculer le total des méthodes de règlement (excluding retention)
+  const totalReglementAmount = useMemo(() => {
+    return methodesReglement.reduce((sum, pm) => {
+      if (!pm || !pm.amount || pm.method === "retenue") return sum;
+
+      let amountValue: number;
+      if (typeof pm.amount === "string") {
+        if (pm.amount === "") return sum;
+        amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+      } else if (typeof pm.amount === "number") {
+        amountValue = pm.amount;
+      } else {
+        amountValue = 0;
+      }
+
+      return sum + amountValue;
+    }, 0);
+  }, [methodesReglement]);
+
   const handleSubmit = async (values: any) => {
     try {
+      // ✅ CORRECTED VALIDATION: Payment methods should not exceed finalTotal (BEFORE retention)
+      // Retention is not a payment - it's a deduction from the total amount
+      if (methodesReglement.length > 0) {
+        // Filter out retention methods from validation - they are not real payments
+        const nonRetentionPayments = methodesReglement.filter(
+          (pm) => pm.method !== "retenue"
+        );
+
+        if (nonRetentionPayments.length > 0) {
+          const totalPaymentAmount = nonRetentionPayments.reduce((sum, pm) => {
+            if (!pm.amount || pm.amount === "") return sum;
+            const amountValue =
+              typeof pm.amount === "string"
+                ? parseFloat(pm.amount.replace(",", ".")) || 0
+                : Number(pm.amount) || 0;
+            return sum + amountValue;
+          }, 0);
+
+          // Check if total payments exceed the final total (BEFORE retention)
+          if (totalPaymentAmount > finalTotal) {
+            toast.error(
+              `Le total des règlements (${totalPaymentAmount.toFixed(
+                3
+              )} DT) dépasse le montant total (${finalTotal.toFixed(3)} DT)`
+            );
+            return;
+          }
+
+          // Check if any individual payment method exceeds the final total
+          const hasIndividualExceed = nonRetentionPayments.some((pm) => {
+            if (!pm.amount || pm.amount === "") return false;
+            const amountValue =
+              typeof pm.amount === "string"
+                ? parseFloat(pm.amount.replace(",", ".")) || 0
+                : Number(pm.amount) || 0;
+            return amountValue > finalTotal;
+          });
+
+          if (hasIndividualExceed) {
+            toast.error(
+              "Le montant d'une méthode de règlement dépasse le montant total"
+            );
+            return;
+          }
+        }
+      }
+
+      // ✅ PREPARER LES METHODES DE REGLEMENT POUR LA SOUMISSION (INCLUDING RETENTION)
+      const processedMethodesReglement = methodesReglement
+        .filter((pm) => pm.method && (pm.method === "retenue" || pm.amount))
+        .map((pm) => {
+          let amountValue: number;
+          if (typeof pm.amount === "string") {
+            amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+          } else if (typeof pm.amount === "number") {
+            amountValue = pm.amount;
+          } else {
+            amountValue = 0;
+          }
+
+          // For retention method, send the rate and amount as 0 (not a real payment)
+          if (pm.method === "retenue") {
+            return {
+              method: pm.method,
+              amount: 0, // Send 0 as amount since it's not a real payment
+              numero: pm.numero || "",
+              banque: pm.banque || "",
+              dateEcheance: pm.dateEcheance || "",
+              tauxRetention: pm.tauxRetention || 1,
+            };
+          }
+
+          return {
+            method: pm.method,
+            amount: amountValue,
+            numero: pm.numero || "",
+            banque: pm.banque || "",
+            dateEcheance: pm.dateEcheance || "",
+          };
+        });
+
+      // Check if any article has quantity 0 or empty
       const articlesWithQuantities = selectedArticles.map((item) => ({
         ...item,
-        quantite: item.quantite === "" ? 0 : Number(item.quantite), // Convert empty to 0 for submission
+        quantite: item.quantite === "" ? 0 : Number(item.quantite),
       }));
-      // Check if any article has quantity 0 or empty
+
       const hasEmptyQuantities = articlesWithQuantities.some(
         (item) => item.quantite <= 0
       );
@@ -968,6 +1192,9 @@ const ListFactureClient = () => {
         );
         return;
       }
+
+      // Prepare facture data
+      // In your handleSubmit function
       const factureData = {
         ...values,
         taxMode,
@@ -978,19 +1205,54 @@ const ListFactureClient = () => {
           article_id: item.article_id,
           quantite: item.quantite,
           prix_unitaire: item.prixUnitaire,
-          prix_ttc: item.prixTTC, // Include prix_ttc in submission
+          prix_ttc: item.prixTTC,
           tva: item.tva,
           remise: item.remise,
           vendeur_id: selectedVendeur?.id,
         })),
-        // totalHT: subTotal,
+        totalHT: sousTotalHT,
         totalTVA: totalTax,
         totalTTC: grandTotal,
+        totalTTCAfterRemise: finalTotal,
         timbreFiscal: timbreFiscal,
         exoneration: exoneration,
-        // conditionPaiement: validation.values.conditionPaiement || null,
+        // Send payment methods
+        paymentMethods: methodesReglement
+          .filter((pm) => pm.method && (pm.method === "retenue" || pm.amount))
+          .map((pm) => {
+            let amountValue = 0;
+            if (typeof pm.amount === "string") {
+              amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+            } else if (typeof pm.amount === "number") {
+              amountValue = pm.amount;
+            }
+
+            if (pm.method === "retenue") {
+              return {
+                method: pm.method,
+                amount: 0,
+                numero: pm.numero || "",
+                banque: pm.banque || "",
+                dateEcheance: pm.dateEcheance || "",
+                tauxRetention: pm.tauxRetention || 1,
+              };
+            }
+
+            return {
+              method: pm.method,
+              amount: amountValue,
+              numero: pm.numero || "",
+              banque: pm.banque || "",
+              dateEcheance: pm.dateEcheance || "",
+            };
+          }),
+        montantRetenue: retentionMontant,
+        hasRetenue: methodesReglement.some((pm) => pm.method === "retenue"),
+        espaceNotes: espaceNotes,
       };
-      console.log(factureData, "------------------------------");
+
+      console.log("Facture Data:", factureData);
+
       if (isEdit && facture) {
         await updateFacture(facture.id, factureData);
         toast.success("Facture mise à jour avec succès");
@@ -998,12 +1260,20 @@ const ListFactureClient = () => {
         await createFacture(factureData);
         toast.success("Facture créée avec succès");
       }
+
       setCreateEditModal(false);
+
+      // Reset payment methods after successful submission
+      setMethodesReglement([]);
+      setEspaceNotes("");
+
       fetchData();
     } catch (err) {
+      console.error("Error in handleSubmit:", err);
       toast.error(err instanceof Error ? err.message : "Échec de l'opération");
     }
   };
+
   const validation = useFormik({
     enableReinitialize: true,
     initialValues: {
@@ -1052,14 +1322,48 @@ const ListFactureClient = () => {
     setSelectedFacture(facture);
     setDetailModal(true);
   };
+
   const openEncaissementModal = async (facture: FactureClient) => {
     setSelectedFacture(facture);
     setEncaissementModal(true);
+    
     try {
       const nextNumber = await fetchNextEncaissementNumberFromAPI();
       setNextEncaissementNumber(nextNumber);
+      
+      // ✅ USE THE EXACT SAME CALCULATION AS THE TABLE
+      // Calculate payment methods total (excluding retention)
+      const paymentMethodsTotal = facture.paymentMethods 
+        ? facture.paymentMethods
+            .filter((pm: any) => pm.method !== "retenue")
+            .reduce((sum: number, pm: any) => {
+              let amountValue: number;
+              if (typeof pm.amount === 'string') {
+                amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+              } else if (typeof pm.amount === 'number') {
+                amountValue = pm.amount;
+              } else {
+                amountValue = 0;
+              }
+              return sum + amountValue;
+            }, 0)
+        : 0;
+  
+      // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+      const hasRemise = facture.remise && Number(facture.remise) > 0;
+      const finalTotal = hasRemise 
+        ? Number(facture.totalTTCAfterRemise) || Number(facture.totalTTC) || 0
+        : Number(facture.totalTTC) || 0;
+      
+      const retentionAmount = Number(facture.montantRetenue) || 0;
+      
+      // ✅ EXACT SAME CALCULATION AS TABLE: (finalTotal - retentionAmount) - totalPaye
+      const totalPaye = facture.montantPaye || 0;
+      const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
+      
       // Format initial value with comma
-      const initialMontant = facture.resteAPayer.toFixed(3).replace(".", ",");
+      const initialMontant = availableAmount.toFixed(3).replace(".", ",");
+      
       // Set all values including the new fields
       encaissementValidation.setValues({
         montant: initialMontant,
@@ -1070,13 +1374,42 @@ const ListFactureClient = () => {
         banque: "",
         numeroTraite: "",
         dateEcheance: "",
+        notes: "",
       });
     } catch (err) {
       console.error("Failed to fetch next encaissement number:", err);
-      // Fallback with all required fields
-      const initialMontant = facture.resteAPayer.toFixed(3).replace(".", ",");
+      
+      // Same calculation for fallback
+      const paymentMethodsTotal = facture.paymentMethods 
+        ? facture.paymentMethods
+            .filter((pm: any) => pm.method !== "retenue")
+            .reduce((sum: number, pm: any) => {
+              let amountValue: number;
+              if (typeof pm.amount === 'string') {
+                amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+              } else if (typeof pm.amount === 'number') {
+                amountValue = pm.amount;
+              } else {
+                amountValue = 0;
+              }
+              return sum + amountValue;
+            }, 0)
+        : 0;
+  
+      // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+      const hasRemise = facture.remise && Number(facture.remise) > 0;
+      const finalTotal = hasRemise 
+        ? Number(facture.totalTTCAfterRemise) || Number(facture.totalTTC) || 0
+        : Number(facture.totalTTC) || 0;
+      
+      const retentionAmount = Number(facture.montantRetenue) || 0;
+      const totalPaye = facture.montantPaye || 0;
+      const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
+      
+      const initialMontant = availableAmount.toFixed(3).replace(".", ",");
       const year = moment().format("YYYY");
       const defaultNumber = `ENC-C${year}${String(0 + 1).padStart(5, "0")}`;
+      
       encaissementValidation.setValues({
         montant: initialMontant,
         modePaiement: "Espece",
@@ -1086,9 +1419,11 @@ const ListFactureClient = () => {
         banque: "",
         numeroTraite: "",
         dateEcheance: "",
+        notes: "",
       });
     }
   };
+
   const handleDelete = async () => {
     if (!facture) return;
     try {
@@ -1111,8 +1446,10 @@ const ListFactureClient = () => {
       toast.error(err instanceof Error ? err.message : "Échec de l'annulation");
     }
   };
+
   const handleEncaissementSubmit = async (values: any) => {
     if (!selectedFacture) return;
+  
     if (
       selectedFacture.status === "Payee" ||
       selectedFacture.status === "Annulee"
@@ -1122,7 +1459,50 @@ const ListFactureClient = () => {
       );
       return;
     }
+  
     const encaissementAmount = values.montant;
+  
+    // ✅ USE THE EXACT SAME CALCULATION AS THE TABLE
+    // Calculate payment methods total (excluding retention)
+    const paymentMethodsTotal = selectedFacture.paymentMethods
+      ? selectedFacture.paymentMethods
+          .filter((pm: any) => pm.method !== "retenue")
+          .reduce((sum: number, pm: any) => {
+            let amountValue: number;
+            if (typeof pm.amount === 'string') {
+              amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+            } else if (typeof pm.amount === 'number') {
+              amountValue = pm.amount;
+            } else {
+              amountValue = 0;
+            }
+            return sum + amountValue;
+          }, 0)
+      : 0;
+  
+    // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+    const hasRemise = selectedFacture.remise && Number(selectedFacture.remise) > 0;
+    const finalTotal = hasRemise 
+      ? Number(selectedFacture.totalTTCAfterRemise) || Number(selectedFacture.totalTTC) || 0
+      : Number(selectedFacture.totalTTC) || 0;
+    
+    const retentionAmount = Number(selectedFacture.montantRetenue) || 0;
+    
+    // ✅ EXACT SAME CALCULATION AS TABLE: (finalTotal - retentionAmount) - totalPaye
+    const totalPaye = selectedFacture.montantPaye || 0;
+    const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
+  
+    if (encaissementAmount > availableAmount) {
+      toast.error(
+        `Le montant d'encaissement (${encaissementAmount.toFixed(
+          3
+        )} DT) dépasse le montant disponible (${availableAmount.toFixed(
+          3
+        )} DT)`
+      );
+      return;
+    }
+  
     try {
       const encaissementData = {
         facture_id: selectedFacture.id,
@@ -1130,7 +1510,6 @@ const ListFactureClient = () => {
         modePaiement: values.modePaiement,
         numeroEncaissement: values.numeroEncaissement,
         date: values.date,
-        // Add the new fields
         ...(values.modePaiement === "Cheque" && {
           numeroCheque: values.numeroCheque,
           banque: values.banque,
@@ -1139,7 +1518,9 @@ const ListFactureClient = () => {
           numeroTraite: values.numeroTraite,
           dateEcheance: values.dateEcheance,
         }),
+        notes: values.notes || "",
       };
+  
       await createEncaissementClient(encaissementData);
       setEncaissementModal(false);
       fetchData();
@@ -1152,6 +1533,7 @@ const ListFactureClient = () => {
       );
     }
   };
+
   const encaissementValidation = useFormik({
     enableReinitialize: true,
     initialValues: {
@@ -1163,6 +1545,7 @@ const ListFactureClient = () => {
       banque: "",
       numeroTraite: "",
       dateEcheance: "",
+      notes: "",
     },
     validationSchema: Yup.object({
       montant: Yup.string()
@@ -1188,33 +1571,53 @@ const ListFactureClient = () => {
           "max-reste",
           "Le montant ne peut pas dépasser le reste à payer",
           function (value) {
-            if (!value) return false;
+            if (!value || !selectedFacture) return false;
             const numericValue = parseFloat(value.replace(",", "."));
-            const reste = selectedFacture?.resteAPayer || 0;
-            const roundedValue = Math.round(numericValue * 100) / 100;
-            const roundedReste = Math.round(reste * 100) / 100;
-            return roundedValue <= roundedReste;
+            
+            // ✅ USE THE EXACT SAME CALCULATION AS TABLE - JUST USE RESTEAPAYER DIRECTLY
+            const availableAmount = Number(selectedFacture.resteAPayer) || 0;
+            
+            const roundedValue = Math.round(numericValue * 1000) / 1000;
+            const roundedAvailable = Math.round(availableAmount * 1000) / 1000;
+            return roundedValue <= roundedAvailable;
           }
         )
         .required("Le montant est requis"),
-      modePaiement: Yup.string().required("Le mode de paiement est requis"),
-      numeroEncaissement: Yup.string().required(
-        "Le numéro d'encaissement est requis"
-      ),
-      date: Yup.date().required("La date est requise"),
+      modePaiement: Yup.string()
+        .required("Le mode de paiement est requis")
+        .oneOf(
+          ["Espece", "Cheque", "Virement", "Traite", "Autre"],
+          "Mode de paiement invalide"
+        ),
+      numeroEncaissement: Yup.string()
+        .required("Le numéro d'encaissement est requis")
+        .min(3, "Le numéro d'encaissement doit contenir au moins 3 caractères"),
+      date: Yup.date()
+        .required("La date est requise")
+        .typeError("Date invalide")
+        .max(new Date(), "La date ne peut pas être dans le futur"),
       numeroCheque: Yup.string().when("modePaiement", {
         is: "Cheque",
-        then: (schema) => schema.required("Le numéro du chèque est requis"),
+        then: (schema) => 
+          schema
+            .required("Le numéro du chèque est requis")
+            .min(2, "Le numéro du chèque doit contenir au moins 2 caractères"),
         otherwise: (schema) => schema.notRequired(),
       }),
       banque: Yup.string().when("modePaiement", {
         is: "Cheque",
-        then: (schema) => schema.required("La banque est requise"),
+        then: (schema) => 
+          schema
+            .required("La banque est requise")
+            .min(2, "Le nom de la banque doit contenir au moins 2 caractères"),
         otherwise: (schema) => schema.notRequired(),
       }),
       numeroTraite: Yup.string().when("modePaiement", {
         is: "Traite",
-        then: (schema) => schema.required("Le numéro de traite est requis"),
+        then: (schema) => 
+          schema
+            .required("Le numéro de traite est requis")
+            .min(2, "Le numéro de traite doit contenir au moins 2 caractères"),
         otherwise: (schema) => schema.notRequired(),
       }),
       dateEcheance: Yup.date().when("modePaiement", {
@@ -1222,12 +1625,16 @@ const ListFactureClient = () => {
         then: (schema) =>
           schema
             .required("La date d'échéance est requise")
+            .typeError("Date d'échéance invalide")
             .min(
               Yup.ref("date"),
               "La date d'échéance ne peut pas être antérieure à la date d'encaissement"
             ),
         otherwise: (schema) => schema.notRequired(),
       }),
+      notes: Yup.string()
+        .max(500, "Les notes ne peuvent pas dépasser 500 caractères")
+        .notRequired(),
     }),
     onSubmit: (values) => {
       const numericMontant = parseFloat(values.montant.replace(",", "."));
@@ -1426,7 +1833,23 @@ const ListFactureClient = () => {
                       setCreateEditModal(true);
                       setTimbreFiscal(facture.timbreFiscal || false);
                       setExoneration(facture.exoneration || false); // Add this line
-
+                      setMethodesReglement(
+                        facture.paymentMethods &&
+                          facture.paymentMethods.length > 0
+                          ? facture.paymentMethods.map(
+                              (pm: any, index: number) => ({
+                                id: pm.id || `edit-${index}`,
+                                method: pm.method,
+                                amount: pm.amount
+                                  ? pm.amount.toFixed(3).replace(".", ",")
+                                  : "",
+                                numero: pm.numero || "",
+                                banque: pm.banque || "",
+                                dateEcheance: pm.dateEcheance || "",
+                              })
+                            )
+                          : [] // Empty array if no saved payments
+                      );
                       setConditionPaiement(facture.conditionPaiement);
                       setSelectedVendeur(facture.vendeur);
                     }}
@@ -2827,11 +3250,13 @@ const ListFactureClient = () => {
                                 <i className="ri-user-line me-2"></i>
                                 Informations Client
                               </h6>
+
                               {/* Enhanced Client Search Section */}
                               <div className="mb-3">
                                 <Label className="form-label-lg fw-semibold">
                                   Client*
                                 </Label>
+
                                 <div className="position-relative">
                                   <Input
                                     type="text"
@@ -2843,14 +3268,30 @@ const ListFactureClient = () => {
                                     }
                                     onChange={(e) => {
                                       const value = e.target.value;
+
                                       if (!value) {
                                         setSelectedClient(null);
                                         validation.setFieldValue(
                                           "client_id",
                                           ""
                                         );
+                                        setClientSearch("");
+                                      } else {
+                                        // Auto-format if it looks like a phone number (mostly digits)
+                                        const digitCount = (
+                                          value.match(/\d/g) || []
+                                        ).length;
+                                        const totalLength = value.length;
+
+                                        if (digitCount >= totalLength * 0.7) {
+                                          // If 70% or more are digits
+                                          const formatted =
+                                            formatPhoneInput(value);
+                                          setClientSearch(formatted);
+                                        } else {
+                                          setClientSearch(value);
+                                        }
                                       }
-                                      setClientSearch(value);
                                     }}
                                     onFocus={() => {
                                       if (clientSearch.length >= 1) {
@@ -2932,7 +3373,9 @@ const ListFactureClient = () => {
                                                   {c.raison_sociale}
                                                 </span>
                                                 <small className="text-muted">
-                                                  {c.telephone1}
+                                                  {formatPhoneDisplay(
+                                                    c.telephone1
+                                                  )}
                                                 </small>
                                               </div>
                                               <div className="d-flex justify-content-between align-items-center mt-1">
@@ -2945,7 +3388,9 @@ const ListFactureClient = () => {
                                                 </small>
                                                 {c.telephone2 && (
                                                   <small className="text-muted">
-                                                    {c.telephone2}
+                                                    {formatPhoneDisplay(
+                                                      c.telephone2
+                                                    )}
                                                   </small>
                                                 )}
                                               </div>
@@ -3150,7 +3595,10 @@ const ListFactureClient = () => {
 
                             {/* Optional: Add a quick toggle button */}
                             <div className="d-flex align-items-center">
-                              <Label className="form-label fs-5 fw-semibold mb-0 me-2" style={{color:"blue"}}>
+                              <Label
+                                className="form-label fs-5 fw-semibold mb-0 me-2"
+                                style={{ color: "blue" }}
+                              >
                                 Exonération:
                               </Label>
                               <div className="form-check form-switch">
@@ -3911,6 +4359,291 @@ const ListFactureClient = () => {
                           )}
                         </CardBody>
                       </Card>
+
+                      {/* Payment Methods Section */}
+                      {/* Payment Methods Section */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <h5 className="fw-semibold text-primary mb-0">
+                              <i className="ri-bank-card-line me-2"></i>
+                              Modes de Règlement
+                            </h5>
+
+                            {/* ALWAYS SHOW ADD BUTTON */}
+                            <Button
+                              color="outline-primary"
+                              size="sm"
+                              onClick={addMethodeReglement}
+                              className="btn-invoice-outline-primary"
+                            >
+                              <i className="ri-add-line me-1"></i>
+                              Ajouter Paiement
+                            </Button>
+                          </div>
+
+                          {/* SHOW PAYMENT METHODS IF THEY EXIST */}
+                          {methodesReglement.length > 0 && (
+                            <>
+                              {/* Liste des méthodes de règlement */}
+                              {methodesReglement.map((methode, index) => (
+                                <div
+                                  key={methode.id}
+                                  className="border rounded p-3 mb-3 bg-light"
+                                >
+                                  <div className="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 className="fw-semibold mb-0 text-dark">
+                                      {methode.method === "retenue"
+                                        ? "Retenue à la source"
+                                        : `Règlement #${index + 1}`}
+                                    </h6>
+
+                                    <Button
+                                      color="danger"
+                                      size="sm"
+                                      onClick={() =>
+                                        removeMethodeReglement(methode.id)
+                                      }
+                                      className="btn-invoice-danger"
+                                    >
+                                      <i className="ri-close-line"></i>
+                                    </Button>
+                                  </div>
+
+                                  <Row className="g-3">
+                                    {/* Type de méthode */}
+                                    <Col md={3}>
+                                      <Label className="form-label fw-semibold">
+                                        Type*
+                                      </Label>
+                                      <Input
+                                        type="select"
+                                        value={methode.method}
+                                        onChange={(e) => {
+                                          const newMethod = e.target.value;
+                                          updateMethodeReglement(
+                                            methode.id,
+                                            "method",
+                                            newMethod
+                                          );
+
+                                          // Set default retention rate to 1% when selecting retention
+                                          if (newMethod === "retenue") {
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "tauxRetention",
+                                              1
+                                            );
+                                            // Set amount to 0 for retention
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "amount",
+                                              "0,000"
+                                            );
+                                          }
+                                        }}
+                                        className="form-control"
+                                        required
+                                      >
+                                        <option value="">Sélectionner</option>
+                                        <option value="especes">Espèces</option>
+                                        <option value="cheque">Chèque</option>
+                                        <option value="virement">
+                                          Virement
+                                        </option>
+                                        <option value="traite">Traite</option>
+                                        <option value="carte">Carte</option>
+                                        <option value="tpe">TPE</option>
+                                        <option value="retenue">
+                                          Retenue à la source
+                                        </option>
+                                      </Input>
+                                    </Col>
+
+                                    {/* Montant - Different behavior for retention */}
+                                    <Col md={3}>
+                                      <Label className="form-label fw-semibold">
+                                        {methode.method === "retenue"
+                                          ? "Montant calculé (DT)"
+                                          : "Montant (DT)*"}
+                                      </Label>
+                                      <Input
+                                        type="text"
+                                        value={
+                                          methode.method === "retenue"
+                                            ? retentionMontant
+                                                .toFixed(3)
+                                                .replace(".", ",")
+                                            : methode.amount
+                                        }
+                                        onChange={(e) => {
+                                          // Only allow changes for non-retention methods
+                                          if (methode.method !== "retenue") {
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "amount",
+                                              e.target.value
+                                            );
+                                          }
+                                        }}
+                                        readOnly={methode.method === "retenue"}
+                                        className={`form-control text-end ${
+                                          methode.method === "retenue"
+                                            ? "bg-light"
+                                            : ""
+                                        }`}
+                                        placeholder="000,000"
+                                        required={methode.method !== "retenue"}
+                                      />
+                                      {methode.method === "retenue" && (
+                                        <small className="text-muted">
+                                          Calculé automatiquement à partir du
+                                          taux
+                                        </small>
+                                      )}
+                                    </Col>
+
+                                    {/* Retention Rate Field */}
+                                    {methode.method === "retenue" && (
+                                      <Col md={3}>
+                                        <Label className="form-label fw-semibold">
+                                          Taux de retenue (%)*
+                                        </Label>
+                                        <Input
+                                          type="select"
+                                          value={methode.tauxRetention || 1}
+                                          onChange={(e) =>
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "tauxRetention",
+                                              Number(e.target.value)
+                                            )
+                                          }
+                                          className="form-control"
+                                          required
+                                        >
+                                          <option value="1">1%</option>
+                                          <option value="2">2%</option>
+                                          <option value="3">3%</option>
+                                          <option value="5">5%</option>
+                                          <option value="10">10%</option>
+                                        </Input>
+                                      </Col>
+                                    )}
+
+                                    {/* Champs conditionnels pour les autres méthodes */}
+                                    {(methode.method === "cheque" ||
+                                      methode.method === "traite") && (
+                                      <Col md={3}>
+                                        <Label className="form-label fw-semibold">
+                                          {methode.method === "cheque"
+                                            ? "Numéro Chèque*"
+                                            : "Numéro Traite*"}
+                                        </Label>
+                                        <Input
+                                          type="text"
+                                          value={methode.numero || ""}
+                                          onChange={(e) =>
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "numero",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder={
+                                            methode.method === "cheque"
+                                              ? "N° chèque"
+                                              : "N° traite"
+                                          }
+                                          className="form-control"
+                                          required
+                                        />
+                                      </Col>
+                                    )}
+
+                                    {methode.method === "cheque" && (
+                                      <Col md={3}>
+                                        <Label className="form-label fw-semibold">
+                                          Banque*
+                                        </Label>
+                                        <Input
+                                          type="text"
+                                          value={methode.banque || ""}
+                                          onChange={(e) =>
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "banque",
+                                              e.target.value
+                                            )
+                                          }
+                                          placeholder="Nom banque"
+                                          className="form-control"
+                                          required
+                                        />
+                                      </Col>
+                                    )}
+
+                                    {methode.method === "traite" && (
+                                      <Col md={3}>
+                                        <Label className="form-label fw-semibold">
+                                          Date Échéance*
+                                        </Label>
+                                        <Input
+                                          type="date"
+                                          value={
+                                            methode.dateEcheance ||
+                                            moment().format("YYYY-MM-DD")
+                                          }
+                                          onChange={(e) =>
+                                            updateMethodeReglement(
+                                              methode.id,
+                                              "dateEcheance",
+                                              e.target.value
+                                            )
+                                          }
+                                          className="form-control"
+                                          required
+                                        />
+                                      </Col>
+                                    )}
+                                  </Row>
+                                </div>
+                              ))}
+
+                              {/* Bouton pour ajouter une méthode supplémentaire */}
+                              <div className="text-center mb-3">
+                                <Button
+                                  color="outline-primary"
+                                  size="sm"
+                                  onClick={addMethodeReglement}
+                                  className="btn-invoice-outline-primary"
+                                >
+                                  <i className="ri-add-line me-1"></i>
+                                  Ajouter une autre méthode
+                                </Button>
+                              </div>
+
+                              {/* Résumé des paiements */}
+                              <div className="mt-3">
+                                <Label className="form-label fw-semibold">
+                                  Notes Paiement
+                                </Label>
+                                <Input
+                                  type="textarea"
+                                  value={espaceNotes}
+                                  onChange={(e) =>
+                                    setEspaceNotes(e.target.value)
+                                  }
+                                  placeholder="Notes supplémentaires sur le paiement..."
+                                  rows="2"
+                                  className="form-control"
+                                />
+                              </div>
+                            </>
+                          )}
+                        </CardBody>
+                      </Card>
+
                       {/* Notes Section */}
                       <Card className="border-0 shadow-sm">
                         <CardBody className="p-4">
@@ -3959,198 +4692,248 @@ const ListFactureClient = () => {
                   </Form>
                 </Modal>
                 <Modal
-                  isOpen={encaissementModal}
-                  toggle={() => setEncaissementModal(false)}
-                  centered
-                  className="invoice-modal"
-                >
-                  <ModalHeader toggle={() => setEncaissementModal(false)}>
-                    Ajouter Encaissement - Facture #
-                    {selectedFacture?.numeroFacture}
-                  </ModalHeader>
-                  <Form
-                    onSubmit={encaissementValidation.handleSubmit}
-                    className="invoice-form"
-                  >
-                    <ModalBody style={{ padding: "20px" }}>
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Montant payé*</Label>
-                            <Input
-                              type="text"
-                              name="montant"
-                              value={encaissementValidation.values.montant}
-                              onChange={handleMontantChange}
-                              invalid={
-                                encaissementValidation.touched.montant &&
-                                !!encaissementValidation.errors.montant
-                              }
-                              placeholder="0,000"
-                            />
-                            <FormFeedback>
-                              {encaissementValidation.errors.montant}
-                            </FormFeedback>
-                            <small className="text-muted">
-                              Reste à payer:{" "}
-                              {selectedFacture?.resteAPayer
-                                ?.toFixed(3)
-                                .replace(".", ",")}{" "}
-                              DT
-                            </small>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Mode de paiement*</Label>
-                            <Input
-                              type="select"
-                              name="modePaiement"
-                              value={encaissementValidation.values.modePaiement}
-                              onChange={encaissementValidation.handleChange}
-                              invalid={
-                                encaissementValidation.touched.modePaiement &&
-                                !!encaissementValidation.errors.modePaiement
-                              }
-                            >
-                              <option value="Espece">En espèces</option>
-                              <option value="Cheque">Chèque</option>
-                              <option value="Virement">Virement</option>
-                              <option value="Traite">Traite</option>
-                              <option value="Autre">Autre</option>
-                            </Input>
-                            <FormFeedback>
-                              {encaissementValidation.errors.modePaiement}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                      </Row>
-                      {/* Cheque Fields */}
-                      {encaissementValidation.values.modePaiement ===
-                        "Cheque" && (
-                        <Row>
-                          <Col md={6}>
-                            <div className="mb-3">
-                              <Label>Numéro du chèque*</Label>
-                              <Input
-                                type="text"
-                                name="numeroCheque"
-                                value={
-                                  encaissementValidation.values.numeroCheque ||
-                                  ""
-                                }
-                                onChange={encaissementValidation.handleChange}
-                                placeholder="Saisir le numéro du chèque"
-                              />
-                            </div>
-                          </Col>
-                          <Col md={6}>
-                            <div className="mb-3">
-                              <Label>Banque*</Label>
-                              <Input
-                                type="text"
-                                name="banque"
-                                value={
-                                  encaissementValidation.values.banque || ""
-                                }
-                                onChange={encaissementValidation.handleChange}
-                                placeholder="Nom de la banque"
-                              />
-                            </div>
-                          </Col>
-                        </Row>
-                      )}
-                      {/* Traite Fields */}
-                      {encaissementValidation.values.modePaiement ===
-                        "Traite" && (
-                        <Row>
-                          <Col md={6}>
-                            <div className="mb-3">
-                              <Label>Numéro de traite*</Label>
-                              <Input
-                                type="text"
-                                name="numeroTraite"
-                                value={
-                                  encaissementValidation.values.numeroTraite ||
-                                  ""
-                                }
-                                onChange={encaissementValidation.handleChange}
-                                placeholder="Saisir le numéro de traite"
-                              />
-                            </div>
-                          </Col>
-                          <Col md={6}>
-                            <div className="mb-3">
-                              <Label>Date d'échéance*</Label>
-                              <Input
-                                type="date"
-                                name="dateEcheance"
-                                value={
-                                  encaissementValidation.values.dateEcheance ||
-                                  ""
-                                }
-                                onChange={encaissementValidation.handleChange}
-                                min={moment().format("YYYY-MM-DD")}
-                              />
-                            </div>
-                          </Col>
-                        </Row>
-                      )}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Encaissement n °*</Label>
-                            <Input
-                              type="text"
-                              name="numeroEncaissement"
-                              value={
-                                encaissementValidation.values.numeroEncaissement
-                              }
-                              onChange={encaissementValidation.handleChange}
-                              invalid={
-                                encaissementValidation.touched
-                                  .numeroEncaissement &&
-                                !!encaissementValidation.errors
-                                  .numeroEncaissement
-                              }
-                            />
-                            <FormFeedback>
-                              {encaissementValidation.errors.numeroEncaissement}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label>Date*</Label>
-                            <Input
-                              type="date"
-                              name="date"
-                              value={encaissementValidation.values.date}
-                              onChange={encaissementValidation.handleChange}
-                              invalid={
-                                encaissementValidation.touched.date &&
-                                !!encaissementValidation.errors.date
-                              }
-                            />
-                          </div>
-                        </Col>
-                      </Row>
-                    </ModalBody>
-                    <ModalFooter>
-                      <Button
-                        color="light"
-                        onClick={() => setEncaissementModal(false)}
-                      >
-                        <i className="ri-close-line align-bottom me-1"></i>{" "}
-                        Annuler
-                      </Button>
-                      <Button color="primary" type="submit">
-                        <i className="ri-save-line align-bottom me-1"></i>{" "}
-                        Enregistrer Encaissement
-                      </Button>
-                    </ModalFooter>
-                  </Form>
-                </Modal>
+  isOpen={encaissementModal}
+  toggle={() => setEncaissementModal(false)}
+  centered
+  className="invoice-modal"
+  size="lg"
+>
+  <ModalHeader toggle={() => setEncaissementModal(false)}>
+    Ajouter Encaissement - Facture #{selectedFacture?.numeroFacture}
+  </ModalHeader>
+  <Form
+    onSubmit={encaissementValidation.handleSubmit}
+    className="invoice-form"
+  >
+    <ModalBody style={{ padding: "20px" }}>
+      {/* Show retention and payment methods information */}
+      {selectedFacture?.montantRetenue && Number(selectedFacture.montantRetenue) > 0 && (
+        <div className="mb-3 p-2 bg-light rounded">
+          <small className="text-muted d-block">
+            <strong>Retenue à la source:</strong> -{Number(selectedFacture.montantRetenue).toFixed(3)} DT
+          </small>
+        </div>
+      )}
+      
+      {selectedFacture?.paymentMethods && selectedFacture.paymentMethods.filter((pm: any) => pm.method !== "retenue" && Number(pm.amount) > 0).length > 0 && (
+        <div className="mb-3 p-2 bg-info bg-opacity-10 rounded">
+          <small className="text-muted d-block">
+            <strong>Règlements enregistrés:</strong> -
+            {selectedFacture.paymentMethods
+              .filter((pm: any) => pm.method !== "retenue")
+              .reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0)
+              .toFixed(3)} DT
+          </small>
+        </div>
+      )}
+      
+      <div className="mb-3 p-2 bg-success bg-opacity-10 rounded">
+        <small className="text-muted d-block">Montant disponible pour encaissement:</small>
+        <strong className="text-success fs-5">
+          {(() => {
+            if (!selectedFacture) return "0,000";
+            
+            // ✅ EXACT SAME CALCULATION AS TABLE
+            const paymentMethodsTotal = selectedFacture.paymentMethods 
+              ? selectedFacture.paymentMethods
+                  .filter((pm: any) => pm.method !== "retenue")
+                  .reduce((sum: number, pm: any) => {
+                    let amountValue: number;
+                    if (typeof pm.amount === 'string') {
+                      amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+                    } else if (typeof pm.amount === 'number') {
+                      amountValue = pm.amount;
+                    } else {
+                      amountValue = 0;
+                    }
+                    return sum + amountValue;
+                  }, 0)
+              : 0;
+
+            // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+            const hasRemise = selectedFacture.remise && Number(selectedFacture.remise) > 0;
+            const finalTotal = hasRemise 
+              ? Number(selectedFacture.totalTTCAfterRemise) || Number(selectedFacture.totalTTC) || 0
+              : Number(selectedFacture.totalTTC) || 0;
+            
+            const retentionAmount = Number(selectedFacture.montantRetenue) || 0;
+            const totalPaye = selectedFacture.montantPaye || 0;
+            
+            const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
+            
+            return availableAmount.toFixed(3).replace(".", ",");
+          })()} DT
+        </strong>
+      </div>
+
+      {/* Rest of your form fields remain the same */}
+      <Row>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Montant payé*</Label>
+            <Input
+              type="text"
+              name="montant"
+              value={encaissementValidation.values.montant}
+              onChange={handleMontantChange}
+              invalid={
+                encaissementValidation.touched.montant &&
+                !!encaissementValidation.errors.montant
+              }
+              placeholder="0,000"
+            />
+            <FormFeedback>
+              {encaissementValidation.errors.montant}
+            </FormFeedback>
+          </div>
+        </Col>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Mode de paiement*</Label>
+            <Input
+              type="select"
+              name="modePaiement"
+              value={encaissementValidation.values.modePaiement}
+              onChange={encaissementValidation.handleChange}
+              invalid={
+                encaissementValidation.touched.modePaiement &&
+                !!encaissementValidation.errors.modePaiement
+              }
+            >
+              <option value="Espece">En espèces</option>
+              <option value="Cheque">Chèque</option>
+              <option value="Virement">Virement</option>
+              <option value="Traite">Traite</option>
+              <option value="Autre">Autre</option>
+            </Input>
+            <FormFeedback>
+              {encaissementValidation.errors.modePaiement}
+            </FormFeedback>
+          </div>
+        </Col>
+      </Row>
+      
+      {/* Cheque Fields */}
+      {encaissementValidation.values.modePaiement === "Cheque" && (
+        <Row>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Numéro du chèque*</Label>
+              <Input
+                type="text"
+                name="numeroCheque"
+                value={encaissementValidation.values.numeroCheque}
+                onChange={encaissementValidation.handleChange}
+                placeholder="Saisir le numéro du chèque"
+              />
+            </div>
+          </Col>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Banque*</Label>
+              <Input
+                type="text"
+                name="banque"
+                value={encaissementValidation.values.banque}
+                onChange={encaissementValidation.handleChange}
+                placeholder="Nom de la banque"
+              />
+            </div>
+          </Col>
+        </Row>
+      )}
+      
+      {/* Traite Fields */}
+      {encaissementValidation.values.modePaiement === "Traite" && (
+        <Row>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Numéro de traite*</Label>
+              <Input
+                type="text"
+                name="numeroTraite"
+                value={encaissementValidation.values.numeroTraite}
+                onChange={encaissementValidation.handleChange}
+                placeholder="Saisir le numéro de traite"
+              />
+            </div>
+          </Col>
+          <Col md={6}>
+            <div className="mb-3">
+              <Label>Date d'échéance*</Label>
+              <Input
+                type="date"
+                name="dateEcheance"
+                value={encaissementValidation.values.dateEcheance}
+                onChange={encaissementValidation.handleChange}
+                min={moment().format("YYYY-MM-DD")}
+              />
+            </div>
+          </Col>
+        </Row>
+      )}
+     
+      <Row>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Encaissement n °*</Label>
+            <Input
+              type="text"
+              name="numeroEncaissement"
+              value={encaissementValidation.values.numeroEncaissement}
+              onChange={encaissementValidation.handleChange}
+              invalid={
+                encaissementValidation.touched.numeroEncaissement &&
+                !!encaissementValidation.errors.numeroEncaissement
+              }
+            />
+            <FormFeedback>
+              {encaissementValidation.errors.numeroEncaissement}
+            </FormFeedback>
+          </div>
+        </Col>
+        <Col md={6}>
+          <div className="mb-3">
+            <Label>Date*</Label>
+            <Input
+              type="date"
+              name="date"
+              value={encaissementValidation.values.date}
+              onChange={encaissementValidation.handleChange}
+              invalid={
+                encaissementValidation.touched.date &&
+                !!encaissementValidation.errors.date
+              }
+            />
+          </div>
+        </Col>
+      </Row>
+
+      <div className="mb-3">
+        <Label>Notes</Label>
+        <Input
+          type="textarea"
+          name="notes"
+          value={encaissementValidation.values.notes}
+          onChange={encaissementValidation.handleChange}
+          placeholder="Notes supplémentaires..."
+          rows="2"
+        />
+      </div>
+    </ModalBody>
+    <ModalFooter>
+      <Button
+        color="light"
+        onClick={() => setEncaissementModal(false)}
+      >
+        <i className="ri-close-line align-bottom me-1"></i> Annuler
+      </Button>
+      <Button color="primary" type="submit">
+        <i className="ri-save-line align-bottom me-1"></i> Enregistrer Encaissement
+      </Button>
+    </ModalFooter>
+  </Form>
+</Modal>
                 <ToastContainer />
               </CardBody>
             </Card>

@@ -27,7 +27,7 @@ export const fetchNextCommandeNumber = async (): Promise<string> => {
 };
 
 export const createBonCommandeClient = async (bonCommande: Omit<BonCommandeClient, 'id'>): Promise<BonCommandeClient> => {
-    
+    debugger
     try {
         const response = await fetch(`${API_BASE}/bons-commande-client/addBonCommandeClient`, {
             method: 'POST',

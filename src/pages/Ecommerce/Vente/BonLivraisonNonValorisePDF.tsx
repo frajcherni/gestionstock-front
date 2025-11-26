@@ -1,4 +1,4 @@
-// FacturePDF.tsx
+// BonLivraisonNonValorisePDF.tsx
 import React from "react";
 import {
   Document,
@@ -9,9 +9,9 @@ import {
   Image,
 } from "@react-pdf/renderer";
 import moment from "moment";
-import { FactureClient } from "../../../Components/Article/Interfaces";
+import { BonLivraison } from "../../../Components/Article/Interfaces";
 
-// Use the exact same styles from BonCommandePDF
+// Use the EXACT same styles from FacturePDF
 const styles = StyleSheet.create({
   page: {
     flexDirection: "column",
@@ -238,8 +238,8 @@ const styles = StyleSheet.create({
   }
 });
 
-interface FacturePDFProps {
-  facture: FactureClient;
+interface BonLivraisonPDFProps {
+  bonLivraison: BonLivraison;
   companyInfo: {
     name: string;
     address: string;
@@ -253,283 +253,22 @@ interface FacturePDFProps {
   };
 }
 
-const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
-  const exoneration = facture?.exoneration || false;
+const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivraison, companyInfo }) => {
+  const isLinkedToBC = !!bonLivraison.bonCommandeClient;
 
-  // Keep the exact same calculation function
-  const calculateTotals = () => {
-    try {
-      if (!facture?.articles || facture.articles.length === 0) {
-        return {
-          sousTotalHT: 0,
-          netHT: 0,
-          totalTax: 0,
-          grandTotal: 0,
-          finalTotal: 0,
-          discountAmount: 0,
-          tvaBreakdown: {},
-        };
-      }
-  
-      let sousTotalHTValue = 0;
-      let netHTValue = 0;
-      let totalTaxValue = 0;
-      let grandTotalValue = 0;
-      const tvaBreakdown: { [key: number]: { base: number; montant: number } } = {};
-  
-      facture.articles.forEach((item) => {
-        const qty = Number(item.quantite) || 0;
-        const priceHT = Number(item.prixUnitaire) || 0;
-        const tvaRate = Number(item.tva || 0);
-        const remiseRate = Number(item.remise || 0);
-        const priceTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
-  
-        const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-        const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-        const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-        const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-  
-        sousTotalHTValue += montantSousTotalHT;
-        netHTValue += montantNetHT;
-        totalTaxValue += montantTVA;
-        grandTotalValue += montantTTCLigne;
-  
-        if (tvaRate > 0) {
-          if (!tvaBreakdown[tvaRate]) {
-            tvaBreakdown[tvaRate] = { base: 0, montant: 0 };
-          }
-          tvaBreakdown[tvaRate].base += montantNetHT;
-          tvaBreakdown[tvaRate].montant += montantTVA;
-        }
-      });
-  
-      sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-      netHTValue = Math.round(netHTValue * 1000) / 1000;
-      totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
-      grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-  
-      let finalTotalValue = grandTotalValue;
-      let discountAmountValue = 0;
-  
-      const remiseValue = Number(facture.remise) || 0;
-      const remiseTypeValue = facture.remiseType || "percentage";
-  
-      if (remiseValue > 0) {
-        if (remiseTypeValue === "percentage") {
-          discountAmountValue = Math.round(netHTValue * (remiseValue / 100) * 1000) / 1000;
-          const netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
-          const discountRatio = netHTAfterDiscount / netHTValue;
-  
-          const totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-          finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
-  
-          Object.keys(tvaBreakdown).forEach((rate) => {
-            const tvaRate = parseFloat(rate);
-            tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
-            tvaBreakdown[tvaRate].montant = Math.round(tvaBreakdown[tvaRate].montant * discountRatio * 1000) / 1000;
-          });
-  
-          netHTValue = netHTAfterDiscount;
-          totalTaxValue = totalTaxAfterDiscount;
-        } else if (remiseTypeValue === "fixed") {
-          finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
-          const totalBeforeDiscount = netHTValue + totalTaxValue;
-          const discountRatio = finalTotalValue / totalBeforeDiscount;
-  
-          const netHTAfterDiscount = Math.round(netHTValue * discountRatio * 1000) / 1000;
-          const totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-  
-          discountAmountValue = Math.round((netHTValue - netHTAfterDiscount) * 1000) / 1000;
-  
-          Object.keys(tvaBreakdown).forEach((rate) => {
-            const tvaRate = parseFloat(rate);
-            tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
-            tvaBreakdown[tvaRate].montant = Math.round(tvaBreakdown[tvaRate].montant * discountRatio * 1000) / 1000;
-          });
-  
-          netHTValue = netHTAfterDiscount;
-          totalTaxValue = totalTaxAfterDiscount;
-        }
-      }
-  
-      // APPLY EXONÉRATION
-      if (exoneration) {
-        Object.keys(tvaBreakdown).forEach((rateStr) => {
-          const rate = parseFloat(rateStr);
-          if (!isNaN(rate)) {
-            tvaBreakdown[rate].montant = 0;
-          }
-        });
-        totalTaxValue = 0;
-        
-        if (remiseTypeValue === "fixed" && remiseValue > 0) {
-          finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
-          netHTValue = finalTotalValue;
-        } else {
-          finalTotalValue = netHTValue;
-        }
-      }
-  
-      if (facture.timbreFiscal) {
-        finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
-      }
-  
-      return {
-        sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-        netHT: Math.round(netHTValue * 1000) / 1000,
-        totalTax: Math.round(totalTaxValue * 1000) / 1000,
-        grandTotal: Math.round(grandTotalValue * 1000) / 1000,
-        finalTotal: Math.round(finalTotalValue * 1000) / 1000,
-        discountAmount: Math.round(discountAmountValue * 1000) / 1000,
-        tvaBreakdown,
-      };
-    } catch (error) {
-      console.error("Error calculating totals:", error);
-      return {
-        sousTotalHT: 0,
-        netHT: 0,
-        totalTax: 0,
-        grandTotal: 0,
-        finalTotal: 0,
-        discountAmount: 0,
-        tvaBreakdown: {},
-      };
-    }
+  // Empty values for non-valorised version
+  const emptyTotals = {
+    sousTotalHT: 0,
+    netHT: 0,
+    totalTax: 0,
+    grandTotal: 0,
+    finalTotal: 0,
+    discountAmount: 0,
   };
-
-  const {
-    sousTotalHT,
-    netHT,
-    totalTax,
-    grandTotal,
-    finalTotal,
-    discountAmount,
-    tvaBreakdown,
-  } = calculateTotals();
 
   const formatCurrency = (amount: number) => {
     return amount.toFixed(3);
   };
-
-  const numberToWords = (num: number): string => {
-    try {
-      const units = [
-        "",
-        "un",
-        "deux",
-        "trois",
-        "quatre",
-        "cinq",
-        "six",
-        "sept",
-        "huit",
-        "neuf",
-      ];
-      const teens = [
-        "dix",
-        "onze",
-        "douze",
-        "treize",
-        "quatorze",
-        "quinze",
-        "seize",
-        "dix-sept",
-        "dix-huit",
-        "dix-neuf",
-      ];
-      const tens = [
-        "",
-        "dix",
-        "vingt",
-        "trente",
-        "quarante",
-        "cinquante",
-        "soixante",
-        "soixante-dix",
-        "quatre-vingt",
-        "quatre-vingt-dix",
-      ];
-
-      const integerPart = Math.floor(num);
-
-      if (integerPart === 0) {
-        return "Zéro dinars zéro millime uniquement";
-      }
-
-      let words = "";
-
-      if (integerPart >= 1000) {
-        const thousands = Math.floor(integerPart / 1000);
-        if (thousands === 1) {
-          words += "mille";
-        } else if (thousands < 10) {
-          words += units[thousands] + " mille";
-        } else if (thousands < 20) {
-          words += teens[thousands - 10] + " mille";
-        } else if (thousands < 100) {
-          const ten = Math.floor(thousands / 10);
-          const unit = thousands % 10;
-          words += tens[ten];
-          if (unit > 0) {
-            if (ten === 7 || ten === 9) {
-              words += "-" + teens[unit];
-            } else {
-              words += "-" + units[unit];
-            }
-          }
-          words += " mille";
-        }
-
-        const remainder = integerPart % 1000;
-        if (remainder > 0) {
-          words += " ";
-        }
-      }
-
-      const remainder = integerPart % 1000;
-      if (remainder >= 100) {
-        const hundreds = Math.floor(remainder / 100);
-        if (hundreds === 1) {
-          words += "cent";
-        } else {
-          words += units[hundreds] + " cent";
-        }
-        const smallRemainder = remainder % 100;
-        if (smallRemainder > 0) {
-          words += " ";
-        }
-      }
-
-      const smallRemainder = remainder % 100;
-      if (smallRemainder > 0) {
-        if (smallRemainder < 10) {
-          words += units[smallRemainder];
-        } else if (smallRemainder < 20) {
-          words += teens[smallRemainder - 10];
-        } else {
-          const ten = Math.floor(smallRemainder / 10);
-          const unit = smallRemainder % 10;
-          words += tens[ten];
-          if (unit > 0) {
-            if (ten === 7 || ten === 9) {
-              words += "-" + teens[unit];
-            } else {
-              words += "-" + units[unit];
-            }
-          }
-        }
-      }
-
-      words += " dinars zéro millime";
-
-      return words.charAt(0).toUpperCase() + words.slice(1) + " uniquement";
-    } catch (error) {
-      console.error("Error converting number to words:", error);
-      return "Montant en dinars uniquement";
-    }
-  };
-
-  const amountInWords = numberToWords(finalTotal);
 
   const wrapText = (text: string, maxLength: number = 25): string[] => {
     if (!text || text.length <= maxLength) {
@@ -558,44 +297,7 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
     return lines;
   };
 
-  const renderTVABreakdown = () => {
-    const tvaRates = Object.keys(tvaBreakdown)
-      .map(rate => parseFloat(rate))
-      .filter(rate => !isNaN(rate))
-      .sort((a, b) => a - b);
 
-    return (
-      <View style={styles.tvaTable}>
-        <View style={styles.tvaHeader}>
-          <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-          <Text style={styles.tvaHeaderBase}>Base HT</Text>
-          <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-        </View>
-        
-        {exoneration && (
-          <View style={styles.tvaRow}>
-            <Text style={styles.tvaColTaux}>Exonoré</Text>
-            <Text style={styles.tvaColBase}>
-              {formatCurrency(
-                Object.values(tvaBreakdown).reduce((sum, item) => sum + item.base, 0)
-              )} DT
-            </Text>
-            <Text style={styles.tvaColMontant}>0,000 DT</Text>
-          </View>
-        )}
-        
-        {tvaRates.map(rate => (
-          <View style={styles.tvaRow} key={rate}>
-            <Text style={styles.tvaColTaux}>{rate}%</Text>
-            <Text style={styles.tvaColBase}>{formatCurrency(tvaBreakdown[rate].base)} DT</Text>
-            <Text style={styles.tvaColMontant}>
-              {exoneration ? "0,000" : formatCurrency(tvaBreakdown[rate].montant)} DT
-            </Text>
-          </View>
-        ))}
-      </View>
-    );
-  };
 
   const renderSummarySection = () => {
     const bottomPos = 160;
@@ -603,58 +305,41 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
     return (
       <View style={[styles.summaryArea, { bottom: bottomPos }]}>
         <View style={styles.leftColumn}>
-          {renderTVABreakdown()}
         </View>
         <View style={styles.totalsContainer}>
           <View style={styles.totalsBox}>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Total H.T.:</Text>
-              <Text style={styles.summaryValue}>
-                {formatCurrency(sousTotalHT)} DT
-              </Text>
+              <Text style={styles.summaryValue}> </Text>
             </View>
-            {Number(facture?.remise) > 0 && (
+            {Number(bonLivraison.remise) > 0 && (
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>
-                  {facture.remiseType === "percentage"
-                    ? `Remise (${facture.remise}%)`
+                  {bonLivraison.remiseType === "percentage"
+                    ? `Remise (${bonLivraison.remise}%)`
                     : "Remise"}
                   :
                 </Text>
-                <Text style={styles.summaryValue}>
-                  - {formatCurrency(discountAmount)} DT
-                </Text>
+                <Text style={styles.summaryValue}> </Text>
               </View>
             )}
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Net H.T.:</Text>
-              <Text style={styles.summaryValue}>{formatCurrency(netHT)} DT</Text>
+              <Text style={styles.summaryValue}> </Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>TVA:</Text>
-              <Text style={styles.summaryValue}>
-                {exoneration ? "0,000" : formatCurrency(totalTax)} DT
-              </Text>
+              <Text style={styles.summaryValue}> </Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Total TTC:</Text>
-              <Text style={styles.summaryValue}>
-                {formatCurrency(grandTotal)} DT
-              </Text>
+              <Text style={styles.summaryValue}> </Text>
             </View>
-            {facture?.timbreFiscal && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Timbre Fiscal:</Text>
-                <Text style={styles.summaryValue}>1,000 DT</Text>
-              </View>
-            )}
             
-            {/* NET À PAYER as table - Same design as BC */}
+            {/* NET À PAYER as table - Same design as FacturePDF but empty */}
             <View style={styles.netAPayerContainer}>
               <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
-              <Text style={styles.netAPayerValue}>
-                {formatCurrency(finalTotal)} DT
-              </Text>
+              <Text style={styles.netAPayerValue}> </Text>
             </View>
           </View>
         </View>
@@ -664,7 +349,7 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
 
   const articlesPerPage = 12;
   const articleChunks = [];
-  const articles = facture?.articles || [];
+  const articles = bonLivraison?.articles || [];
   for (let i = 0; i < articles.length; i += articlesPerPage) {
     articleChunks.push(articles.slice(i, i + articlesPerPage));
   }
@@ -679,10 +364,10 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
         <View style={[styles.colN, styles.tableColHeader]}>
           <Text>N°</Text>
         </View>
-        <View style={[styles.colArticle, styles.tableColHeader]}>
+        <View style={[styles.colArticle, styles.tableColHeader, { width: '25%' }]}>
           <Text>ARTICLE</Text>
         </View>
-        <View style={[styles.colDesignation, styles.tableColHeader]}>
+        <View style={[styles.colDesignation, styles.tableColHeader, { width: '42%' }]}>
           <Text>DESIGNATION</Text>
         </View>
         <View style={[styles.colQuantite, styles.tableColHeader]}>
@@ -701,43 +386,39 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
           <Text>M.TTC</Text>
         </View>
       </View>
+    
       {articles.map((item, index) => {
-        const qty = Number(item.quantite) || 0;
-        const priceHT = Number(item.prixUnitaire) || 0;
-        const tvaRate = Number(item.tva) || 0;
-        const remiseRate = Number(item.remise || 0);
-        const priceTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
-        const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-
-        return (
-          <View style={styles.tableRow} key={index}>
-            <View style={[styles.colN, styles.tableCol]}>
-              <Text>{pageIndex * articlesPerPage + index + 1}</Text>
-            </View>
-            <View style={[styles.colArticle, styles.tableCol]}>
-              <Text>{item.article?.reference || "-"}</Text>
-            </View>
-            <View style={[styles.colDesignation, styles.tableCol]}>
-              <Text>{item.article?.designation || "-"}</Text>
-            </View>
-            <View style={[styles.colQuantite, styles.tableCol]}>
-              <Text>{qty}</Text>
-            </View>
-            <View style={[styles.colPUHT, styles.tableCol]}>
-              <Text>{formatCurrency(priceHT)}</Text>
-            </View>
-            <View style={[styles.colTVA, styles.tableCol]}>
-              <Text>{tvaRate > 0 ? `${tvaRate}%` : "-"}</Text>
-            </View>
-            <View style={[styles.colPUTTC, styles.tableCol]}>
-              <Text>{formatCurrency(priceTTC)}</Text>
-            </View>
-            <View style={[styles.colMontantTTC, styles.tableCol]}>
-              <Text>{formatCurrency(montantTTCLigne)}</Text>
-            </View>
-          </View>
-        );
-      })}
+  const qty = Number(item.quantite) || 0;
+  
+  return (
+    <View style={styles.tableRow} key={index}>
+      <View style={[styles.colN, styles.tableCol]}>
+        <Text>{pageIndex * articlesPerPage + index + 1}</Text>
+      </View>
+      <View style={[styles.colArticle, styles.tableCol, { width: '25%' }]}>
+        <Text>{item.article?.reference || " "}</Text>
+      </View>
+      <View style={[styles.colDesignation, styles.tableCol, { width: '42%' }]}>
+        <Text>{item.article?.designation || " "}</Text>
+      </View>
+      <View style={[styles.colQuantite, styles.tableCol]}>
+        <Text>{qty}</Text>
+      </View>
+      <View style={[styles.colPUHT, styles.tableCol]}>
+        <Text> </Text>
+      </View>
+      <View style={[styles.colTVA, styles.tableCol]}>
+        <Text> </Text>
+      </View>
+      <View style={[styles.colPUTTC, styles.tableCol]}>
+        <Text> </Text>
+      </View>
+      <View style={[styles.colMontantTTC, styles.tableCol]}>
+        <Text> </Text>
+      </View>
+    </View>
+  );
+})}
       {articles.length === 0 && (
         <View style={styles.tableRow}>
           <View
@@ -750,7 +431,7 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
     </View>
   );
 
-  const safeFacture = facture || {};
+  const safeBonLivraison = bonLivraison || {};
   const safeCompanyInfo = companyInfo || {};
 
   const renderPageHeader = (pageIndex: number) => (
@@ -777,7 +458,7 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
                   <Text style={styles.N}>
                     N°:{" "}
                     <Text style={styles.commandeNumberValue}>
-                      FACTURE-001/2025
+                      {safeBonLivraison.numeroLivraison || "N/A"}
                     </Text>
                   </Text>
                 </View>
@@ -785,8 +466,8 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
                   <Text style={styles.commandeDetailLabel}>
                     Date:{" "}
                     <Text style={styles.boldText}>
-                      {safeFacture.dateFacture
-                        ? moment(safeFacture.dateFacture).format("DD/MM/YYYY")
+                      {safeBonLivraison.dateLivraison
+                        ? moment(safeBonLivraison.dateLivraison).format("DD/MM/YYYY")
                         : "N/A"}
                     </Text>
                   </Text>
@@ -794,8 +475,8 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
               </View>
               <View style={styles.clientInfoContainer}>
                 <Text style={styles.sectionTitle}>CLIENT</Text>
-                {safeFacture.client?.raison_sociale &&
-                  wrapText(safeFacture.client.raison_sociale).map(
+                {safeBonLivraison.client?.raison_sociale &&
+                  wrapText(safeBonLivraison.client.raison_sociale).map(
                     (line, index) => (
                       <Text
                         style={styles.clientLine}
@@ -805,13 +486,13 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
                       </Text>
                     )
                   )}
-                {safeFacture.client?.matricule_fiscal && (
+                {safeBonLivraison.client?.matricule_fiscal && (
                   <Text style={styles.clientLine}>
-                    MF: {safeFacture.client.matricule_fiscal}
+                    MF: {safeBonLivraison.client.matricule_fiscal}
                   </Text>
                 )}
-                {safeFacture.client?.adresse &&
-                  wrapText(safeFacture.client.adresse).map(
+                {safeBonLivraison.client?.adresse &&
+                  wrapText(safeBonLivraison.client.adresse).map(
                     (line, index) => (
                       <Text
                         style={styles.clientLine}
@@ -821,9 +502,9 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
                       </Text>
                     )
                   )}
-                {safeFacture.client?.telephone1 && (
+                {safeBonLivraison.client?.telephone1 && (
                   <Text style={styles.clientLine}>
-                    Tél: {safeFacture.client.telephone1}
+                    Tél: {safeBonLivraison.client.telephone1}
                   </Text>
                 )}
               </View>
@@ -832,16 +513,16 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
           <View style={styles.vendeurPaymentContainer}>
             <View style={styles.vendeurContainer}>
               <Text style={styles.sectionTitle}>VENDEUR</Text>
-              {safeFacture.vendeur && (
+              {safeBonLivraison.vendeur && (
                 <Text style={styles.vendeurText}>
-                  {[safeFacture.vendeur.nom, safeFacture.vendeur.prenom]
+                  {[safeBonLivraison.vendeur.nom, safeBonLivraison.vendeur.prenom]
                     .filter(Boolean)
                     .join(" ")}
                 </Text>
               )}
             </View>
             <View style={styles.paymentContainerAboveTable}>
-              {/* Empty - same as BC design */}
+              {/* Empty - same as FacturePDF design */}
             </View>
           </View>
         </>
@@ -883,7 +564,7 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
         {renderSummarySection()}
         <View style={[styles.amountInWords, { bottom: amountBottom }]}>
           <Text style={styles.amountText}>
-            Arrêtée la présente facture à la somme de : {amountInWords}
+            Arrêtée le présent bon de livraison
           </Text>
         </View>
         <View style={styles.cachetSignatureSection}>
@@ -945,4 +626,4 @@ const FacturePDF: React.FC<FacturePDFProps> = ({ facture, companyInfo }) => {
   );
 };
 
-export default FacturePDF;
+export default BonLivraisonNonValorisePDF;
