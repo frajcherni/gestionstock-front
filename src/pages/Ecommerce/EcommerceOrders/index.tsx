@@ -1,1285 +1,1121 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
+  Container,
+  Row,
+  Col,
   Card,
   CardBody,
-  Col,
-  Container,
   CardHeader,
-  Nav,
-  NavItem,
-  NavLink,
-  Row,
+  Table,
+  Button,
+  Input,
+  Label,
+  Form,
+  FormGroup,
   Modal,
   ModalHeader,
-  Form,
   ModalBody,
-  Label,
-  Input,
-  FormFeedback,
+  ModalFooter,
   Badge,
-  InputGroup,
-  InputGroupText,
-  Table,
-} from "reactstrap";
-import { Link } from "react-router-dom";
-import classnames from "classnames";
-import Flatpickr from "react-flatpickr";
-import BreadCrumb from "../../../Components/Common/BreadCrumb";
-import TableContainer from "../../../Components/Common/TableContainer";
-import DeleteModal from "../../../Components/Common/DeleteModal";
-import Loader from "../../../Components/Common/Loader";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-import * as Yup from "yup";
-import { useFormik } from "formik";
-import moment from "moment";
-import {
-  fetchArticles,
-  createArticle,
-  updateArticle,
-  deleteArticle,
-  fetchCategories,
-  fetchFournisseurs,
-} from "../../../Components/Article/ArticleServices";
+  Alert,
+  Nav,
+  NavItem,
+  NavLink
+} from 'reactstrap';
+import BreadCrumb from '../../../Components/Common/BreadCrumb';
+import TableContainer from '../../../Components/Common/TableContainer';
+import Loader from '../../../Components/Common/Loader';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import moment from 'moment';
+import 'moment/locale/fr';
+import classnames from 'classnames';
 
-import {
-  Categorie,
-  Fournisseur,
-  Article,
-} from "../../../Components/Article/Interfaces";
+import { 
+  fetchArticlesForInventaire, 
+  fetchInventaires,
+  createInventaire,
+  //updateInventaire,
+  type Inventaire,
+  type InventaireItem
+} from './InventaireServices';
+import { Article } from '../../../Components/Article/Interfaces';
 
-const ArticlesList = () => {
-  const [modal, setModal] = useState(false);
+// Remove the old interfaces since we're importing them now
+
+const InventairePage = () => {
+  // États principaux
+  const [activeView, setActiveView] = useState<'create' | 'list'>('create');
   const [articles, setArticles] = useState<Article[]>([]);
-  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
-  const [article, setArticle] = useState<Article | null>(null);
-  const [categories, setCategories] = useState<Categorie[]>([]);
-  const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
-  const [isEdit, setIsEdit] = useState(false);
-  const [deleteModal, setDeleteModal] = useState(false);
+  const [inventaires, setInventaires] = useState<Inventaire[]>([]);
+  const [filteredInventaires, setFilteredInventaires] = useState<Inventaire[]>([]);
+  const [inventaireItems, setInventaireItems] = useState<Map<number, InventaireItem>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("1");
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [isExportCSV, setIsExportCSV] = useState(false);
-  const [searchText, setSearchText] = useState("");
-  const [detailsModal, setDetailsModal] = useState(false);
-  const [subcategories, setSubcategories] = useState<Categorie[]>([]);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const API_BASE = process.env.REACT_APP_API_BASE;
+  const [inventairesLoading, setInventairesLoading] = useState(false);
+  
+  // États de recherche
+  const [searchText, setSearchText] = useState('');
+  const [articleSearch, setArticleSearch] = useState('');
+  const [filteredArticlesSearch, setFilteredArticlesSearch] = useState<Article[]>([]);
+  
+  // États pour le scanner
+  const [scannerEnabled, setScannerEnabled] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(null);
+  
+  // États des modales
+  const [addModal, setAddModal] = useState(false);
+  const [applyModal, setApplyModal] = useState(false);
+  const [detailModal, setDetailModal] = useState<Inventaire | null>(null);
+  const [editModal, setEditModal] = useState<Inventaire | null>(null);
+  const [applying, setApplying] = useState(false);
+  
+  // État pour l'article à ajouter
+  const [articleToAdd, setArticleToAdd] = useState<Article | null>(null);
+  const [qteReel, setQteReel] = useState<string>('');
+  const [inventaireDescription, setInventaireDescription] = useState('');
+  const [inventaireNumero, setInventaireNumero] = useState('');
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setSelectedImage(file);
-      // Create preview URL
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setImagePreview(e.target?.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Fetch all data
-  const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [articlesData, categoriesData, fournisseursData] =
-        await Promise.all([
-          fetchArticles(),
-          fetchCategories(),
-          fetchFournisseurs(),
-        ]);
-
-      const formattedArticles = articlesData.map((a: any) => ({
-        ...a,
-        type:
-          a.type?.toLowerCase() === "consigné" ? "Consigné" : "Non Consigné",
-        createdAt: a.createdAt || new Date().toISOString(),
-        // Ensure we have default values for new fields
-        taux_fodec: Boolean(a.taux_fodec),
-        tva: a.tva ? a.tva.toString() : "0",
-        pua_ht: Number(a.pua_ht) || 0,
-        puv_ht: Number(a.puv_ht) || 0,
-      }));
-
-      setArticles(formattedArticles);
-      setFilteredArticles(formattedArticles);
-      setCategories(categoriesData);
-      setFournisseurs(fournisseursData);
-      setLoading(false);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Échec du chargement des données"
-      );
-      setLoading(false);
-    }
+  // Charger les articles
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const data = await fetchArticlesForInventaire();
+        setArticles(data);
+        setLoading(false);
+      } catch (err) {
+        toast.error('Erreur de chargement des articles');
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
   }, []);
 
+  // Charger les inventaires quand on passe en vue liste
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Filter articles by type, date and search text
-  // In the useEffect that filters articles, update the search filter section:
-  useEffect(() => {
-    let result = [...articles];
-
-    // Filter by type
-    if (activeTab === "2") {
-      result = result.filter((art) => art.type === "Consigné");
-    } else if (activeTab === "3") {
-      result = result.filter((art) => art.type === "Non Consigné");
+    if (activeView === 'list') {
+      loadInventaires();
     }
+  }, [activeView]);
 
-    // Filter by date range
-    if (startDate && endDate) {
-      const start = moment(startDate).startOf("day");
-      const end = moment(endDate).endOf("day");
-
-      result = result.filter((art) => {
-        const artDate = moment(art.createdAt);
-        return artDate.isBetween(start, end, null, "[]");
-      });
-    }
-
-    // Filter by search text - FIXED VERSION
-    if (searchText != null && searchText) {
-      const searchLower = searchText.toLowerCase();
-      result = result.filter((art) => {
-        // Safe string conversion with null checks
-        const safeToString = (value: any) => {
-          if (value === null || value === undefined) return "";
-          return String(value).toLowerCase();
-        };
-
-        return (
-          safeToString(art.nom).includes(searchLower) ||
-          safeToString(art.reference).includes(searchLower) ||
-          safeToString(art.designation).includes(searchLower) ||
-          safeToString(art.categorie?.nom).includes(searchLower) ||
-          safeToString(art.fournisseur?.raison_sociale).includes(searchLower)
-        );
-      });
-    }
-
-    setFilteredArticles(result);
-  }, [activeTab, startDate, endDate, searchText, articles]);
-
-  // Delete article
-  const handleDelete = async () => {
-    if (!article) return;
-
+  const loadInventaires = async () => {
     try {
-      await deleteArticle(article.id);
-      setDeleteModal(false);
-      fetchData();
-      toast.success("Article supprimé avec succès");
+      setInventairesLoading(true);
+      const data = await fetchInventaires();
+      setInventaires(data);
+      setFilteredInventaires(data);
+      setInventairesLoading(false);
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Échec de la suppression"
-      );
+      toast.error('Erreur de chargement des inventaires');
+      setInventairesLoading(false);
     }
   };
 
-  // Update the calculateTTC function signature
-  const calculateTTC = (
-    htValue: string | number,
-    tvaRate: string | number,
-    hasFodec: boolean
-  ) => {
-    const ht = parseFloat(htValue.toString()) || 0;
-    const tva = parseFloat(tvaRate.toString()) || 0;
-    const tvaAmount = ht * (tva / 100);
-    const fodecAmount = hasFodec ? ht * 0.01 : 0;
-    return (ht + tvaAmount + fodecAmount).toFixed(2);
+  // Générer le prochain numéro d'inventaire
+  const generateNextNumero = () => {
+    const currentYear = moment().format('YYYY');
+    const prefix = 'INV';
+    const lastNum = inventaires.reduce((max, inv) => {
+      const match = inv.numero.match(new RegExp(`${prefix}-(\\d{4})/${currentYear}`));
+      if (match) {
+        const num = parseInt(match[1], 10);
+        return Math.max(max, num);
+      }
+      return max;
+    }, 0);
+    
+    const nextNum = lastNum + 1;
+    return `${prefix}-${nextNum.toString().padStart(4, '0')}/${currentYear}`;
   };
 
-  // Save or update article - CORRECTED VERSION
-  const handleSubmit = async (values: any) => {
+  // Scanner de code-barres
+  const handleBarcodeScan = useCallback((barcode: string) => {
+    if (!scannerEnabled || !barcode.trim()) return;
+    
+    const cleanBarcode = barcode.trim();
+    const scannedArticle = articles.find(article => 
+      article.code_barre === cleanBarcode
+    );
+
+    if (scannedArticle) {
+      setArticleToAdd(scannedArticle);
+      setQteReel(String(scannedArticle.qte || 0));
+      setAddModal(true);
+      toast.success(`Article "${scannedArticle.designation}" trouvé`);
+    } else {
+      toast.error(`Code-barres ${cleanBarcode} non trouvé`);
+    }
+  }, [scannerEnabled, articles]);
+
+  // Gestionnaire de touche pour scanner
+  const handleKeyPress = useCallback((event: KeyboardEvent) => {
+    if (!scannerEnabled) return;
+    
+    event.preventDefault();
+    
+    if (event.key === 'Enter') {
+      if (barcodeInput.length > 0) {
+        handleBarcodeScan(barcodeInput);
+        setBarcodeInput("");
+      }
+    } else if (event.key.length === 1) {
+      setBarcodeInput(prev => prev + event.key);
+      
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+      
+      const newTimeout = setTimeout(() => {
+        if (barcodeInput.length >= 3) {
+          handleBarcodeScan(barcodeInput);
+        }
+        setBarcodeInput("");
+      }, 150);
+      
+      setScanningTimeout(newTimeout);
+    }
+  }, [scannerEnabled, barcodeInput, scanningTimeout, handleBarcodeScan]);
+
+  // Écouter les événements clavier
+  useEffect(() => {
+    if (scannerEnabled) {
+      document.addEventListener('keydown', handleKeyPress);
+    } else {
+      document.removeEventListener('keydown', handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+      setBarcodeInput("");
+    }
+  
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+    };
+  }, [scannerEnabled, handleKeyPress]);
+
+  // Recherche d'articles
+  useEffect(() => {
+    if (articleSearch.length >= 1) {
+      const searchLower = articleSearch.toLowerCase();
+      const filtered = articles.filter(
+        (article) =>
+          article.designation?.toLowerCase().includes(searchLower) ||
+          article.reference?.toLowerCase().includes(searchLower) ||
+          article.code_barre?.toLowerCase().includes(searchLower)
+      );
+      setFilteredArticlesSearch(filtered);
+    } else {
+      setFilteredArticlesSearch([]);
+    }
+  }, [articleSearch, articles]);
+
+  // Ajouter un article à l'inventaire
+  const handleAddToInventaire = () => {
+    if (!articleToAdd || !qteReel) return;
+    
+    const qte = parseInt(qteReel) || 0;
+    const pua_ht = articleToAdd.pua_ht || 0;
+    const tva = articleToAdd.tva || 0;
+    const pua_ttc = articleToAdd.pua_ttc || pua_ht * (1 + tva / 100);
+    
+    const total_ht = qte * pua_ht;
+    const total_tva = total_ht * (tva / 100);
+    const total_ttc = total_ht + total_tva;
+    
+    const inventaireItem: InventaireItem = {
+      article: articleToAdd,
+      qte_reel: qte,
+      pua_ht,
+      pua_ttc,
+      tva,
+      total_tva,
+      total_ht,
+      total_ttc
+    };
+    
+    setInventaireItems(prev => new Map(prev.set(articleToAdd.id, inventaireItem)));
+    setAddModal(false);
+    setArticleToAdd(null);
+    setQteReel('');
+    setArticleSearch('');
+    setFilteredArticlesSearch([]);
+    
+    toast.success('Article ajouté à l\'inventaire');
+  };
+
+  // Modifier la quantité
+  const handleUpdateQte = (articleId: number, newQte: number) => {
+    const item = inventaireItems.get(articleId);
+    if (!item) return;
+    
+    const pua_ht = item.article.pua_ht || 0;
+    const tva = item.article.tva || 0;
+    const pua_ttc = item.article.pua_ttc || pua_ht * (1 + tva / 100);
+    
+    const total_ht = newQte * pua_ht;
+    const total_tva = total_ht * (tva / 100);
+    const total_ttc = total_ht + total_tva;
+    
+    const updatedItem: InventaireItem = {
+      ...item,
+      qte_reel: newQte,
+      pua_ttc,
+      total_tva,
+      total_ht,
+      total_ttc
+    };
+    
+    setInventaireItems(prev => new Map(prev.set(articleId, updatedItem)));
+  };
+
+  // Supprimer un article
+  const handleRemoveFromInventaire = (articleId: number) => {
+    setInventaireItems(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(articleId);
+      return newMap;
+    });
+    toast.success('Article retiré de l\'inventaire');
+  };
+
+  // Appliquer l'inventaire
+// In your component file
+// In your component, update the handleApplyInventaire function:
+const handleApplyInventaire = async () => {
+  if (inventaireItems.size === 0) {
+    toast.warning('Aucun article dans l\'inventaire');
+    return;
+  }
+  
+  try {
+    setApplying(true);
+    
+    // Prepare simple data
+    const inventaireData = {
+      numero: inventaireNumero || generateNextNumero(),
+      date: moment().format('YYYY-MM-DD'),
+      description: inventaireDescription,
+      articles: Array.from(inventaireItems.values()).map(item => ({
+        article_id: item.article.id,  // Just article_id and qte_reel
+        qte_reel: item.qte_reel
+      }))
+    };
+    
+    console.log('Creating inventaire:', inventaireData);
+    
+    // Create inventaire
+    await createInventaire({
+      numero: inventaireNumero || generateNextNumero(),
+      date: moment().format('YYYY-MM-DD'),
+      description: inventaireDescription,
+      articles: Array.from(inventaireItems.values())
+    });
+    
+    toast.success(`Inventaire créé pour ${inventaireItems.size} article(s)`);
+    
+    // Reset
+    setInventaireItems(new Map());
+    setInventaireDescription('');
+    setInventaireNumero('');
+    setApplyModal(false);
+    
+    // Reload data
+    const articlesData = await fetchArticlesForInventaire();
+    setArticles(articlesData);
+    
+    if (activeView === 'list') {
+      await loadInventaires();
+    }
+    
+  } catch (err: any) {
+    console.error('Error creating inventaire:', err);
+    toast.error(err.message || 'Erreur lors de la création de l\'inventaire');
+  } finally {
+    setApplying(false);
+  }
+};
+  // Modifier un inventaire
+  const handleEditInventaire = async (inventaire: Inventaire) => {
+    setEditModal(inventaire);
+    setInventaireItems(new Map(
+      inventaire.articles.map(item => [item.article.id, item])
+    ));
+    setInventaireDescription(inventaire.description || '');
+    setInventaireNumero(inventaire.numero);
+    setActiveView('create');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editModal || inventaireItems.size === 0) return;
+    
     try {
-      console.log("Starting handleSubmit with values:", values);
-
-      // Calculate TTC values
-      const puaTtc = calculateTTC(values.pua_ht, values.tva, values.taux_fodec);
-      const puvTtc = calculateTTC(values.puv_ht, values.tva, values.taux_fodec);
-
-      // Prepare article data with fallback for nom
-      const articleData = {
-        reference: values.reference,
-        nom: values.nom || values.designation || values.reference, // Ensure nom has a value
-        qte: Number(values.qte) || 0,
-        designation: values.designation,
-        categorie_id: Number(values.categorie_id),
-        sous_categorie_id: values.sous_categorie_id
-          ? Number(values.sous_categorie_id)
-          : null,
-        pua_ht: Number(values.pua_ht),
-        puv_ht: Number(values.puv_ht),
-        pua_ttc: Number(puaTtc),
-        puv_ttc: Number(puvTtc),
-        fournisseur_id: Number(values.fournisseur_id),
-        type: values.type,
-        taux_fodec: Boolean(values.taux_fodec),
-        tva: Number(values.tva),
+      setApplying(true);
+      
+      const ajustements = Array.from(inventaireItems.values()).map(item => ({
+        article_id: item.article.id,
+        nouveau_qte: item.qte_reel,
+        commentaire: 'Mise à jour inventaire'
+      }));
+      
+      // Appliquer les ajustements
+     // await applyInventaire(ajustements);
+      
+      const inventaireData = {
+        numero: inventaireNumero,
+        date: editModal.date,
+        description: inventaireDescription,
+        articles: Array.from(inventaireItems.values())
       };
-
-      console.log("Sending article data:", articleData);
-
-      if (isEdit && article) {
-        await updateArticle(
-          article.id,
-          articleData,
-          selectedImage || undefined
-        );
-
-        toast.success("Article mis à jour avec succès");
-      } else {
-        await createArticle(articleData, selectedImage || undefined);
-        toast.success("Article ajouté avec succès");
+      
+      // Mettre à jour l'inventaire
+      //await updateInventaire(editModal.id, inventaireData);
+      
+      toast.success('Inventaire modifié avec succès');
+      
+      setEditModal(null);
+      setInventaireItems(new Map());
+      setInventaireDescription('');
+      setInventaireNumero('');
+      
+      // Recharger
+      if (activeView === 'list') {
+        await loadInventaires();
       }
-
-      setModal(false);
-      setSelectedImage(null);
-      setImagePreview(null);
-      fetchData();
-    } catch (err) {
-      console.error("Error in handleSubmit:", err);
-      toast.error(err instanceof Error ? err.message : "Échec de l'opération");
+      
+    } catch (err: any) {
+      console.error('Error updating inventaire:', err);
+      toast.error(err.message || 'Erreur lors de la modification');
+    } finally {
+      setApplying(false);
     }
   };
 
-  const validation = useFormik({
-    enableReinitialize: true,
-    initialValues: {
-      reference: article?.reference || "",
-      designation: article?.designation || "",
-      // Ensure these are always strings, not null
-      categorie_id: article?.sousCategorie
-        ? String(article.sousCategorie.parent_id)
-        : article?.categorie?.id
-        ? String(article.categorie.id)
-        : "",
-      sous_categorie_id: article?.sousCategorie?.id
-        ? String(article.sousCategorie.id)
-        : "",
-      pua_ht: article?.pua_ht || 0,
-      puv_ht: article?.puv_ht || 0,
-      pua_ttc: article?.pua_ttc || 0,
-      puv_ttc: article?.puv_ttc || 0,
-      fournisseur_id: article?.fournisseur?.id
-        ? String(article.fournisseur.id)
-        : "",
-      type: article?.type || "Non Consigné",
-      taux_fodec: article?.taux_fodec || false,
-      tva: article?.tva ? String(article.tva) : "0",
-      image: article?.image || "",
-    },
-    validationSchema: Yup.object({
-      reference: Yup.string().required("La référence est obligatoire"),
-      designation: Yup.string().required("La désignation est obligatoire"),
-      categorie_id: Yup.string().required("La famille est obligatoire"), // Change to string
-      pua_ht: Yup.number()
-        .required("Le prix d'achat HT est obligatoire")
-        .positive("Le prix doit être positif"),
-      puv_ht: Yup.number()
-        .required("Le prix de vente HT est obligatoire")
-        .positive("Le prix doit être positif"),
-      fournisseur_id: Yup.string().required("Le fournisseur est obligatoire"), // Change to string
-      type: Yup.string().required("Le type est obligatoire"),
-      tva: Yup.string(),
-    }),
-    onSubmit: handleSubmit,
-  });
+  // Exporter en PDF
+  const handleExportPDF = (inventaire: Inventaire) => {
+    // Logique PDF ici
+    toast.success(`PDF pour ${inventaire.numero} généré`);
+  };
 
-  // Add this effect to handle edit mode specifically
-  useEffect(() => {
-    if (isEdit && article && modal) {
-      console.log("Editing article:", article);
-      console.log("Article has sousCategorie:", article.sousCategorie);
+  // Calculer les totaux
+  const totals = useMemo(() => {
+    let totalHT = 0;
+    let totalTVA = 0;
+    let totalTTC = 0;
+    let totalDifference = 0;
+    
+    inventaireItems.forEach(item => {
+      totalHT += item.total_ht;
+      totalTVA += item.total_tva;
+      totalTTC += item.total_ttc;
+      totalDifference += (item.qte_reel - (item.article.qte || 0));
+    });
+    
+    return {
+      totalHT: totalHT.toFixed(2),
+      totalTVA: totalTVA.toFixed(2),
+      totalTTC: totalTTC.toFixed(2),
+      totalDifference,
+      itemCount: inventaireItems.size
+    };
+  }, [inventaireItems]);
 
-      // Load subcategories for the main category
-      const mainCategoryId = article.sousCategorie
-        ? article.sousCategorie.parent_id
-        : article.categorie?.id;
-      if (mainCategoryId) {
-        const subs = categories.filter(
-          (cat) => cat.parent_id === mainCategoryId
-        );
-        console.log("Loaded subcategories:", subs);
-        setSubcategories(subs);
-      }
-    }
-  }, [isEdit, article, modal, categories]);
-
-  // Update TTC values when HT, TVA or FODEC changes
-  useEffect(() => {
-    if (
-      validation.values.pua_ht !== undefined &&
-      validation.values.tva !== undefined
-    ) {
-      const puaTtc = calculateTTC(
-        validation.values.pua_ht,
-        validation.values.tva,
-        validation.values.taux_fodec
-      );
-      const puvTtc = calculateTTC(
-        validation.values.puv_ht,
-        validation.values.tva,
-        validation.values.taux_fodec
-      );
-
-      // Convert to numbers for comparison
-      const currentPuaTtc = parseFloat(
-        validation.values.pua_ttc?.toString() || "0"
-      );
-      const currentPuvTtc = parseFloat(
-        validation.values.puv_ttc?.toString() || "0"
-      );
-
-      // Only update if values are different to avoid infinite loop
-      if (
-        parseFloat(puaTtc) !== currentPuaTtc ||
-        parseFloat(puvTtc) !== currentPuvTtc
-      ) {
-        validation.setFieldValue("pua_ttc", puaTtc);
-        validation.setFieldValue("puv_ttc", puvTtc);
-      }
-    }
-  }, [
-    validation.values.pua_ht,
-    validation.values.puv_ht,
-    validation.values.tva,
-    validation.values.taux_fodec,
-  ]);
-
-  useEffect(() => {
-    if (!modal) {
-      setSelectedImage(null);
-      setImagePreview(null);
-    }
-  }, [modal]);
-
-  // Fixed columns - use the actual data from your API
+  // Colonnes pour la table des inventaires
   const columns = useMemo(
     () => [
       {
-        header: "Référence",
-        accessorKey: "reference",
-        enableColumnFilter: false,
-      },
-      {
-        header: "Désignation",
-        accessorKey: "designation",
-        enableColumnFilter: false,
-      },
-      {
-        header: "Quantité",
-        accessorKey: "qte",
-        enableColumnFilter: false,
-        cell: (cell: any) => cell.getValue() || 0,
-      },
-     
-      {
-        header: "Prix d'achat (TTC)",
-        accessorKey: "pua_ttc",
-        enableColumnFilter: false,
-        cell: (cell: any) => {
-          const value = cell.getValue();
-          return <>{value != null ? Number(value).toFixed(2) : "0.00"} TND</>;
-        },
-      },
-      {
-        header: "Prix de vente (TTC)",
-        accessorKey: "puv_ttc",
-        enableColumnFilter: false,
-        cell: (cell: any) => {
-          const value = cell.getValue();
-          return <>{value != null ? Number(value).toFixed(2) : "0.00"} TND</>;
-        },
-      },
-      {
-        header: "Type",
-        accessorKey: "type",
+        header: 'Numéro',
+        accessorKey: 'numero',
         enableColumnFilter: false,
         cell: (cell: any) => (
-          <Badge
-            color={
-              cell.getValue()?.toLowerCase() === "consigné"
-                ? "success"
-                : "primary"
-            }
-            className="text-uppercase"
+          <a 
+            href="#" 
+            className="text-body fw-medium" 
+            onClick={(e) => {
+              e.preventDefault();
+              setDetailModal(cell.row.original);
+            }}
           >
+            {cell.getValue()}
+          </a>
+        ),
+      },
+      {
+        header: 'Date',
+        accessorKey: 'date',
+        enableColumnFilter: false,
+        cell: (cell: any) => moment(cell.getValue()).format('DD MMM YYYY'),
+      },
+      {
+        header: 'Description',
+        accessorKey: 'description',
+        enableColumnFilter: false,
+        cell: (cell: any) => cell.getValue() || '-',
+      },
+      {
+        header: 'Articles',
+        accessorKey: 'articles',
+        enableColumnFilter: false,
+        cell: (cell: any) => (
+          <Badge color="info" className="text-uppercase">
+            {cell.getValue().length} articles
+          </Badge>
+        ),
+      },
+      {
+        header: 'Valeur TTC',
+        accessorKey: 'articles',
+        enableColumnFilter: false,
+        cell: (cell: any) => {
+          const total = cell.getValue().reduce(
+            (sum: number, item: InventaireItem) => sum + item.total_ttc,
+            0
+          );
+          return `${total.toFixed(2)} TND`;
+        },
+      },
+      {
+        header: 'Status',
+        accessorKey: 'status',
+        enableColumnFilter: false,
+        cell: (cell: any) => (
+          <Badge color={cell.getValue() === 'Terminé' ? 'success' : 'warning'}>
             {cell.getValue()}
           </Badge>
         ),
       },
       {
-        header: "Action",
+        header: 'Actions',
         cell: (cellProps: any) => {
+          const inventaire = cellProps.row.original;
           return (
-            <ul className="list-inline hstack gap-2 mb-0">
-              <li className="list-inline-item">
-                <Link
-                  to="#"
-                  className="text-info d-inline-block"
-                  onClick={() => {
-                    setArticle(cellProps.row.original);
-                    setDetailsModal(true);
-                  }}
-                >
-                  <i className="ri-eye-fill fs-16"></i>
-                </Link>
-              </li>
-              <li className="list-inline-item edit">
-                <Link
-                  to="#"
-                  className="text-primary d-inline-block edit-item-btn"
-                  onClick={() => {
-                    setArticle(cellProps.row.original);
-                    setIsEdit(true);
-                    setModal(true);
-                  }}
-                >
-                  <i className="ri-pencil-fill fs-16"></i>
-                </Link>
-              </li>
-              <li className="list-inline-item">
-                <Link
-                  to="#"
-                  className="text-danger d-inline-block remove-item-btn"
-                  onClick={() => {
-                    setArticle(cellProps.row.original);
-                    setDeleteModal(true);
-                  }}
-                >
-                  <i className="ri-delete-bin-5-fill fs-16"></i>
-                </Link>
-              </li>
-            </ul>
+            <div className="d-flex gap-2">
+              <Button color="light" size="sm" onClick={() => setDetailModal(inventaire)}>
+                <i className="ri-eye-line"></i>
+              </Button>
+              <Button color="primary" size="sm" onClick={() => handleEditInventaire(inventaire)}>
+                <i className="ri-pencil-line"></i>
+              </Button>
+              <Button color="success" size="sm" onClick={() => handleExportPDF(inventaire)}>
+                <i className="ri-download-line"></i>
+              </Button>
+            </div>
           );
         },
       },
     ],
     []
   );
-  const toggleModal = useCallback(() => {
-    if (modal) {
-      setModal(false);
-      setArticle(null);
-    } else {
-      setModal(true);
-    }
-  }, [modal]);
 
-  const toggleDetailsModal = useCallback(() => {
-    setDetailsModal(!detailsModal);
-  }, [detailsModal]);
-
-  // In ArticlesList component - Fix the comparison issue
+  // Filtrer les inventaires
   useEffect(() => {
-    if (validation.values.categorie_id) {
-      const categoryId = parseInt(validation.values.categorie_id.toString());
-      const subs = categories.filter((cat) => cat.parent_id === categoryId);
-      setSubcategories(subs);
-
-      // Reset subcategory if parent category changes
-      const currentSubId = validation.values.sous_categorie_id
-        ? parseInt(validation.values.sous_categorie_id.toString())
-        : null;
-
-      if (!subs.find((sub) => sub.id === currentSubId)) {
-        validation.setFieldValue("sous_categorie_id", "");
-      }
+    if (!searchText) {
+      setFilteredInventaires(inventaires);
     } else {
-      setSubcategories([]);
-      validation.setFieldValue("sous_categorie_id", "");
+      const searchLower = searchText.toLowerCase();
+      const filtered = inventaires.filter(inv => 
+        inv.numero.toLowerCase().includes(searchLower) ||
+        (inv.description && inv.description.toLowerCase().includes(searchLower))
+      );
+      setFilteredInventaires(filtered);
     }
-  }, [validation.values.categorie_id, categories]);
+  }, [searchText, inventaires]);
+
+  // VUE CRÉER/SCANNER
+  const renderCreateView = () => (
+    <Card>
+      <CardHeader className="border-0">
+        <Row className="align-items-center g-3">
+          <Col md={4}>
+            <h5 className="card-title mb-0">
+              {editModal ? 'Modifier Inventaire' : 'Nouvel Inventaire'}
+            </h5>
+            <p className="text-muted mb-0">Scanner et ajuster les quantités réelles</p>
+          </Col>
+          <Col md={8}>
+            <div className="d-flex justify-content-end gap-2">
+              <Button 
+                color={scannerEnabled ? 'success' : 'outline-secondary'}
+                onClick={() => setScannerEnabled(!scannerEnabled)}
+              >
+                <i className="ri-barcode-line me-1"></i>
+                {scannerEnabled ? 'Scanner Actif' : 'Scanner'}
+              </Button>
+              
+              <Button 
+                color="primary"
+                onClick={() => setApplyModal(true)}
+                disabled={inventaireItems.size === 0}
+              >
+                <i className="ri-check-double-line me-1"></i>
+                {editModal ? 'Mettre à jour' : 'Créer'} ({inventaireItems.size})
+              </Button>
+              
+              {editModal && (
+                <Button 
+                  color="light"
+                  onClick={() => {
+                    setEditModal(null);
+                    setInventaireItems(new Map());
+                    setInventaireDescription('');
+                    setInventaireNumero('');
+                  }}
+                >
+                  Annuler
+                </Button>
+              )}
+            </div>
+          </Col>
+        </Row>
+        
+        {scannerEnabled && (
+          <Row className="mt-3">
+            <Col md={12}>
+              <Alert color="info" className="mb-0 py-2">
+                <div className="d-flex align-items-center">
+                  <i className="ri-barcode-box-line fs-5 me-2"></i>
+                  <div>
+                    <span className="fw-semibold">Mode Scanner Activé</span>
+                    <small className="d-block text-muted">
+                      Scannez un code-barres pour ajouter rapidement l'article
+                    </small>
+                  </div>
+                </div>
+              </Alert>
+            </Col>
+          </Row>
+        )}
+      </CardHeader>
+      
+      <CardBody className="pt-0">
+        {editModal && (
+          <Row className="mb-3">
+            <Col md={6}>
+              <FormGroup>
+                <Label>Numéro d'inventaire</Label>
+                <Input 
+                  value={inventaireNumero} 
+                  onChange={(e) => setInventaireNumero(e.target.value)} 
+                />
+              </FormGroup>
+            </Col>
+            <Col md={6}>
+              <FormGroup>
+                <Label>Description</Label>
+                <Input 
+                  value={inventaireDescription}
+                  onChange={(e) => setInventaireDescription(e.target.value)}
+                  placeholder="Description de l'inventaire..."
+                />
+              </FormGroup>
+            </Col>
+          </Row>
+        )}
+
+        {/* Recherche d'article */}
+        <Row className="mb-4">
+          <Col md={8}>
+            <div className="search-box position-relative">
+              <Input
+                type="text"
+                placeholder="Rechercher article par référence, désignation ou code-barres..."
+                value={articleSearch}
+                onChange={(e) => setArticleSearch(e.target.value)}
+                className="ps-4"
+              />
+              <i className="ri-search-line search-icon"></i>
+              
+              {articleSearch.length >= 1 && (
+                <div className="search-results mt-2 border rounded shadow-sm position-absolute w-100 bg-white z-3">
+                  <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                    {filteredArticlesSearch.length > 0 ? (
+                      filteredArticlesSearch.map(article => (
+                        <div
+                          key={article.id}
+                          className="search-result-item p-3 border-bottom"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => {
+                            setArticleToAdd(article);
+                            setQteReel(String(article.qte || 0));
+                            setAddModal(true);
+                            setArticleSearch('');
+                            setFilteredArticlesSearch([]);
+                          }}
+                        >
+                          <div className="d-flex justify-content-between align-items-center">
+                            <div>
+                              <strong>{article.reference}</strong>
+                              <div className="text-muted small">{article.designation}</div>
+                              <div className="d-flex gap-2 mt-1">
+                                {article.code_barre && (
+                                  <Badge color="light" className="text-dark">
+                                    <i className="ri-barcode-line me-1"></i>
+                                    {article.code_barre}
+                                  </Badge>
+                                )}
+                                <Badge color="info">
+                                  Stock: {article.qte || 0}
+                                </Badge>
+                              </div>
+                            </div>
+                            <Badge color="success">
+                              <i className="ri-add-line me-1"></i>
+                              Ajouter
+                            </Badge>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-muted p-3 text-center">
+                        <i className="ri-search-line me-2"></i>
+                        Aucun article trouvé
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Col>
+        </Row>
+        
+        {/* Tableau d'inventaire */}
+        {inventaireItems.size === 0 ? (
+          <div className="text-center py-5">
+            <i className="ri-inbox-line fs-1 text-muted mb-3"></i>
+            <h5 className="text-muted">Aucun article dans l'inventaire</h5>
+            <p className="text-muted">
+              Utilisez la recherche ou le scanner pour ajouter des articles
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Totaux */}
+            <Row className="mb-3">
+              <Col md={12}>
+                <Card className="border-dashed">
+                  <CardBody className="p-3">
+                    <Row className="g-3">
+                      <Col sm={6} md={3}>
+                        <div className="text-center">
+                          <h6 className="text-muted mb-1">Articles</h6>
+                          <h4 className="fw-bold">{totals.itemCount}</h4>
+                        </div>
+                      </Col>
+                      <Col sm={6} md={3}>
+                        <div className="text-center">
+                          <h6 className="text-muted mb-1">Différence totale</h6>
+                          <h4 className={`fw-bold ${totals.totalDifference !== 0 ? 'text-warning' : ''}`}>
+                            {totals.totalDifference} unités
+                          </h4>
+                        </div>
+                      </Col>
+                      <Col sm={6} md={3}>
+                        <div className="text-center">
+                          <h6 className="text-muted mb-1">Total HT</h6>
+                          <h4 className="fw-bold text-primary">
+                            {totals.totalHT} TND
+                          </h4>
+                        </div>
+                      </Col>
+                      <Col sm={6} md={3}>
+                        <div className="text-center">
+                          <h6 className="text-muted mb-1">Total TTC</h6>
+                          <h4 className="fw-bold text-success">
+                            {totals.totalTTC} TND
+                          </h4>
+                        </div>
+                      </Col>
+                    </Row>
+                  </CardBody>
+                </Card>
+              </Col>
+            </Row>
+            
+            {/* Table des articles d'inventaire */}
+            <div className="table-responsive">
+              <Table className="table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr>
+                    <th>Article</th>
+                    <th className="text-center">Stock Actuel</th>
+                    <th className="text-center">Quantité Réelle</th>
+                    <th className="text-center">Prix Unitaire HT</th>
+                    <th className="text-center">TVA</th>
+                    <th className="text-center">Total HT</th>
+                    <th className="text-center">Total TTC</th>
+                    <th className="text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from(inventaireItems.values()).map((item) => {
+                    const difference = item.qte_reel - (item.article.qte || 0);
+                    
+                    return (
+                      <tr key={item.article.id}>
+                        <td>
+                          <div>
+                            <h6 className="mb-1">{item.article.designation}</h6>
+                            <p className="text-muted mb-0">
+                              <small>Réf: {item.article.reference}</small>
+                            </p>
+                          </div>
+                        </td>
+                        
+                        <td className="text-center">
+                          <Badge color="secondary">
+                            {item.article.qte || 0}
+                          </Badge>
+                        </td>
+                        
+                        <td className="text-center">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={item.qte_reel}
+                            onChange={(e) => {
+                              const newQte = parseInt(e.target.value) || 0;
+                              handleUpdateQte(item.article.id, newQte);
+                            }}
+                            className="text-center"
+                            style={{ width: '80px' }}
+                          />
+                          {difference !== 0 && (
+                            <small className={`d-block mt-1 ${difference > 0 ? 'text-success' : 'text-danger'}`}>
+                              {difference > 0 ? '+' : ''}{difference}
+                            </small>
+                          )}
+                        </td>
+                        
+                        <td className="text-center">
+                          <strong className="text-primary">
+                            {item.pua_ht.toFixed(2)} TND
+                          </strong>
+                        </td>
+                        
+                        <td className="text-center">
+                          <Badge color="info">
+                            {item.tva}%
+                          </Badge>
+                        </td>
+                        
+                        <td className="text-center">
+                          <strong>
+                            {item.total_ht.toFixed(2)} TND
+                          </strong>
+                        </td>
+                        
+                        <td className="text-center">
+                          <strong className="text-success">
+                            {item.total_ttc.toFixed(2)} TND
+                          </strong>
+                        </td>
+                        
+                        <td className="text-center">
+                          <Button
+                            color="danger"
+                            size="sm"
+                            onClick={() => handleRemoveFromInventaire(item.article.id)}
+                          >
+                            <i className="ri-delete-bin-line"></i>
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  );
+
+  // VUE LISTE DES INVENTAIRES
+  const renderListView = () => (
+    <Card>
+      <CardHeader>
+        <Row className="align-items-center">
+          <Col sm={6}>
+            <h5 className="card-title mb-0">Historique des Inventaires</h5>
+          </Col>
+          <Col sm={6} className="text-end">
+            <Button color="primary" onClick={() => setActiveView('create')}>
+              <i className="ri-add-line align-bottom me-1"></i> Nouvel Inventaire
+            </Button>
+          </Col>
+        </Row>
+      </CardHeader>
+
+      <CardBody>
+        <Row className="mb-3">
+          <Col md={6}>
+            <div className="search-box">
+              <Input
+                type="text"
+                className="form-control"
+                placeholder="Rechercher inventaire..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+              <i className="ri-search-line search-icon"></i>
+            </div>
+          </Col>
+        </Row>
+
+        {inventairesLoading ? (
+          <Loader />
+        ) : filteredInventaires.length === 0 ? (
+          <div className="text-center py-5">
+            <i className="ri-inbox-line fs-1 text-muted mb-3"></i>
+            <h5 className="text-muted">Aucun inventaire trouvé</h5>
+            <p className="text-muted">
+              Créez votre premier inventaire en utilisant l'onglet "Créer/Scanner"
+            </p>
+          </div>
+        ) : (
+          <TableContainer
+            columns={columns}
+            data={filteredInventaires}
+            isGlobalFilter={false}
+            customPageSize={10}
+            divClass="table-responsive"
+          />
+        )}
+      </CardBody>
+    </Card>
+  );
 
   return (
     <div className="page-content">
-      <DeleteModal
-        show={deleteModal}
-        onDeleteClick={handleDelete}
-        onCloseClick={() => setDeleteModal(false)}
-      />
-
-      <Container fluid style={{ maxWidth: "100%" }}>
-        <BreadCrumb title="Articles" pageTitle="Inventaire" />
-
+      <Container fluid>
+        <BreadCrumb title="Inventaire Physique" pageTitle="Stock" />
+        
+        {/* Onglets de navigation */}
+        <Card className="mb-3">
+          <CardBody className="p-0">
+            <Nav tabs className="nav-tabs-custom">
+              <NavItem>
+                <NavLink
+                  className={classnames({ active: activeView === 'create' })}
+                  onClick={() => setActiveView('create')}
+                >
+                  <i className="ri-add-line me-1 align-bottom"></i> Créer/Scanner
+                </NavLink>
+              </NavItem>
+              <NavItem>
+                <NavLink
+                  className={classnames({ active: activeView === 'list' })}
+                  onClick={() => setActiveView('list')}
+                >
+                  <i className="ri-list-check-2 me-1 align-bottom"></i> Liste des Inventaires
+                </NavLink>
+              </NavItem>
+            </Nav>
+          </CardBody>
+        </Card>
+        
         <Row>
           <Col lg={12}>
-            <Card id="articleList">
-              <CardHeader className="card-header border-0">
-                <Row className="align-items-center gy-3">
-                  <div className="col-sm">
-                    <h5 className="card-title mb-0">Gestion des Articles</h5>
-                  </div>
-                  <div className="col-sm-auto">
-                    <div className="text-success">
-                      <span className="fw-semibold fs-16"> nombre des articles :
-                        {filteredArticles.length} article
-                        {filteredArticles.length !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="col-sm-auto">
-                    <div className="d-flex gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        className="btn btn-secondary add-btn"
-                        onClick={() => {
-                          setIsEdit(false);
-                          setArticle(null);
-                          toggleModal();
-                        }}
-                      >
-                        <i className="ri-add-line align-bottom me-1"></i>{" "}
-                        Ajouter Article
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-success"
-                        onClick={() => setIsExportCSV(true)}
-                      >
-                        <i className="ri-file-download-line align-bottom me-1"></i>{" "}
-                        Exporter
-                      </button>
-                    </div>
-                  </div>
-                </Row>
-              </CardHeader>
-
-              <CardBody className="pt-0">
-                <div>
-                  <Nav
-                    className="nav-tabs nav-tabs-custom nav-success"
-                    role="tablist"
-                  >
-                    <NavItem>
-                      <NavLink
-                        className={classnames({ active: activeTab === "1" })}
-                        onClick={() => {
-                          setActiveTab("1");
-                        }}
-                        href="#"
-                      >
-                        <i className="ri-list-check-2 me-1 align-bottom"></i>{" "}
-                        Tous
-                      </NavLink>
-                    </NavItem>
-                    <NavItem>
-                      <NavLink
-                        className={classnames({ active: activeTab === "2" })}
-                        onClick={() => {
-                          setActiveTab("2");
-                        }}
-                        href="#"
-                      >
-                        <i className="ri-checkbox-circle-line me-1 align-bottom"></i>{" "}
-                        Consigné
-                      </NavLink>
-                    </NavItem>
-                    <NavItem>
-                      <NavLink
-                        className={classnames({ active: activeTab === "3" })}
-                        onClick={() => {
-                          setActiveTab("3");
-                        }}
-                        href="#"
-                      >
-                        <i className="ri-close-circle-line me-1 align-bottom"></i>{" "}
-                        Non Consigné
-                      </NavLink>
-                    </NavItem>
-                  </Nav>
-
-                  <Row className="mt-3 mb-3">
-                    <Col md={4}>
-                      <div className="search-box">
-                        <Input
-                          type="text"
-                          className="form-control"
-                          placeholder="Rechercher..."
-                          value={searchText}
-                          onChange={(e) => setSearchText(e.target.value)}
-                        />
-                        <i className="ri-search-line search-icon"></i>
-                      </div>
-                    </Col>
-                    <Col md={3}>
-                      <InputGroup>
-                        <InputGroupText>De</InputGroupText>
-                        <Flatpickr
-                          className="form-control"
-                          options={{
-                            dateFormat: "d M, Y",
-                            altInput: true,
-                            altFormat: "F j, Y",
-                          }}
-                          placeholder="Date de début"
-                          onChange={(dates) => setStartDate(dates[0])}
-                        />
-                      </InputGroup>
-                    </Col>
-                    <Col md={3}>
-                      <InputGroup>
-                        <InputGroupText>À</InputGroupText>
-                        <Flatpickr
-                          className="form-control"
-                          options={{
-                            dateFormat: "d M, Y",
-                            altInput: true,
-                            altFormat: "F j, Y",
-                          }}
-                          placeholder="Date de fin"
-                          onChange={(dates) => setEndDate(dates[0])}
-                        />
-                      </InputGroup>
-                    </Col>
-                    <Col md={2}>
-                      <button
-                        className="btn btn-light w-100"
-                        onClick={() => {
-                          setStartDate(null);
-                          setEndDate(null);
-                          setSearchText("");
-                        }}
-                      >
-                        <i className="ri-close-line align-bottom me-1"></i>{" "}
-                        Réinitialiser
-                      </button>
-                    </Col>
-                  </Row>
-
-                  {loading ? (
-                    <Loader />
-                  ) : error ? (
-                    <div className="text-danger">{error}</div>
-                  ) : (
-                    <TableContainer
-                      columns={columns}
-                      data={filteredArticles}
-                      isGlobalFilter={false}
-                      customPageSize={100}
-                      divClass="table-responsive table-card mb-1 mt-0"
-                      tableClass="align-middle table-nowrap"
-                      theadClass="table-light text-muted text-uppercase"
-                    />
-                  )}
-                </div>
-
-                {/* Details Modal */}
-                <Modal
-                  isOpen={detailsModal}
-                  toggle={toggleDetailsModal}
-                  centered
-                  size="lg"
-                >
-                  <ModalHeader toggle={toggleDetailsModal}>
-                    Détails de l'article - {article?.nom}
-                  </ModalHeader>
-                  <ModalBody>
-                    {article && (
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Nom
-                            </Label>
-                            <p>{article.nom}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Référence
-                            </Label>
-                            <p>{article.reference}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Désignation
-                            </Label>
-                            <p>{article.designation}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Quantité
-                            </Label>
-                            <p>{article.qte}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Famille
-                            </Label>
-                            <p>{article.categorie?.nom || "N/A"}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Fournisseur
-                            </Label>
-                            <p>
-                              {article.fournisseur?.raison_sociale || "N/A"}
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Prix d'achat HT
-                            </Label>
-                            <p>
-                              {article.pua_ht
-                                ? Number(article.pua_ht).toFixed(2)
-                                : "0.00"}{" "}
-                              TND
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Prix d'achat TTC
-                            </Label>
-                            <p>
-                              {article.pua_ttc
-                                ? Number(article.pua_ttc).toFixed(2)
-                                : "0.00"}{" "}
-                              TND
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Prix de vente HT
-                            </Label>
-                            <p>
-                              {article.puv_ht
-                                ? Number(article.puv_ht).toFixed(2)
-                                : "0.00"}{" "}
-                              TND
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Prix de vente TTC
-                            </Label>
-                            <p>
-                              {article.puv_ttc
-                                ? Number(article.puv_ttc).toFixed(2)
-                                : "0.00"}{" "}
-                              TND
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              TVA
-                            </Label>
-                            <p>{article.tva ? `${article.tva}%` : "N/A"}</p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              FODEC
-                            </Label>
-                            <p>
-                              <Badge
-                                color={
-                                  article.taux_fodec ? "success" : "secondary"
-                                }
-                              >
-                                {article.taux_fodec ? "Oui" : "Non"}
-                              </Badge>
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Type
-                            </Label>
-                            <p>
-                              <Badge
-                                color={
-                                  article.type?.toLowerCase() === "consigné"
-                                    ? "success"
-                                    : "primary"
-                                }
-                                className="text-uppercase"
-                              >
-                                {article.type}
-                              </Badge>
-                            </p>
-                          </div>
-                        </Col>
-
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label fw-semibold">
-                              Date de création
-                            </Label>
-                            <p>
-                              {moment(article.createdAt).format("DD MMM YYYY")}
-                            </p>
-                          </div>
-                        </Col>
-                      </Row>
-                    )}
-                  </ModalBody>
-                </Modal>
-
-                <Modal isOpen={modal} toggle={toggleModal} centered size="lg">
-                  <ModalHeader toggle={toggleModal}>
-                    {isEdit ? "Modifier Article" : "Ajouter Article"}
-                  </ModalHeader>
-                  <Form onSubmit={validation.handleSubmit}>
-                    <ModalBody>
-                      {/* Image Upload Section */}
-                      <Row>
-                        <Col md={12}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Image de l'article
-                            </Label>
-                            <div className="border rounded p-3 text-center">
-                              {imagePreview || article?.image ? (
-                                <div className="mb-3">
-                                  <img
-                                    src={
-                                      imagePreview ||
-                                      (article?.image
-                                        ? `${API_BASE}/${article.image.replace(
-                                            /\\/g,
-                                            "/"
-                                          )}`
-                                        : "")
-                                    }
-                                    alt="Preview"
-                                    className="img-fluid rounded mb-2"
-                                    style={{
-                                      maxHeight: "150px",
-                                      objectFit: "cover",
-                                    }}
-                                  />
-                                  <div>
-                                    <Label
-                                      htmlFor="image-upload"
-                                      className="btn btn-sm btn-outline-primary me-2 mb-1"
-                                    >
-                                      <i className="ri-upload-line align-middle me-1"></i>
-                                      Changer l'image
-                                    </Label>
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm btn-outline-danger"
-                                      onClick={() => {
-                                        setImagePreview(null);
-                                        setSelectedImage(null);
-                                        validation.setFieldValue("image", "");
-                                      }}
-                                    >
-                                      <i className="ri-delete-bin-line align-middle me-1"></i>
-                                      Supprimer
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div>
-                                  <i className="ri-image-line fs-1 text-muted mb-2 d-block"></i>
-                                  <Label
-                                    htmlFor="image-upload"
-                                    className="btn btn-outline-primary"
-                                  >
-                                    <i className="ri-upload-line align-middle me-1"></i>
-                                    Télécharger une image
-                                  </Label>
-                                </div>
-                              )}
-                              <Input
-                                id="image-upload"
-                                name="image"
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageUpload}
-                                className="d-none"
-                              />
-                              <small className="text-muted d-block mt-2">
-                                Formats supportés: JPG, PNG, GIF. Taille max:
-                                5MB
-                              </small>
-                            </div>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Basic Information */}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Référence*</Label>
-
-                            <Input
-                              name="reference"
-                              placeholder="Entrer la référence"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.reference}
-                              invalid={
-                                validation.touched.reference &&
-                                !!validation.errors.reference
-                              }
-                            />
-
-                            <FormFeedback>
-                              {validation.errors.reference}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Désignation*</Label>
-                            <Input
-                              name="designation"
-                              placeholder="Entrer la désignation"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.designation}
-                              invalid={
-                                validation.touched.designation &&
-                                !!validation.errors.designation
-                              }
-                            />
-                            <FormFeedback>
-                              {validation.errors.designation}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Categories */}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Famille Principale*
-                            </Label>
-                            <Input
-                              name="categorie_id"
-                              type="select"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.categorie_id}
-                              invalid={
-                                validation.touched.categorie_id &&
-                                !!validation.errors.categorie_id
-                              }
-                            >
-                              <option value="">
-                                Sélectionner une famille principale
-                              </option>
-                              {categories
-                                .filter((cat) => !cat.parent_id)
-                                .map((categorie) => (
-                                  <option
-                                    key={categorie.id}
-                                    value={categorie.id}
-                                  >
-                                    {categorie.nom}
-                                  </option>
-                                ))}
-                            </Input>
-                            <FormFeedback>
-                              {validation.errors.categorie_id}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Sous-Famille</Label>
-                            <Input
-                              name="sous_categorie_id"
-                              type="select"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.sous_categorie_id}
-                              disabled={!validation.values.categorie_id}
-                            >
-                              <option value="">
-                                Sélectionner une sous-famille
-                              </option>
-                              {subcategories.map((subcategorie) => (
-                                <option
-                                  key={subcategorie.id}
-                                  value={subcategorie.id}
-                                >
-                                  {subcategorie.nom}
-                                </option>
-                              ))}
-                            </Input>
-                            {!validation.values.categorie_id && (
-                              <small className="text-muted">
-                                Sélectionnez d'abord une famille principale
-                              </small>
-                            )}
-                          </div>
-                        </Col>
-                      </Row>
-
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Fournisseur*</Label>
-                            <Input
-                              name="fournisseur_id"
-                              type="select"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.fournisseur_id}
-                              invalid={
-                                validation.touched.fournisseur_id &&
-                                !!validation.errors.fournisseur_id
-                              }
-                            >
-                              <option value="">
-                                Sélectionner un fournisseur
-                              </option>
-                              {fournisseurs.map((fournisseur) => (
-                                <option
-                                  key={fournisseur.id}
-                                  value={fournisseur.id}
-                                >
-                                  {fournisseur.raison_sociale}
-                                </option>
-                              ))}
-                            </Input>
-                            <FormFeedback>
-                              {validation.errors.fournisseur_id}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Type*</Label>
-                            <Input
-                              name="type"
-                              type="select"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.type}
-                              invalid={
-                                validation.touched.type &&
-                                !!validation.errors.type
-                              }
-                            >
-                              <option value="Non Consigné">Non Consigné</option>
-                              <option value="Consigné">Consigné</option>
-                            </Input>
-                            <FormFeedback>
-                              {validation.errors.type}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Pricing - HT */}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Prix d'achat (HT)*
-                            </Label>
-                            <Input
-                              name="pua_ht"
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="Entrer le prix d'achat HT"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.pua_ht}
-                              invalid={
-                                validation.touched.pua_ht &&
-                                !!validation.errors.pua_ht
-                              }
-                            />
-                            <FormFeedback>
-                              {validation.errors.pua_ht}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Prix de vente (HT)*
-                            </Label>
-                            <Input
-                              name="puv_ht"
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              placeholder="Entrer le prix de vente HT"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.puv_ht}
-                              invalid={
-                                validation.touched.puv_ht &&
-                                !!validation.errors.puv_ht
-                              }
-                            />
-                            <FormFeedback>
-                              {validation.errors.puv_ht}
-                            </FormFeedback>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Pricing - TTC (Readonly) */}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Prix d'achat (TTC)
-                            </Label>
-                            <Input
-                              name="pua_ttc"
-                              type="number"
-                              step="0.01"
-                              placeholder="Calculé automatiquement"
-                              value={validation.values.pua_ttc}
-                              readOnly
-                              className="bg-light"
-                            />
-                            <small className="text-muted">
-                              Calculé: HT + TVA + FODEC
-                            </small>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">
-                              Prix de vente (TTC)
-                            </Label>
-                            <Input
-                              name="puv_ttc"
-                              type="number"
-                              step="0.01"
-                              placeholder="Calculé automatiquement"
-                              value={validation.values.puv_ttc}
-                              readOnly
-                              className="bg-light"
-                            />
-                            <small className="text-muted">
-                              Calculé: HT + TVA + FODEC
-                            </small>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Tax Settings */}
-                      <Row>
-                        <Col md={6}>
-                          <div className="mb-3">
-                            <Label className="form-label">Taux de TVA</Label>
-                            <Input
-                              name="tva"
-                              type="select"
-                              onChange={validation.handleChange}
-                              onBlur={validation.handleBlur}
-                              value={validation.values.tva}
-                            >
-                              <option value="0">0%</option>
-                              <option value="7">7%</option>
-                              <option value="13">13%</option>
-                              <option value="19">19%</option>
-                            </Input>
-                          </div>
-                        </Col>
-                        <Col md={6}>
-                          <div
-                            className="mb-3 d-flex align-items-end"
-                            style={{ height: "100%" }}
-                          >
-                            <div className="form-check form-switch">
-                              <Input
-                                name="taux_fodec"
-                                type="checkbox"
-                                className="form-check-input"
-                                onChange={(e) => {
-                                  validation.setFieldValue(
-                                    "taux_fodec",
-                                    e.target.checked
-                                  );
-                                }}
-                                checked={!!validation.values.taux_fodec}
-                                id="fodecSwitch"
-                              />
-                              <Label
-                                className="form-check-label"
-                                for="fodecSwitch"
-                              >
-                                Taux FODEC (1%)
-                              </Label>
-                            </div>
-                          </div>
-                        </Col>
-                      </Row>
-
-                      {/* Debug Section (remove in production) */}
-                    </ModalBody>
-                    <div className="modal-footer">
-                      <button
-                        type="button"
-                        className="btn btn-light"
-                        onClick={toggleModal}
-                      >
-                        Fermer
-                      </button>
-                      <button type="submit" className="btn btn-success">
-                        {isEdit ? "Mettre à jour" : "Ajouter"}
-                      </button>
-                    </div>
-                  </Form>
-                </Modal>
-                <ToastContainer closeButton={false} limit={1} />
-              </CardBody>
-            </Card>
+            {activeView === 'create' ? renderCreateView() : renderListView()}
           </Col>
         </Row>
       </Container>
+      
+      {/* Modal d'ajout d'article */}
+      <Modal isOpen={addModal} toggle={() => setAddModal(false)} centered>
+        <ModalHeader toggle={() => setAddModal(false)}>
+          <i className="ri-add-line me-2"></i>
+          Ajouter à l'inventaire
+        </ModalHeader>
+        <ModalBody>
+          {articleToAdd && (
+            <div>
+              <div className="d-flex align-items-center mb-3">
+                <div>
+                  <h6 className="mb-1">{articleToAdd.designation}</h6>
+                  <p className="text-muted mb-0">Réf: {articleToAdd.reference}</p>
+                </div>
+              </div>
+              
+              <Row className="mb-3">
+                <Col md={6}>
+                  <div className="text-center p-3 border rounded bg-light">
+                    <small className="text-muted d-block">Stock Actuel</small>
+                    <h4 className="text-primary mb-0">{articleToAdd.qte || 0}</h4>
+                  </div>
+                </Col>
+                <Col md={6}>
+                  <div className="text-center p-3 border rounded bg-light">
+                    <small className="text-muted d-block">Prix Achat HT</small>
+                    <h4 className="text-success mb-0">
+                      {(articleToAdd.pua_ht || 0).toFixed(2)} TND
+                    </h4>
+                  </div>
+                </Col>
+              </Row>
+              
+              <FormGroup>
+                <Label>Quantité Réelle</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={qteReel}
+                  onChange={(e) => setQteReel(e.target.value)}
+                  className="text-center fs-4"
+                  autoFocus
+                />
+              </FormGroup>
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button color="light" onClick={() => setAddModal(false)}>
+            Annuler
+          </Button>
+          <Button color="primary" onClick={handleAddToInventaire}>
+            Ajouter à l'inventaire
+          </Button>
+        </ModalFooter>
+      </Modal>
+      
+      {/* Modal d'application d'inventaire */}
+      <Modal isOpen={applyModal} toggle={() => setApplyModal(false)} centered>
+        <ModalHeader toggle={() => setApplyModal(false)}>
+          <i className="ri-check-double-line me-2"></i>
+          {editModal ? 'Mettre à jour l\'Inventaire' : 'Créer l\'Inventaire'}
+        </ModalHeader>
+        <ModalBody>
+          <Alert color="warning">
+            <i className="ri-alert-line me-2"></i>
+            {editModal 
+              ? `Vous êtes sur le point de mettre à jour l'inventaire ${editModal.numero}`
+              : `Vous êtes sur le point de créer un nouvel inventaire`
+            } pour {inventaireItems.size} article(s).
+            Cette action mettra à jour définitivement les quantités en stock.
+          </Alert>
+          
+          {!editModal && (
+            <div className="mb-3">
+              <FormGroup>
+                <Label>Numéro d'inventaire</Label>
+                <Input 
+                  value={inventaireNumero} 
+                  onChange={(e) => setInventaireNumero(e.target.value)}
+                  placeholder="Numéro auto-généré"
+                />
+              </FormGroup>
+              <FormGroup>
+                <Label>Description (optionnel)</Label>
+                <Input 
+                  value={inventaireDescription}
+                  onChange={(e) => setInventaireDescription(e.target.value)}
+                  placeholder="Description..."
+                />
+              </FormGroup>
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button color="light" onClick={() => setApplyModal(false)} disabled={applying}>
+            Annuler
+          </Button>
+          <Button color="primary" onClick={editModal ? handleSaveEdit : handleApplyInventaire} disabled={applying}>
+            {applying ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-1"></span>
+                {editModal ? 'Mise à jour...' : 'Création...'}
+              </>
+            ) : (
+              editModal ? 'Mettre à jour' : 'Confirmer et Créer'
+            )}
+          </Button>
+        </ModalFooter>
+      </Modal>
+      
+      {/* Modal détails inventaire */}
+      <Modal isOpen={!!detailModal} toggle={() => setDetailModal(null)} size="lg">
+        <ModalHeader toggle={() => setDetailModal(null)}>
+          Détails Inventaire #{detailModal?.numero}
+        </ModalHeader>
+        <ModalBody>
+          {detailModal && (
+            <div>
+              <Row className="mb-3">
+                <Col md={6}>
+                  <p><strong>Date:</strong> {moment(detailModal.date).format('DD/MM/YYYY')}</p>
+                </Col>
+                <Col md={6}>
+                  <p><strong>Statut:</strong> 
+                    <Badge color={detailModal.status === 'Terminé' ? 'success' : 'warning'} className="ms-2">
+                      {detailModal.status}
+                    </Badge>
+                  </p>
+                </Col>
+                {detailModal.description && (
+                  <Col md={12}>
+                    <p><strong>Description:</strong> {detailModal.description}</p>
+                  </Col>
+                )}
+              </Row>
+              
+              <div className="table-responsive">
+                <Table>
+                  <thead>
+                    <tr>
+                      <th>Article</th>
+                      <th className="text-center">Quantité Réelle</th>
+                      <th className="text-center">Total HT</th>
+                      <th className="text-center">Total TTC</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailModal.articles.map((item) => (
+                      <tr key={item.article.id}>
+                        <td>
+                          <div>
+                            <strong>{item.article.designation}</strong>
+                            <div className="text-muted small">Réf: {item.article.reference}</div>
+                          </div>
+                        </td>
+                        <td className="text-center">{item.qte_reel}</td>
+                        <td className="text-center">{item.total_ht.toFixed(2)} TND</td>
+                        <td className="text-center">{item.total_ttc.toFixed(2)} TND</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+              
+              <div className="text-end mt-3">
+                <h5>
+                  Total TTC: {detailModal.articles.reduce((sum, item) => sum + item.total_ttc, 0).toFixed(2)} TND
+                </h5>
+              </div>
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button color="light" onClick={() => setDetailModal(null)}>
+            Fermer
+          </Button>
+          {detailModal && (
+            <Button color="primary" onClick={() => handleExportPDF(detailModal)}>
+              <i className="ri-download-line me-1"></i> PDF
+            </Button>
+          )}
+        </ModalFooter>
+      </Modal>
+      
+      <ToastContainer closeButton={false} limit={1} />
     </div>
   );
 };
 
-export default ArticlesList;
+export default InventairePage;

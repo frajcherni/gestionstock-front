@@ -76,12 +76,18 @@ export const deleteBonLivraison = async (id: number): Promise<void> => {
 };
 
 
-export const fetchNextLivraisonNumber = async (): Promise<string> => {
-    const response = await fetch(`${API_BASE}/bons-livraison/getNextLivraisonNumber`);
-    if (!response.ok) throw new Error("Failed to fetch next livraison number");
-    const data = await response.json();
-    return data.numeroLivraison;
-};
-
-
-
+// In BonLivraisonServices.ts
+export const fetchNextLivraisonNumberAPI = async (): Promise<string> => {
+    debugger
+    try {
+      const response = await fetch(`${API_BASE}/bons-livraison/getNextLivraisonNumber`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.numeroLivraison;
+    } catch (error) {
+      console.error('Error fetching next livraison number:', error);
+      throw error;
+    }
+  };

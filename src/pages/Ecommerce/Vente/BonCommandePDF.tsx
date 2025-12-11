@@ -155,10 +155,10 @@ const styles = StyleSheet.create({
     borderBottom: "1pt solid #ddd",
     paddingVertical: 5,
   },
-  tvaHeaderTaux: { width: "25%", fontSize: 10, fontWeight: "bold", textAlign: "center", color: "#fff", paddingHorizontal: 4 },
+  tvaHeaderTaux: { width: "22%", fontSize: 10, fontWeight: "bold", textAlign: "center", color: "#fff", paddingHorizontal: 4 },
   tvaHeaderBase: { width: "35%", fontSize: 10, fontWeight: "bold", textAlign: "right", color: "#fff", paddingHorizontal: 4 },
   tvaHeaderMontant: { width: "40%", fontSize: 10, fontWeight: "bold", textAlign: "right", color: "#fff", paddingHorizontal: 4 },
-  tvaColTaux: { width: "25%", fontSize: 10, textAlign: "center", paddingHorizontal: 4 },
+  tvaColTaux: { width: "22%", fontSize: 10, textAlign: "center", paddingHorizontal: 4 },
   tvaColBase: { width: "35%", fontSize: 10, textAlign: "right", paddingHorizontal: 4 },
   tvaColMontant: { width: "40%", fontSize: 10, textAlign: "right", paddingHorizontal: 4 },
   paymentBoxUnderTVA: {
@@ -262,7 +262,7 @@ const styles = StyleSheet.create({
   clientInfoContainer: {
     width: "60%",
     alignItems: "flex-start",
-    left: "180",
+    left: "210",
   },
   clientLine: { fontSize: 10, marginBottom: 1, fontWeight: "bold", flexWrap: "wrap" },
   clientLineItem: { fontSize: 10, marginBottom: 1, fontWeight: "bold" },
@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   vendeurContainer: {
     width: '55%',
@@ -499,7 +499,7 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
     ];
     
     const integerPart = Math.floor(num);
-    if (integerPart === 0) return "Zéro dinars zéro millime uniquement";
+    if (integerPart === 0) return "Zéro dinars zéro millimes uniquement";
     
     let words = "";
     
@@ -509,7 +509,7 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
       if (thousands === 1) {
         words += "mille";
       } else {
-        words += numberToWords(thousands).replace(" dinars zéro millime uniquement", "") + " mille";
+        words += numberToWords(thousands).replace(" dinars zéro millimes uniquement", "") + " mille";
       }
       if (integerPart % 1000 > 0) words += " ";
     }
@@ -561,7 +561,7 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
       }
     }
     
-    words += " dinars zéro millime";
+    words += " dinars zéro millimes";
     return words.charAt(0).toUpperCase() + words.slice(1) + " uniquement";
   };
 
@@ -569,29 +569,37 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
   const hasPayments = bonCommande.paiements && bonCommande.paiements.length > 0;
   
   // PAGINATION LOGIC
-  const totalArticles = bonCommande?.articles?.length || 0;
-  
-  // Determine pagination based on total articles
-  let articlesFirstPage: any[] = [];
-  let articlesSecondPage: any[] = [];
-  let needsSecondPage = false;
-  let totalPages = 1;
+// PAGINATION LOGIC
 
-  if (totalArticles <= 10) {
-    // Single page: show all articles (up to 10)
-    articlesFirstPage = bonCommande?.articles?.slice(0, 10) || [];
-    needsSecondPage = false;
-    totalPages = 1;
-  } else {
-    // Multiple pages: show 15 on first page, rest on second page
-    articlesFirstPage = bonCommande?.articles?.slice(0, 15) || [];
-    articlesSecondPage = bonCommande?.articles?.slice(15) || [];
-    needsSecondPage = true;
-    totalPages = 2;
-  }
+// PAGINATION LOGIC
+const totalArticles = bonCommande?.articles?.length || 0;
 
-  // Function to wrap client info text if it exceeds 25 characters
-  const wrapClientText = (text: string, maxLength: number = 25): string[] => {
+// Determine pagination based on total articles
+let articlesFirstPage: any[] = [];
+let articlesSecondPage: any[] = [];
+let needsSecondPage = false;
+let totalPages = 1;
+
+if (totalArticles <= 10) {
+  // 1-10 articles: Single page with ALL content
+  articlesFirstPage = bonCommande?.articles?.slice(0, 10) || [];
+  needsSecondPage = false;
+  totalPages = 1;
+} else if (totalArticles <= 15) {
+  // 11-15 articles: Single page with ALL articles but add empty second page for summary
+  articlesFirstPage = bonCommande?.articles?.slice(0, 15) || [];
+  needsSecondPage = true; // Force second page for summary content
+  totalPages = 2;
+} else {
+  // 16+ articles: First page shows 15 articles, second page shows rest + ALL content
+  articlesFirstPage = bonCommande?.articles?.slice(0, 15) || [];
+  articlesSecondPage = bonCommande?.articles?.slice(15) || [];
+  needsSecondPage = articlesSecondPage.length > 0;
+  totalPages = needsSecondPage ? 2 : 1;
+}
+
+  // Function to wrap client info text if it exceeds 22 characters
+  const wrapClientText = (text: string, maxLength: number = 22): string[] => {
     if (!text || text.length <= maxLength) return [text];
     
     const words = text.split(" ");
@@ -978,11 +986,7 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
 
   const renderTable = (articles: any[], pageIndex: number, isContinuation: boolean = false) => (
     <View style={styles.tableContainer}>
-      {isContinuation && (
-        <View style={styles.continuationHeader}>
-          <Text>SUITE DE LA COMMANDE - PAGE {pageIndex + 1}</Text>
-        </View>
-      )}
+ 
       <View style={styles.tableHeader}>
         <View style={[styles.colN, styles.tableColHeader]}>
           <Text>N°</Text>
@@ -1192,16 +1196,19 @@ const BonCommandePDF: React.FC<BonCommandePDFProps> = ({
       <Page key={0} size="A4" style={styles.page}>
         {renderPageHeader(0)}
         {renderTable(articlesFirstPage, 0)}
-        {!needsSecondPage && renderSummaryContent()}
+        {/* Show summary on first page ONLY for 1-10 articles */}
+        {totalArticles <= 10 && renderSummaryContent()}
         {renderFooter()}
         <Text style={styles.pageNumber}>Page 1 sur {totalPages}</Text>
       </Page>
-
-      {/* SECOND PAGE - Only if needed */}
+  
+      {/* SECOND PAGE - For 11+ articles */}
       {needsSecondPage && (
         <Page key={1} size="A4" style={styles.page}>
           {renderPageHeader(1)}
-          {renderTable(articlesSecondPage, 1, true)}
+          {/* Show table only if there are articles for second page (16+ articles case) */}
+          {articlesSecondPage.length > 0 && renderTable(articlesSecondPage, 1, true)}
+          {/* ALWAYS show summary on second page for 11+ articles */}
           {renderSummaryContent()}
           {renderFooter()}
           <Text style={styles.pageNumber}>Page 2 sur {totalPages}</Text>

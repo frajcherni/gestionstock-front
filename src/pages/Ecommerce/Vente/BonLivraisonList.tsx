@@ -46,7 +46,7 @@ import {
   createBonLivraison,
   updateBonLivraison,
   deleteBonLivraison,
-  fetchNextLivraisonNumber,
+  fetchNextLivraisonNumberAPI,
 } from "../../../Components/CommandeClient/BonLivraisonServices";
 import {
   fetchArticles,
@@ -132,21 +132,30 @@ const BonLivraisonList = () => {
   const [editingTTC, setEditingTTC] = useState<{ [key: number]: string }>({});
   const [editingHT, setEditingHT] = useState<{ [key: number]: string }>({});
 
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+  const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>(
+    []
+  );
+
   // Add these with your other state declarations at the top of the component
-const [valorisationModal, setValorisationModal] = useState(false);
-const [selectedBonLivraisonForValorisation, setSelectedBonLivraisonForValorisation] = useState<BonLivraison | null>(null);
-const [isValorise, setIsValorise] = useState(true);
+  const [valorisationModal, setValorisationModal] = useState(false);
+  const [
+    selectedBonLivraisonForValorisation,
+    setSelectedBonLivraisonForValorisation,
+  ] = useState<BonLivraison | null>(null);
+  const [isValorise, setIsValorise] = useState(true);
 
   // Add these state variables near your existing states
   const [clientModal, setClientModal] = useState(false);
   const [articleModal, setArticleModal] = useState(false);
-// Add with your other state declarations
-const [livraisonInfo, setLivraisonInfo] = useState({
-  voiture: "",
-  serie: "",
-  chauffeur: "",
-  cin: ""
-});
+  // Add with your other state declarations
+  const [livraisonInfo, setLivraisonInfo] = useState({
+    voiture: "",
+    serie: "",
+    chauffeur: "",
+    cin: "",
+  });
   const [newClient, setNewClient] = useState({
     raison_sociale: "",
     designation: "",
@@ -224,28 +233,103 @@ const [livraisonInfo, setLivraisonInfo] = useState({
       email: userProfile?.company_email || "Email",
       website: userProfile?.company_website || "Site web",
       taxId: userProfile?.company_tax_id || "MF",
-      gsm: userProfile?.company_gsm, 
+      gsm: userProfile?.company_gsm,
       logo: logo,
     }),
     [userProfile]
   );
 
   // Function to open PDF modal
-// Replace your current openPdfModal function with this:
-const openPdfModal = (bonLivraison: BonLivraison) => {
-  setSelectedBonLivraisonForValorisation(bonLivraison);
-  setValorisationModal(true);
-  setIsValorise(true); // Reset to default value
-};
+  // Replace your current openPdfModal function with this:
+  const openPdfModal = (bonLivraison: BonLivraison) => {
+    setSelectedBonLivraisonForValorisation(bonLivraison);
+    setValorisationModal(true);
+    setIsValorise(true); // Reset to default value
+  };
+
+  useEffect(() => {
+    // Scroll to focused item
+    if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+      const item = itemRefs[focusedIndex].current;
+      const dropdown = dropdownRef;
+
+      if (item && dropdown) {
+        const itemTop = item.offsetTop;
+        const itemBottom = itemTop + item.offsetHeight;
+        const dropdownTop = dropdown.scrollTop;
+        const dropdownBottom = dropdownTop + dropdown.clientHeight;
+
+        if (itemTop < dropdownTop) {
+          dropdown.scrollTop = itemTop;
+        } else if (itemBottom > dropdownBottom) {
+          dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+        }
+      }
+    }
+  }, [focusedIndex, dropdownRef, itemRefs]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+        setFilteredArticles([]);
+        setFocusedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownRef]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+        setFilteredArticles([]);
+        setFocusedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownRef]);
+
   const fetchNextLivraisonNumberFromAPI = useCallback(async () => {
+    console.log("🔍 fetchNextLivraisonNumberFromAPI called");
+
     try {
-      const numero = await fetchNextLivraisonNumber();
+      console.log("📦 Making API call...");
+      const numero = await fetchNextLivraisonNumberAPI();
+      console.log("✅ Received numero:", numero);
+
+      if (!numero || typeof numero !== "string") {
+        throw new Error("Invalid number format received from API");
+      }
+
       setNextNumeroLivraison(numero);
+      return numero;
     } catch (err) {
-      toast.error("Échec de la récupération du numéro de livraison");
+      console.error("❌ Error fetching next livraison number:", err);
+
+      // Show user-friendly error
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      toast.error(
+        `Échec de la récupération du numéro de livraison: ${errorMessage}`
+      );
+
+      // Fallback: Generate a number locally
+      const year = moment().format("YYYY");
+      const nextNum = `LIVRAISON-${String(350 + bonsLivraison.length).padStart(
+        3,
+        "0"
+      )}/${year}`;
+      console.log("🔄 Using fallback number:", nextNum);
+      setNextNumeroLivraison(nextNum);
+      return nextNum;
     }
   }, [bonsLivraison]);
-
   const fetchNextFactureNumber = useCallback(async () => {
     try {
       const numero = await fetchNextFactureNumberFromAPI();
@@ -625,8 +709,14 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
   // Add these functions before the return statement
   const handleCreateClient = async () => {
     try {
-      await createClient(newClient);
+      const createdClient = await createClient(newClient);
       toast.success("Client créé avec succès");
+      
+      // Auto-select the newly created client
+      setSelectedClient(createdClient);
+      validation.setFieldValue("client_id", createdClient.id);
+      setClientSearch(createdClient.raison_sociale);
+      
       setClientModal(false);
       setNewClient({
         raison_sociale: "",
@@ -641,6 +731,7 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
         email: "",
         status: "Actif" as "Actif" | "Inactif",
       });
+      
       // Refresh clients list
       const clientsData = await fetchClients();
       setClients(clientsData);
@@ -781,6 +872,7 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
           article_id: item.article_id,
           quantite: item.quantite,
           prix_unitaire: item.prixUnitaire,
+          prix_ttc: item.prixTTC, // ✅ Make sure prix_ttc is included
           tva: item.tva,
           remise: item.remise,
         })),
@@ -791,7 +883,7 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
         totalTVA: totalTax,
         totalTTC: grandTotal,
         timbreFiscal: isCreatingFacture ? timbreFiscal : false,
-        livraisonInfo: livraisonInfo
+        livraisonInfo: livraisonInfo,
       };
 
       if (isCreatingFacture) {
@@ -863,7 +955,6 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
     }),
     onSubmit: handleSubmit,
   });
-
   const toggleModal = useCallback(() => {
     if (modal) {
       setModal(false);
@@ -877,13 +968,15 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
       setNextNumeroLivraison("");
       setIsCreatingFacture(false);
       setTimbreFiscal(false);
+
+      // ✅ FIX: Properly reset delivery info
       setLivraisonInfo({
         voiture: "",
         serie: "",
         chauffeur: "",
-        cin: ""
+        cin: "",
       });
-  
+
       validation.resetForm();
     } else {
       setModal(true);
@@ -896,19 +989,20 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
       article &&
       !selectedArticles.some((item) => item.article_id === article.id)
     ) {
+      // ✅ Use TTC price from article like in BC Client
       const initialHT = article.puv_ht || 0;
       const initialTVA = article.tva || 0;
-      const initialTTC = article.puv_ttc || 0; // Use TTC price from article
-
+      const initialTTC = article.puv_ttc || initialHT * (1 + (article.tva || 0) / 100); // Use puv_ttc if available
+  
       setSelectedArticles([
         ...selectedArticles,
         {
           article_id: article.id,
-          quantite: "", // Start with empty instead of 0
+          quantite: "", // Empty for user to fill
           prixUnitaire: initialHT,
           tva: initialTVA,
           remise: 0,
-          prixTTC: Math.round(initialTTC * 1000) / 1000, // Direct from article.puv_ttc
+          prixTTC: Math.round(initialTTC * 1000) / 1000, // ✅ Use TTC from article like BC Client
           articleDetails: article,
         },
       ]);
@@ -1213,7 +1307,6 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
                         quantite: item.quantite,
                         prixUnitaire: parseFloat(item.prix_unitaire),
                         prixTTC:
-                          item.article?.puv_ttc ||
                           parseFloat(item.prix_ttc) ||
                           parseFloat(item.prix_unitaire) *
                             (1 + (item.tva || 0) / 100),
@@ -1229,12 +1322,15 @@ const openPdfModal = (bonLivraison: BonLivraison) => {
                     );
                     setShowRemise((cellProps.row.original.remise || 0) > 0);
                     // In your edit button click handler, add this:
-setLivraisonInfo(bonLivraison?.livraisonInfo || {
-  voiture: "",
-  serie: "",
-  chauffeur: "",
-  cin: ""
-});
+                    const currentBonLivraison = cellProps.row.original;
+
+                    setLivraisonInfo({
+                      voiture: currentBonLivraison?.voiture || "",
+                      serie: currentBonLivraison?.serie || "",
+                      chauffeur: currentBonLivraison?.chauffeur || "",
+                      cin: currentBonLivraison?.cin || "",
+                    });
+
                     setSelectedBonCommande(
                       cellProps.row.original.bonCommandeClient || null
                     );
@@ -1451,191 +1547,169 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                 )}
 
                 {/* Quick Client Creation Modal */}
-                <Modal
-                  isOpen={clientModal}
-                  toggle={() => setClientModal(false)}
-                  centered
-                  size="lg"
-                >
-                  <ModalHeader toggle={() => setClientModal(false)}>
-                    Nouveau Client
-                  </ModalHeader>
-                  <ModalBody>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Raison Sociale</Label>
-                          <Input
-                            value={newClient.raison_sociale}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                raison_sociale: e.target.value,
-                              })
-                            }
-                            placeholder="Raison sociale"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Désignation</Label>
-                          <Input
-                            value={newClient.designation}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                designation: e.target.value,
-                              })
-                            }
-                            placeholder="Désignation"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                {/* Quick Client Creation Modal */}
+<Modal
+  isOpen={clientModal}
+  toggle={() => setClientModal(false)}
+  centered
+  size="lg"
+>
+  <ModalHeader toggle={() => setClientModal(false)}>
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-user-add-line text-primary fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">Nouveau Client</h4>
+        <small className="text-muted">Créer un nouveau client rapidement</small>
+      </div>
+    </div>
+  </ModalHeader>
+  <ModalBody>
+    <Row>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Raison Sociale*</Label>
+          <Input
+            value={newClient.raison_sociale}
+            onChange={(e) =>
+              setNewClient({
+                ...newClient,
+                raison_sociale: e.target.value,
+              })
+            }
+            placeholder="Raison sociale"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Désignation*</Label>
+          <Input
+            value={newClient.designation}
+            onChange={(e) =>
+              setNewClient({
+                ...newClient,
+                designation: e.target.value,
+              })
+            }
+            placeholder="Désignation"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+    </Row>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Matricule Fiscal</Label>
-                          <Input
-                            value={newClient.matricule_fiscal}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                matricule_fiscal: e.target.value,
-                              })
-                            }
-                            placeholder="Matricule fiscal"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Registre Commerce</Label>
-                          <Input
-                            value={newClient.register_commerce}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                register_commerce: e.target.value,
-                              })
-                            }
-                            placeholder="Registre de commerce"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+    <Row>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Téléphone 1*</Label>
+          <Input
+            value={newClient.telephone1}
+            onChange={(e) => {
+              const formatted = formatPhoneInput(e.target.value);
+              setNewClient({
+                ...newClient,
+                telephone1: formatted,
+              });
+            }}
+            placeholder="XX XXX XXX"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Téléphone 2</Label>
+          <Input
+            value={newClient.telephone2}
+            onChange={(e) => {
+              const formatted = formatPhoneInput(e.target.value);
+              setNewClient({
+                ...newClient,
+                telephone2: formatted,
+              });
+            }}
+            placeholder="XX XXX XXX"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+    </Row>
 
-                    <div className="mb-3">
-                      <Label>Adresse</Label>
-                      <Input
-                        value={newClient.adresse}
-                        onChange={(e) =>
-                          setNewClient({
-                            ...newClient,
-                            adresse: e.target.value,
-                          })
-                        }
-                        placeholder="Adresse"
-                      />
-                    </div>
+    <div className="mb-3">
+      <Label className="form-label">Adresse</Label>
+      <Input
+        value={newClient.adresse}
+        onChange={(e) =>
+          setNewClient({
+            ...newClient,
+            adresse: e.target.value,
+          })
+        }
+        placeholder="Adresse complète"
+        className="form-control-lg"
+      />
+    </div>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Ville</Label>
-                          <Input
-                            value={newClient.ville}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                ville: e.target.value,
-                              })
-                            }
-                            placeholder="Ville"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Code Postal</Label>
-                          <Input
-                            value={newClient.code_postal}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                code_postal: e.target.value,
-                              })
-                            }
-                            placeholder="Code postal"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+    <Row>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Ville</Label>
+          <Input
+            value={newClient.ville}
+            onChange={(e) =>
+              setNewClient({
+                ...newClient,
+                ville: e.target.value,
+              })
+            }
+            placeholder="Ville"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+      <Col md={6}>
+        <div className="mb-3">
+          <Label className="form-label">Code Postal</Label>
+          <Input
+            value={newClient.code_postal}
+            onChange={(e) =>
+              setNewClient({
+                ...newClient,
+                code_postal: e.target.value,
+              })
+            }
+            placeholder="Code postal"
+            className="form-control-lg"
+          />
+        </div>
+      </Col>
+    </Row>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Téléphone 1</Label>
-                          <Input
-                            value={newClient.telephone1}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone1: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 1"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label>Téléphone 2</Label>
-                          <Input
-                            value={newClient.telephone2}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone2: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 2"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
-
-                    <div className="mb-3">
-                      <Label>Email</Label>
-                      <Input
-                        type="email"
-                        value={newClient.email}
-                        onChange={(e) =>
-                          setNewClient({ ...newClient, email: e.target.value })
-                        }
-                        placeholder="Email"
-                      />
-                    </div>
-                  </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
-                      onClick={() => setClientModal(false)}
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleCreateClient}
-                    >
-                      Créer Client
-                    </button>
-                  </div>
-                </Modal>
+    <div className="mb-3">
+      <Label className="form-label">Email</Label>
+      <Input
+        type="email"
+        value={newClient.email}
+        onChange={(e) =>
+          setNewClient({ ...newClient, email: e.target.value })
+        }
+        placeholder="email@exemple.com"
+        className="form-control-lg"
+      />
+    </div>
+  </ModalBody>
+  <ModalFooter>
+    <Button color="light" onClick={() => setClientModal(false)}>
+      <i className="ri-close-line me-2"></i> Annuler
+    </Button>
+    <Button color="primary" onClick={handleCreateClient}>
+      <i className="ri-add-line me-2"></i> Créer Client
+    </Button>
+  </ModalFooter>
+</Modal>
 
                 {/* Quick Article Creation Modal */}
                 <Modal
@@ -2101,45 +2175,64 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                           </Col>
                         </Row>
 
-{/* Add this in your detail modal after the existing sections */}
-{selectedBonLivraison?.livraisonInfo && (
-  <Card className="border-0 shadow-sm mb-4">
-    <CardBody className="p-4">
-      <h6 className="fw-semibold mb-3 text-primary">
-        <i className="ri-truck-line me-2"></i>
-        Informations de Livraison
-      </h6>
-      <Row>
-        <Col md={6}>
-          <p className="mb-2">
-            <span className="text-muted d-block">Voiture:</span>
-            <strong>{selectedBonLivraison.livraisonInfo.voiture}</strong>
-          </p>
-        </Col>
-        <Col md={6}>
-          <p className="mb-2">
-            <span className="text-muted d-block">Série:</span>
-            <strong>{selectedBonLivraison.livraisonInfo.serie}</strong>
-          </p>
-        </Col>
-      </Row>
-      <Row>
-        <Col md={6}>
-          <p className="mb-2">
-            <span className="text-muted d-block">Chauffeur:</span>
-            <strong>{selectedBonLivraison.livraisonInfo.chauffeur}</strong>
-          </p>
-        </Col>
-        <Col md={6}>
-          <p className="mb-2">
-            <span className="text-muted d-block">CIN:</span>
-            <strong>{selectedBonLivraison.livraisonInfo.cin}</strong>
-          </p>
-        </Col>
-      </Row>
-    </CardBody>
-  </Card>
-)}
+                        {/* Add this in your detail modal after the existing sections */}
+                        {/* Replace the current delivery info section in detail modal with this: */}
+                        <Card className="border-0 shadow-sm mb-4">
+                          <CardBody className="p-4">
+                            <h6 className="fw-semibold mb-3 text-primary">
+                              <i className="ri-truck-line me-2"></i>
+                              Informations de Livraison
+                            </h6>
+                            <Row>
+                              <Col md={6}>
+                                <p className="mb-2">
+                                  <span className="text-muted d-block">
+                                    Voiture:
+                                  </span>
+                                  <strong>
+                                    {selectedBonLivraison?.voiture ||
+                                      "Non spécifié"}
+                                  </strong>
+                                </p>
+                              </Col>
+                              <Col md={6}>
+                                <p className="mb-2">
+                                  <span className="text-muted d-block">
+                                    Série:
+                                  </span>
+                                  <strong>
+                                    {selectedBonLivraison?.serie ||
+                                      "Non spécifié"}
+                                  </strong>
+                                </p>
+                              </Col>
+                            </Row>
+                            <Row>
+                              <Col md={6}>
+                                <p className="mb-2">
+                                  <span className="text-muted d-block">
+                                    Chauffeur:
+                                  </span>
+                                  <strong>
+                                    {selectedBonLivraison?.chauffeur ||
+                                      "Non spécifié"}
+                                  </strong>
+                                </p>
+                              </Col>
+                              <Col md={6}>
+                                <p className="mb-2">
+                                  <span className="text-muted d-block">
+                                    CIN:
+                                  </span>
+                                  <strong>
+                                    {selectedBonLivraison?.cin ||
+                                      "Non spécifié"}
+                                  </strong>
+                                </p>
+                              </Col>
+                            </Row>
+                          </CardBody>
+                        </Card>
                         {selectedBonLivraison.notes && (
                           <Card className="border-0 shadow-sm mb-4">
                             <CardBody className="p-4">
@@ -2541,17 +2634,19 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                       <i className="ri-file-text-line me-2"></i> Créer Facture
                     </Button>
 
-<Button
-  color="primary"
-  onClick={() => {
-    setSelectedBonLivraisonForValorisation(selectedBonLivraison);
-    setValorisationModal(true);
-  }}
-  className="btn-invoice btn-invoice-primary me-2"
-  disabled={!selectedBonLivraison}
->
-  <i className="ri-file-pdf-line me-2"></i> Imprimer PDF
-</Button>
+                    <Button
+                      color="primary"
+                      onClick={() => {
+                        setSelectedBonLivraisonForValorisation(
+                          selectedBonLivraison
+                        );
+                        setValorisationModal(true);
+                      }}
+                      className="btn-invoice btn-invoice-primary me-2"
+                      disabled={!selectedBonLivraison}
+                    >
+                      <i className="ri-file-pdf-line me-2"></i> Imprimer PDF
+                    </Button>
 
                     <Button
                       color="light"
@@ -3114,14 +3209,67 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                             <Label className="form-label-lg fw-semibold">
                               Rechercher Article
                             </Label>
+
+                            {/* Update the article search input */}
                             <div className="search-box position-relative">
                               <Input
                                 type="text"
                                 placeholder="Rechercher article..."
                                 value={articleSearch}
-                                onChange={(e) =>
-                                  setArticleSearch(e.target.value)
-                                }
+                                onChange={(e) => {
+                                  setArticleSearch(e.target.value);
+                                  setFocusedIndex(-1); // Reset focus when typing
+                                }}
+                                onKeyDown={(e) => {
+                                  if (filteredArticles.length > 0) {
+                                    // Handle arrow down
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev < filteredArticles.length - 1
+                                          ? prev + 1
+                                          : 0
+                                      );
+                                    }
+                                    // Handle arrow up
+                                    else if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev > 0
+                                          ? prev - 1
+                                          : filteredArticles.length - 1
+                                      );
+                                    }
+                                    // Handle Enter to select focused item
+                                    else if (
+                                      e.key === "Enter" &&
+                                      focusedIndex >= 0
+                                    ) {
+                                      e.preventDefault();
+                                      const article =
+                                        filteredArticles[focusedIndex];
+                                      handleAddArticle(article.id.toString());
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                    // Handle Enter to select first item when no focus
+                                    else if (
+                                      e.key === "Enter" &&
+                                      filteredArticles.length > 0 &&
+                                      focusedIndex === -1
+                                    ) {
+                                      e.preventDefault();
+                                      const firstArticle = filteredArticles[0];
+                                      handleAddArticle(
+                                        firstArticle.id.toString()
+                                      );
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                  }
+                                }}
                                 className="form-control-lg ps-5 pe-5"
                               />
                               <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
@@ -3136,78 +3284,126 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                             </div>
 
                             {/* Article Dropdown Results */}
+                            {/* Update the dropdown container to handle scrolling with proper TypeScript */}
                             {articleSearch.length >= 1 && (
                               <div
+                                ref={setDropdownRef}
                                 className="search-results mt-2 border rounded shadow-sm"
                                 style={{
-                                  maxHeight: "300px",
+                                  maxHeight: "400px",
                                   overflowY: "auto",
+                                  overflowX: "hidden",
                                   position: "relative",
                                   zIndex: 1000,
                                   backgroundColor: "white",
                                 }}
+                                onKeyDown={(e) => e.stopPropagation()} // Prevent key events from bubbling
                               >
                                 {filteredArticles.length > 0 ? (
                                   <ul className="list-group list-group-flush">
-                                    {filteredArticles.map((article) => (
-                                      <li
-                                        key={article.id}
-                                        className="list-group-item list-group-item-action"
-                                        onClick={() => {
-                                          handleAddArticle(
-                                            article.id.toString()
-                                          );
-                                          setArticleSearch("");
-                                          setFilteredArticles([]);
-                                        }}
-                                        style={{
-                                          cursor: "pointer",
-                                          padding: "12px 15px",
-                                          opacity: selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          )
-                                            ? 0.6
-                                            : 1,
-                                        }}
-                                      >
-                                        <div className="d-flex justify-content-between align-items-center">
-                                          <div className="flex-grow-1">
-                                            <strong className="d-block">
-                                              {article.designation}
-                                            </strong>
-                                            <small className="text-muted">
-                                              Réf: {article.reference} | Stock:{" "}
-                                              {article.qte} | HT:{" "}
-                                              {(
-                                                Number(article.puv_ht) || 0
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </small>
+                                    {filteredArticles.map((article, index) => {
+                                      // Create ref for each item if needed
+                                      const itemRef =
+                                        React.createRef<HTMLLIElement>();
+                                      if (!itemRefs[index]) {
+                                        itemRefs[index] = itemRef;
+                                      }
+
+                                      return (
+                                        <li
+                                          key={article.id}
+                                          ref={itemRefs[index]}
+                                          className={`list-group-item list-group-item-action ${
+                                            focusedIndex === index
+                                              ? "active"
+                                              : ""
+                                          }`}
+                                          onClick={() => {
+                                            handleAddArticle(
+                                              article.id.toString()
+                                            );
+                                            setArticleSearch("");
+                                            setFilteredArticles([]);
+                                            setFocusedIndex(-1);
+                                          }}
+                                          style={{
+                                            cursor: "pointer",
+                                            padding: "12px 15px",
+                                            opacity: selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            )
+                                              ? 0.6
+                                              : 1,
+                                            backgroundColor:
+                                              focusedIndex === index
+                                                ? "#e7f1ff"
+                                                : "transparent",
+                                            borderLeft:
+                                              focusedIndex === index
+                                                ? "4px solid #0d6efd"
+                                                : "none",
+                                          }}
+                                          onMouseEnter={() =>
+                                            setFocusedIndex(index)
+                                          } // Highlight on hover
+                                        >
+                                          <div className="d-flex justify-content-between align-items-center">
+                                            <div className="flex-grow-1">
+                                              <div className="d-flex align-items-center mb-1">
+                                                <strong className="fs-6 me-2 text-primary">
+                                                  {article.reference}
+                                                </strong>
+                                                <span className="badge bg-light text-dark me-2">
+                                                  Stock: {article.qte || 0}
+                                                </span>
+                                              </div>
+                                              <small
+                                                className="text-muted d-block"
+                                                style={{ fontSize: "0.85rem" }}
+                                              >
+                                                {article.designation}
+                                              </small>
+                                              <div className="mt-1">
+                                                <span className="badge bg-success text-white">
+                                                  TTC:{" "}
+                                                  {(
+                                                    Number(article.puv_ttc) || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                                {article.tva &&
+                                                  article.tva > 0 && (
+                                                    <span className="badge bg-info ms-1">
+                                                      TVA: {article.tva}%
+                                                    </span>
+                                                  )}
+                                              </div>
+                                            </div>
+                                            {selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            ) ? (
+                                              <Badge
+                                                color="secondary"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-check-line me-1"></i>
+                                                Ajouté
+                                              </Badge>
+                                            ) : (
+                                              <Badge
+                                                color="success"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-add-line me-1"></i>
+                                                Ajouter
+                                              </Badge>
+                                            )}
                                           </div>
-                                          {selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          ) ? (
-                                            <Badge
-                                              color="secondary"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Ajouté
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-add-line me-1"></i>
-                                              Ajouter
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
+                                        </li>
+                                      );
+                                    })}
                                   </ul>
                                 ) : (
                                   <div className="text-muted p-3 text-center">
@@ -3805,67 +4001,97 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
                         </CardBody>
                       </Card>
 
-{/* Delivery Information Section */}
-<Card className="border-0 shadow-sm">
-  <CardBody className="p-4">
-    <h5 className="fw-semibold mb-3 text-primary">
-      <i className="ri-truck-line me-2"></i>
-      Informations de Livraison
-    </h5>
-    <Row>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label-lg fw-semibold">Voiture</Label>
-          <Input
-            type="text"
-            value={livraisonInfo.voiture}
-            onChange={(e) => setLivraisonInfo({...livraisonInfo, voiture: e.target.value})}
-            placeholder="Ex: Berlingo"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label-lg fw-semibold">Série</Label>
-          <Input
-            type="text"
-            value={livraisonInfo.serie}
-            onChange={(e) => setLivraisonInfo({...livraisonInfo, serie: e.target.value})}
-            placeholder="Ex: 156 TN 8972"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-    </Row>
-    <Row>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label-lg fw-semibold">Chauffeur</Label>
-          <Input
-            type="text"
-            value={livraisonInfo.chauffeur}
-            onChange={(e) => setLivraisonInfo({...livraisonInfo, chauffeur: e.target.value})}
-            placeholder="Ex: Farouk Harbeuge"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label-lg fw-semibold">CIN</Label>
-          <Input
-            type="text"
-            value={livraisonInfo.cin}
-            onChange={(e) => setLivraisonInfo({...livraisonInfo, cin: e.target.value})}
-            placeholder="Ex: 12345678"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-    </Row>
-  </CardBody>
-</Card>
+                      {/* Delivery Information Section */}
+                      {/* Delivery Information Section */}
+                      <Card className="border-0 shadow-sm">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-3 text-primary">
+                            <i className="ri-truck-line me-2"></i>
+                            Informations de Livraison
+                          </h5>
+
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Voiture
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={livraisonInfo.voiture}
+                                  onChange={(e) =>
+                                    setLivraisonInfo({
+                                      ...livraisonInfo,
+                                      voiture: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Ex: Berlingo"
+                                  className="form-control-lg"
+                                />
+                              </div>
+                            </Col>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Série
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={livraisonInfo.serie}
+                                  onChange={(e) =>
+                                    setLivraisonInfo({
+                                      ...livraisonInfo,
+                                      serie: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Ex: 156 TN 8972"
+                                  className="form-control-lg"
+                                />
+                              </div>
+                            </Col>
+                          </Row>
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Chauffeur
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={livraisonInfo.chauffeur}
+                                  onChange={(e) =>
+                                    setLivraisonInfo({
+                                      ...livraisonInfo,
+                                      chauffeur: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Ex: Farouk Harbeuge"
+                                  className="form-control-lg"
+                                />
+                              </div>
+                            </Col>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  CIN
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={livraisonInfo.cin}
+                                  onChange={(e) =>
+                                    setLivraisonInfo({
+                                      ...livraisonInfo,
+                                      cin: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Ex: 12345678"
+                                  className="form-control-lg"
+                                />
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
                       {/* Notes Section */}
                       <Card className="border-0 shadow-sm">
                         <CardBody className="p-4">
@@ -3922,70 +4148,82 @@ setLivraisonInfo(bonLivraison?.livraisonInfo || {
       </Container>
 
       {/* Add this modal after your existing modals but before the PDF modal */}
-<Modal isOpen={valorisationModal} toggle={() => setValorisationModal(false)} centered>
-  <ModalHeader toggle={() => setValorisationModal(false)}>
-    Options d'impression
-  </ModalHeader>
-  <ModalBody>
-    <div className="text-center">
-      <h5 className="mb-4">Choisir le type de bon de livraison</h5>
-      <div className="row">
-        <div className="col-6">
-          <div 
-            className={`card border-2 ${isValorise ? 'border-primary' : 'border-light'} cursor-pointer`}
-            onClick={() => setIsValorise(true)}
-            style={{ cursor: 'pointer' }}
-          >
-            <div className="card-body text-center">
-              <i className="ri-money-euro-circle-line text-primary fs-1 mb-3"></i>
-              <h6 className="card-title">Valorisé</h6>
-              <p className="text-muted small">Avec montants et totaux</p>
+      <Modal
+        isOpen={valorisationModal}
+        toggle={() => setValorisationModal(false)}
+        centered
+      >
+        <ModalHeader toggle={() => setValorisationModal(false)}>
+          Options d'impression
+        </ModalHeader>
+        <ModalBody>
+          <div className="text-center">
+            <h5 className="mb-4">Choisir le type de bon de livraison</h5>
+            <div className="row">
+              <div className="col-6">
+                <div
+                  className={`card border-2 ${
+                    isValorise ? "border-primary" : "border-light"
+                  } cursor-pointer`}
+                  onClick={() => setIsValorise(true)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="card-body text-center">
+                    <i className="ri-money-euro-circle-line text-primary fs-1 mb-3"></i>
+                    <h6 className="card-title">Valorisé</h6>
+                    <p className="text-muted small">Avec montants et totaux</p>
+                  </div>
+                </div>
+              </div>
+              <div className="col-6">
+                <div
+                  className={`card border-2 ${
+                    !isValorise ? "border-primary" : "border-light"
+                  } cursor-pointer`}
+                  onClick={() => setIsValorise(false)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="card-body text-center">
+                    <i className="ri-file-list-line text-secondary fs-1 mb-3"></i>
+                    <h6 className="card-title">Non Valorisé</h6>
+                    <p className="text-muted small">Sans montants ni totaux</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="col-6">
-          <div 
-            className={`card border-2 ${!isValorise ? 'border-primary' : 'border-light'} cursor-pointer`}
-            onClick={() => setIsValorise(false)}
-            style={{ cursor: 'pointer' }}
+        </ModalBody>
+        <ModalFooter>
+          <Button color="light" onClick={() => setValorisationModal(false)}>
+            Annuler
+          </Button>
+          <Button
+            color="primary"
+            onClick={() => {
+              if (selectedBonLivraisonForValorisation) {
+                setSelectedBonLivraisonForPdf(
+                  selectedBonLivraisonForValorisation
+                );
+                setPdfModal(true);
+              }
+              setValorisationModal(false);
+            }}
           >
-            <div className="card-body text-center">
-              <i className="ri-file-list-line text-secondary fs-1 mb-3"></i>
-              <h6 className="card-title">Non Valorisé</h6>
-              <p className="text-muted small">Sans montants ni totaux</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </ModalBody>
-  <ModalFooter>
-    <Button color="light" onClick={() => setValorisationModal(false)}>
-      Annuler
-    </Button>
-    <Button color="primary" onClick={() => {
-      if (selectedBonLivraisonForValorisation) {
-        setSelectedBonLivraisonForPdf(selectedBonLivraisonForValorisation);
-        setPdfModal(true);
-      }
-      setValorisationModal(false);
-    }}>
-      <i className="ri-file-pdf-line me-2"></i>
-      Générer PDF
-    </Button>
-  </ModalFooter>
-</Modal>
+            <i className="ri-file-pdf-line me-2"></i>
+            Générer PDF
+          </Button>
+        </ModalFooter>
+      </Modal>
 
-{selectedBonLivraisonForPdf && (
-  <BonLivraisonPDFModal
-    isOpen={pdfModal}
-    toggle={() => setPdfModal(false)}
-    bonLivraison={selectedBonLivraisonForPdf}
-    companyInfo={companyInfo}
-    isValorise={isValorise}
-  />
-)}
-
+      {selectedBonLivraisonForPdf && (
+        <BonLivraisonPDFModal
+          isOpen={pdfModal}
+          toggle={() => setPdfModal(false)}
+          bonLivraison={selectedBonLivraisonForPdf}
+          companyInfo={companyInfo}
+          isValorise={isValorise}
+        />
+      )}
     </div>
   );
 };

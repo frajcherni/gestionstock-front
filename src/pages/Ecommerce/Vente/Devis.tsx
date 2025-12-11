@@ -98,6 +98,11 @@ const Devis = () => {
   const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [showRemise, setShowRemise] = useState(false);
+  // Ajoutez ces états au début de votre composant
+  const [scannerEnabled, setScannerEnabled] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(null);
+
   const [selectedArticles, setSelectedArticles] = useState<
     {
       article_id: number;
@@ -128,6 +133,8 @@ const Devis = () => {
 
   const [newArticle, setNewArticle] = useState({
     reference: "",
+    code_barre: "", // AJOUTEZ CETTE LIGNE
+
     nom: "",
     designation: "",
     puv_ht: 0,
@@ -213,70 +220,85 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     }
   };
 
-  const handleCreateArticle = async () => {
-    try {
-      const articleToCreate = {
-        ...newArticle,
-        pua_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.pua_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
-        puv_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.puv_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
-        categorie_id: newArticle.categorie_id
-          ? Number(newArticle.categorie_id)
-          : null,
-        sous_categorie_id: newArticle.sous_categorie_id
-          ? Number(newArticle.sous_categorie_id)
-          : null,
-        fournisseur_id: newArticle.fournisseur_id
-          ? Number(newArticle.fournisseur_id)
-          : null,
-      };
+// Modifiez handleCreateArticle pour ne pas générer en front
+const handleCreateArticle = async () => {
+  try {
+    const articleToCreate = {
+      ...newArticle,
+      // NE PAS générer code_barre ici - la DB s'en chargera
+      pua_ttc: Number(
+        calculateTTCForQuickCreate(
+          newArticle.pua_ht,
+          newArticle.tva,
+          newArticle.taux_fodec
+        )
+      ),
+      puv_ttc: Number(
+        calculateTTCForQuickCreate(
+          newArticle.puv_ht,
+          newArticle.tva,
+          newArticle.taux_fodec
+        )
+      ),
+      categorie_id: newArticle.categorie_id
+        ? Number(newArticle.categorie_id)
+        : null,
+      sous_categorie_id: newArticle.sous_categorie_id
+        ? Number(newArticle.sous_categorie_id)
+        : null,
+      fournisseur_id: newArticle.fournisseur_id
+        ? Number(newArticle.fournisseur_id)
+        : null,
+    };
 
-      await createArticle(articleToCreate);
-      toast.success("Article créé avec succès");
-      setArticleModal(false);
-      setNewArticle({
-        reference: "",
-        nom: "",
-        designation: "",
-        puv_ht: 0,
-        puv_ttc: 0,
-        pua_ht: 0,
-        pua_ttc: 0,
-        qte: 0,
-        tva: 0,
-        remise: 0,
-        taux_fodec: false,
-        type: "Non Consigné",
-        image: "",
-        on_website: false,
-        is_offre: false,
-        is_top_seller: false,
-        is_new_arrival: false,
-        website_description: "",
-        website_images: [],
-        website_order: 0,
-        categorie_id: "",
-        sous_categorie_id: "",
-        fournisseur_id: "",
-      });
-      // Refresh articles list
-      const articlesData = await fetchArticles();
-      setArticles(articlesData);
-    } catch (err) {
-      toast.error("Erreur création article");
-    }
-  };
+    await createArticle(articleToCreate);
+    toast.success("Article créé avec succès");
+    setArticleModal(false);
+    setNewArticle({
+      reference: "",
+      code_barre: "", // Toujours vide par défaut
+      nom: "",
+      designation: "",
+      puv_ht: 0,
+      puv_ttc: 0,
+      pua_ht: 0,
+      pua_ttc: 0,
+      qte: 0,
+      tva: 0,
+      remise: 0,
+      taux_fodec: false,
+      type: "Non Consigné",
+      image: "",
+      on_website: false,
+      is_offre: false,
+      is_top_seller: false,
+      is_new_arrival: false,
+      website_description: "",
+      website_images: [],
+      website_order: 0,
+      categorie_id: "",
+      sous_categorie_id: "",
+      fournisseur_id: "",
+    });
+    
+    // Refresh articles list pour récupérer le code-barres généré
+    const articlesData = await fetchArticles();
+    setArticles(articlesData);
+  } catch (err) {
+    toast.error("Erreur création article");
+  }
+};
+
+
+
+
+// Replace your current barcode scanning states and functions with this:
+
+
+// Improved barcode scan handler
+
+// Effect pour écouter les scans
+
 
   // Add TTC calculation function
   const calculateTTCForQuickCreate = (
@@ -362,27 +384,32 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
   ) => {
     const prefix = type === "devis" ? "DIVER" : "BC";
     const regex = new RegExp(`^${prefix}-(\\d{4})/${currentYear}$`);
-
-    // Filter bonsCommande based on prefix
+  
+    // Minimum starting number
+    const DEFAULT_START = 150;
+  
+    // Filter only entries for this prefix
     const relevantBons = bonsCommande.filter((bon) =>
       bon.numeroCommande.startsWith(`${prefix}-`)
     );
-
-    // Extract numbers from relevant entries for the current year
+  
+    // Extract numbers for current year
     const numbers = relevantBons
       .map((bon) => {
         const match = bon.numeroCommande.match(regex);
         return match ? parseInt(match[1], 10) : null;
       })
       .filter((num): num is number => num !== null);
-
-    // Find the highest number and increment
-    const nextNumber = numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-
-    // Format as PREFIX-XXXX/YYYY (e.g., DIVER-0001/2025 or BC-0001/2025)
-    return `${prefix}-${nextNumber.toString().padStart(4, "0")}/${currentYear}`;
+  
+    // If there are numbers, increment max. Otherwise start from DEFAULT_START.
+    const nextSequence =
+      numbers.length > 0
+        ? Math.max(Math.max(...numbers) + 1, DEFAULT_START)
+        : DEFAULT_START;
+  
+    return `${prefix}-${nextSequence.toString().padStart(4, "0")}/${currentYear}`;
   };
-
+  
   const fetchNextCommandeNumberFromAPI = useCallback(async () => {
     try {
       const numero = await fetchNextCommandeNumber();
@@ -408,7 +435,8 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
           article.designation
             .toLowerCase()
             .includes(articleSearch.toLowerCase()) ||
-          article.reference.toLowerCase().includes(articleSearch.toLowerCase())
+          article.reference.toLowerCase().includes(articleSearch.toLowerCase()) ||
+          (article.code_barre && article.code_barre.toLowerCase().includes(articleSearch.toLowerCase())) // AJOUTER CETTE LIGNE
       );
       setFilteredArticles(filtered);
     } else {
@@ -1113,6 +1141,115 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     }
   };
 
+
+  const handleBarcodeScan = useCallback((barcode: string) => {
+    if (!scannerEnabled || !barcode.trim()) return;
+  
+    console.log("Code-barres scanné:", barcode);
+    
+    // Clean the barcode (remove any non-alphanumeric characters that might be added by scanner)
+    const cleanBarcode = barcode.trim();
+    
+    // Rechercher l'article par code_barre depuis la DB
+    const scannedArticle = articles.find(article => 
+      article.code_barre === cleanBarcode
+    );
+  
+    if (scannedArticle) {
+      const existingArticle = selectedArticles.find(
+        item => item.article_id === scannedArticle.id
+      );
+  
+      if (existingArticle) {
+        handleArticleChange(
+          scannedArticle.id,
+          "quantite",
+          (Number(existingArticle.quantite) || 0) + 1
+        );
+        toast.success(`Quantité augmentée pour "${scannedArticle.designation}"`);
+      } else {
+        const initialHT = scannedArticle.puv_ht || 0;
+        const initialTVA = scannedArticle.tva || 0;
+        const initialTTC = scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+  
+        setSelectedArticles(prev => [
+          ...prev,
+          {
+            article_id: scannedArticle.id,
+            quantite: 1,
+            prixUnitaire: initialHT,
+            tva: initialTVA,
+            remise: 0,
+            prixTTC: Math.round(initialTTC * 1000) / 1000,
+            articleDetails: scannedArticle,
+          },
+        ]);
+        toast.success(`Article "${scannedArticle.designation}" ajouté`);
+      }
+    } else {
+      toast.error(`Article avec code ${cleanBarcode} non trouvé`);
+      console.log("Articles disponibles:", articles.map(a => ({ 
+        id: a.id, 
+        designation: a.designation, 
+        code_barre: a.code_barre 
+      })));
+    }
+  }, [scannerEnabled, articles, selectedArticles, handleArticleChange]);
+  
+  // Improved keyboard handler for scanner
+  const handleKeyPress = useCallback((event: KeyboardEvent) => {
+    if (!scannerEnabled) return;
+  
+    // Prevent default behavior for all keys when scanner is active
+    event.preventDefault();
+  
+    // Les scanners envoient généralement les données suivies par "Enter"
+    if (event.key === 'Enter') {
+      if (barcodeInput.length > 0) {
+        handleBarcodeScan(barcodeInput);
+        setBarcodeInput("");
+      }
+    } else if (event.key.length === 1) { // Only process single character keys
+      // Accumuler les caractères
+      setBarcodeInput(prev => prev + event.key);
+      
+      // Reset après un délai (au cas où le scanner n'envoie pas de Enter)
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+      
+      const newTimeout = setTimeout(() => {
+        if (barcodeInput.length >= 3) { // Minimum length for barcode
+          handleBarcodeScan(barcodeInput);
+        }
+        setBarcodeInput("");
+      }, 150); // Increased timeout for better reliability
+      
+      setScanningTimeout(newTimeout);
+    }
+  }, [scannerEnabled, barcodeInput, scanningTimeout, handleBarcodeScan]);
+
+  useEffect(() => {
+    if (scannerEnabled) {
+      document.addEventListener('keydown', handleKeyPress);
+      console.log("Scanner activé - en attente de codes-barres...");
+    } else {
+      document.removeEventListener('keydown', handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+      setBarcodeInput("");
+      console.log("Scanner désactivé");
+    }
+  
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+    };
+  }, [scannerEnabled, handleKeyPress]);
+
   const StatusBadge = ({
     status,
   }: {
@@ -1696,6 +1833,37 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
           )}
         </CardBody>
       </Card> */}
+
+{/* Scanner de Codes-Barres Section */}
+<Card className="border-0 shadow-sm mb-4">
+  <CardBody className="p-4">
+    <div className="d-flex justify-content-between align-items-center mb-3">
+      <h5 className="fw-semibold mb-0 text-primary">
+        <i className="ri-barcode-line me-2"></i>
+        Scanner de Codes-Barres
+      </h5>
+      <div className="form-check form-switch">
+        <Input
+          type="checkbox"
+          id="scannerToggle"
+          checked={scannerEnabled}
+          onChange={(e) => {
+            setScannerEnabled(e.target.checked);
+            setBarcodeInput("");
+            if (scanningTimeout) {
+              clearTimeout(scanningTimeout);
+            }
+          }}
+          className="form-check-input"
+        />
+        <Label for="scannerToggle" check className="form-check-label fw-semibold">
+          {scannerEnabled ? "Scanner Activé" : "Scanner Désactivé"}
+        </Label>
+      </div>
+    </div>
+
+  </CardBody>
+</Card>
 
                       {/* Articles Section */}
                       <Card className="border-0 shadow-sm mb-4">
@@ -2674,40 +2842,44 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
                     </div>
                   </ModalHeader>
                   <ModalBody>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Référence*</Label>
-                          <Input
-                            value={newArticle.reference}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                reference: e.target.value,
-                              })
-                            }
-                            placeholder="Référence article"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Nom*</Label>
-                          <Input
-                            value={newArticle.nom}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                nom: e.target.value,
-                              })
-                            }
-                            placeholder="Nom de l'article"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                {/* Dans la modal de création d'article - ajoutez cette section après le champ Référence */}
+<Row>
+  <Col md={6}>
+    <div className="mb-3">
+      <Label className="form-label">Référence*</Label>
+      <Input
+        value={newArticle.reference}
+        onChange={(e) =>
+          setNewArticle({
+            ...newArticle,
+            reference: e.target.value,
+          })
+        }
+        placeholder="Référence article"
+        className="form-control"
+      />
+    </div>
+  </Col>
+  <Col md={6}>
+    <div className="mb-3">
+      <Label className="form-label">Code-Barres</Label>
+      <Input
+        value={newArticle.code_barre}
+        onChange={(e) =>
+          setNewArticle({
+            ...newArticle,
+            code_barre: e.target.value,
+          })
+        }
+        placeholder="Code-barres (EAN, UPC, etc.)"
+        className="form-control"
+      />
+      <small className="text-muted">
+        Laissez vide pour génération automatique par le système
+      </small>
+    </div>
+  </Col>
+</Row>
 
                     <div className="mb-3">
                       <Label className="form-label">Désignation*</Label>

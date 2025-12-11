@@ -118,7 +118,6 @@ const ListFactureClient = () => {
         | "cheque"
         | "virement"
         | "traite"
-        | "carte"
         | "tpe"
         | "retenue";
       amount: string;
@@ -128,7 +127,10 @@ const ListFactureClient = () => {
       tauxRetention?: number;
     }>
   >([]);
-
+// Add near your other state declarations
+const [focusedIndex, setFocusedIndex] = useState(-1);
+const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   const [showRetention, setShowRetention] = useState(false);
   const [retentionRate, setRetentionRate] = useState<number>(1);
   const [retentionAmount, setRetentionAmount] = useState<number>(0);
@@ -581,9 +583,23 @@ const ListFactureClient = () => {
   // Add these functions before the return statement
   const handleCreateClient = async () => {
     try {
-      await createClient(newClient);
+      const createdClient = await createClient(newClient);
       toast.success("Client créé avec succès");
       setClientModal(false);
+      
+      // Auto-select the newly created client
+      setSelectedClient(createdClient);
+      validation.setFieldValue("client_id", createdClient.id);
+      
+      // Clear the client search
+      setClientSearch(createdClient.raison_sociale);
+      setFilteredClients([]);
+      
+      // Refresh clients list
+      const clientsData = await fetchClients();
+      setClients(clientsData);
+      
+      // Reset new client form
       setNewClient({
         raison_sociale: "",
         designation: "",
@@ -597,9 +613,6 @@ const ListFactureClient = () => {
         email: "",
         status: "Actif" as "Actif" | "Inactif",
       });
-      // Refresh clients list
-      const clientsData = await fetchClients();
-      setClients(clientsData);
     } catch (err) {
       toast.error("Erreur création client");
     }
@@ -646,10 +659,22 @@ const ListFactureClient = () => {
           ? Number(newArticle.fournisseur_id)
           : null,
       };
-
-      await createArticle(articleToCreate);
+  
+      const createdArticle = await createArticle(articleToCreate);
       toast.success("Article créé avec succès");
       setArticleModal(false);
+      
+      // Auto-add the new article to the current invoice
+      handleAddArticle(createdArticle.id.toString());
+      
+      // Clear article search and refresh
+      setArticleSearch("");
+      setFilteredArticles([]);
+      
+      // Refresh articles list
+      fetchData();
+      
+      // Reset form
       setNewArticle({
         reference: "",
         nom: "",
@@ -675,7 +700,6 @@ const ListFactureClient = () => {
         sous_categorie_id: "",
         fournisseur_id: "",
       });
-      fetchData(); // Refresh articles list
     } catch (err) {
       toast.error("Erreur création article");
     }
@@ -754,21 +778,21 @@ const ListFactureClient = () => {
         netAPayer: 0,
       };
     }
-
+  
     let sousTotalHTValue = 0;
     let netHTValue = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
-
+  
     // Calculate initial totals with proper rounding
     selectedArticles.forEach((article) => {
       const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
       const tvaRate = Number(article.tva) || 0;
       const remiseRate = Number(article.remise) || 0;
-
+  
       let priceHT = Number(article.prixUnitaire) || 0;
       let priceTTC = Number(article.prixTTC) || 0;
-
+  
       if (editingHT[article.article_id] !== undefined) {
         const editingValue = parseNumericInput(editingHT[article.article_id]);
         if (!isNaN(editingValue) && editingValue >= 0) {
@@ -791,7 +815,7 @@ const ListFactureClient = () => {
           }
         }
       }
-
+  
       // Calculate line amounts
       const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
       const montantNetHT =
@@ -799,24 +823,24 @@ const ListFactureClient = () => {
       const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
       const montantTVA =
         Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-
+  
       sousTotalHTValue += montantSousTotalHT;
       netHTValue += montantNetHT;
       totalTaxValue += montantTVA;
       grandTotalValue += montantTTCLigne;
     });
-
+  
     // Round accumulated values
     sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
     netHTValue = Math.round(netHTValue * 1000) / 1000;
     totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
     grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-
+  
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
     let netHTAfterDiscount = netHTValue;
     let totalTaxAfterDiscount = totalTaxValue;
-
+  
     // Apply remise logic with proper rounding
     if (showRemise && Number(globalRemise) > 0) {
       if (remiseType === "percentage") {
@@ -824,21 +848,21 @@ const ListFactureClient = () => {
           Math.round(netHTValue * (Number(globalRemise) / 100) * 1000) / 1000;
         netHTAfterDiscount =
           Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
-
+  
         const discountRatio = netHTAfterDiscount / netHTValue;
         totalTaxAfterDiscount =
           Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-
+  
         finalTotalValue =
           Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) /
           1000;
       } else if (remiseType === "fixed") {
         finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
-
+  
         const tvaToHtRatio = totalTaxValue / netHTValue;
         const htAfterDiscount =
           Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) / 1000;
-
+  
         discountAmountValue =
           Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
         netHTAfterDiscount = htAfterDiscount;
@@ -846,18 +870,16 @@ const ListFactureClient = () => {
           Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
       }
     }
-
-    // Use discounted values for final display
-    const displayNetHT =
-      showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax =
-      showRemise && Number(globalRemise) > 0
-        ? totalTaxAfterDiscount
-        : totalTaxValue;
-
+  
+    // ========== ADD TIMBRE FISCAL HERE ==========
+    // Add timbre fiscal to finalTotalValue (EXACTLY like fournisseur facture)
+    if (timbreFiscal) {
+      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+    }
+  
     // Calculate retention from payment methods with type "retenue"
     let retentionMontantValue = 0;
-
+  
     methodesReglement.forEach((pm) => {
       if (pm.method === "retenue") {
         const tauxRetention = pm.tauxRetention || 1;
@@ -865,20 +887,28 @@ const ListFactureClient = () => {
         retentionMontantValue += Math.round(retentionAmount * 1000) / 1000;
       }
     });
-
+  
     // Calculate net à payer (final total minus retention)
     let netAPayerValue = finalTotalValue - retentionMontantValue;
     netAPayerValue = Math.round(netAPayerValue * 1000) / 1000;
-
+  
+    // Use discounted values for final display
+    const displayNetHT =
+      showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
+    const displayTotalTax =
+      showRemise && Number(globalRemise) > 0
+        ? totalTaxAfterDiscount
+        : totalTaxValue;
+  
     return {
       sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
       netHT: Math.round(displayNetHT * 1000) / 1000,
       totalTax: Math.round(displayTotalTax * 1000) / 1000,
       grandTotal: Math.round(grandTotalValue * 1000) / 1000,
-      finalTotal: Math.round(finalTotalValue * 1000) / 1000,
+      finalTotal: Math.round(finalTotalValue * 1000) / 1000, // This includes timbre
       discountAmount: Math.round(discountAmountValue * 1000) / 1000,
       retentionMontant: retentionMontantValue,
-      netAPayer: netAPayerValue,
+      netAPayer: netAPayerValue, // This includes timbre via finalTotalValue
     };
   }, [
     selectedArticles,
@@ -888,8 +918,8 @@ const ListFactureClient = () => {
     editingHT,
     editingTTC,
     methodesReglement,
+    timbreFiscal, // Add timbreFiscal to dependencies
   ]);
-
   const handleAddArticle = (articleId: string) => {
     const article = articles.find((a) => a.id === parseInt(articleId));
     if (
@@ -1274,6 +1304,48 @@ const ListFactureClient = () => {
     }
   };
 
+  useEffect(() => {
+    // Scroll to focused item
+    if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+      const item = itemRefs[focusedIndex].current;
+      const dropdown = dropdownRef;
+      
+      if (item && dropdown) {
+        const itemTop = item.offsetTop;
+        const itemBottom = itemTop + item.offsetHeight;
+        const dropdownTop = dropdown.scrollTop;
+        const dropdownBottom = dropdownTop + dropdown.clientHeight;
+        
+        if (itemTop < dropdownTop) {
+          dropdown.scrollTop = itemTop;
+        } else if (itemBottom > dropdownBottom) {
+          dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+        }
+      }
+    }
+  }, [focusedIndex, dropdownRef, itemRefs]);
+  
+  useEffect(() => {
+    // Reset item refs when filtered articles change
+    setItemRefs(filteredArticles.map(() => React.createRef()));
+    setFocusedIndex(-1); // Reset focus
+  }, [filteredArticles]);
+  
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+        setFilteredArticles([]);
+        setFocusedIndex(-1);
+      }
+    };
+  
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [dropdownRef]);
+
+
   const validation = useFormik({
     enableReinitialize: true,
     initialValues: {
@@ -1586,7 +1658,7 @@ const ListFactureClient = () => {
       modePaiement: Yup.string()
         .required("Le mode de paiement est requis")
         .oneOf(
-          ["Espece", "Cheque", "Virement", "Traite", "Autre"],
+          ["Espece", "Cheque", "Virement", "Traite", "Autre" , "tpe"],
           "Mode de paiement invalide"
         ),
       numeroEncaissement: Yup.string()
@@ -3253,9 +3325,21 @@ const ListFactureClient = () => {
 
                               {/* Enhanced Client Search Section */}
                               <div className="mb-3">
-                                <Label className="form-label-lg fw-semibold">
-                                  Client*
-                                </Label>
+                              <Label className="form-label-lg fw-semibold">
+  Client*
+  {!selectedClient && (
+    <button
+      type="button"
+      className="btn btn-link text-primary p-0 ms-2"
+      onClick={() => setClientModal(true)}
+      title="Ajouter un nouveau client"
+      style={{ fontSize: "0.8rem" }}
+    >
+      <i className="ri-add-line me-1"></i>
+      Nouveau client
+    </button>
+  )}
+</Label>
 
                                 <div className="position-relative">
                                   <Input
@@ -3477,12 +3561,7 @@ const ListFactureClient = () => {
                         </Col>
                       </Row>
                       {/* Payment Conditions and Options */}
-                      {/* Payment Conditions and Options */}
-                      <Card className="border-0 shadow-sm mb-4">
-                        <CardBody className="p-4">
-                          <Row className="align-items-center"></Row>
-                        </CardBody>
-                      </Card>
+                    
                       {/* Global Discount Section <Card className="border-0 shadow-sm mb-4">
         <CardBody className="p-4">
           <div className="d-flex justify-content-between align-items-center mb-3">
@@ -3621,112 +3700,191 @@ const ListFactureClient = () => {
                           </div>
 
                           {/* Rest of the Articles section remains the same */}
-                          <div className="mb-4">
-                            <Label className="form-label-lg fw-semibold">
-                              Rechercher Article
-                            </Label>
-                            <div className="search-box position-relative">
-                              <Input
-                                type="text"
-                                placeholder="Rechercher article..."
-                                value={articleSearch}
-                                onChange={(e) =>
-                                  setArticleSearch(e.target.value)
-                                }
-                                className="form-control-lg ps-5"
-                              />
-                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3 fs-5 text-muted"></i>
-                            </div>
+                           {/* Articles Search Section */}
+<div className="mb-4">
+  <Label className="form-label-lg fw-semibold">
+    Rechercher Article
+    <button
+      type="button"
+      className="btn btn-link text-primary p-0 ms-2"
+      onClick={() => setArticleModal(true)}
+      title="Ajouter un nouvel article"
+      style={{ fontSize: "0.8rem" }}
+    >
+      <i className="ri-add-line me-1"></i>
+      Nouvel article
+    </button>
+  </Label>
+  
+  <div className="search-box position-relative">
+    <Input
+      type="text"
+      placeholder="Rechercher article par référence ou désignation..."
+      value={articleSearch}
+      onChange={(e) => {
+        setArticleSearch(e.target.value);
+        setFocusedIndex(-1); // Reset focus when typing
+      }}
+      onKeyDown={(e) => {
+        if (filteredArticles.length > 0) {
+          // Handle arrow down
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setFocusedIndex(prev => 
+              prev < filteredArticles.length - 1 ? prev + 1 : 0
+            );
+          }
+          // Handle arrow up
+          else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setFocusedIndex(prev => 
+              prev > 0 ? prev - 1 : filteredArticles.length - 1
+            );
+          }
+          // Handle Enter to select focused item
+          else if (e.key === 'Enter' && focusedIndex >= 0) {
+            e.preventDefault();
+            const article = filteredArticles[focusedIndex];
+            handleAddArticle(article.id.toString());
+            setArticleSearch("");
+            setFilteredArticles([]);
+            setFocusedIndex(-1);
+          }
+          // Handle Enter to select first item when no focus
+          else if (e.key === 'Enter' && filteredArticles.length > 0 && focusedIndex === -1) {
+            e.preventDefault();
+            const firstArticle = filteredArticles[0];
+            handleAddArticle(firstArticle.id.toString());
+            setArticleSearch("");
+            setFilteredArticles([]);
+            setFocusedIndex(-1);
+          }
+          // Handle Escape to clear search
+          else if (e.key === 'Escape') {
+            e.preventDefault();
+            setArticleSearch("");
+            setFilteredArticles([]);
+            setFocusedIndex(-1);
+          }
+        }
+      }}
+      className="form-control-lg ps-5 pe-5"
+    />
+    <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+    <button
+      type="button"
+      className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+      onClick={() => setArticleModal(true)}
+      title="Ajouter un nouvel article"
+    >
+      <i className="ri-add-line fs-5"></i>
+    </button>
+  </div>
 
-                            {/* Article Dropdown Results */}
-                            {articleSearch.length >= 1 && (
-                              <div
-                                className="search-results mt-2 border rounded shadow-sm"
-                                style={{
-                                  maxHeight: "300px",
-                                  overflowY: "auto",
-                                  position: "relative",
-                                  zIndex: 1000,
-                                  backgroundColor: "white",
-                                }}
-                              >
-                                {filteredArticles.length > 0 ? (
-                                  <ul className="list-group list-group-flush">
-                                    {filteredArticles.map((article) => (
-                                      <li
-                                        key={article.id}
-                                        className="list-group-item list-group-item-action"
-                                        onClick={() => {
-                                          handleAddArticle(
-                                            article.id.toString()
-                                          );
-                                          setArticleSearch("");
-                                          setFilteredArticles([]);
-                                        }}
-                                        style={{
-                                          cursor: "pointer",
-                                          padding: "12px 15px",
-                                          opacity: selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          )
-                                            ? 0.6
-                                            : 1,
-                                        }}
-                                      >
-                                        <div className="d-flex justify-content-between align-items-center">
-                                          <div className="flex-grow-1">
-                                            <strong className="d-block">
-                                              {article.designation}
-                                            </strong>
-                                            <small className="text-muted">
-                                              Réf: {article.reference} | Stock:{" "}
-                                              {article.qte} | HT:{" "}
-                                              {(
-                                                Number(article.puv_ht) || 0
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                              {article.tva &&
-                                                article.tva > 0 && (
-                                                  <span className="ms-2">
-                                                    | TVA: {article.tva}%
-                                                  </span>
-                                                )}
-                                            </small>
-                                          </div>
-                                          {selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          ) ? (
-                                            <Badge
-                                              color="secondary"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Ajouté
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-add-line me-1"></i>
-                                              Ajouter
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div className="text-muted p-3 text-center">
-                                    <i className="ri-search-line me-2"></i>
-                                    Aucun article trouvé
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
+  {/* Enhanced Dropdown with Keyboard Support */}
+  {articleSearch.length >= 1 && (
+    <div
+      ref={setDropdownRef}
+      className="search-results mt-2 border rounded shadow-sm"
+      style={{
+        maxHeight: "400px",
+        overflowY: "auto",
+        overflowX: "hidden",
+        position: "relative",
+        zIndex: 1000,
+        backgroundColor: "white",
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      {filteredArticles.length > 0 ? (
+        <ul className="list-group list-group-flush">
+          {filteredArticles.map((article, index) => {
+            // Create ref for each item
+            const itemRef = React.createRef<HTMLLIElement>();
+            if (!itemRefs[index]) {
+              itemRefs[index] = itemRef;
+            }
+
+            return (
+              <li
+                key={article.id}
+                ref={itemRefs[index]}
+                className={`list-group-item list-group-item-action ${
+                  focusedIndex === index ? 'active' : ''
+                }`}
+                onClick={() => {
+                  handleAddArticle(article.id.toString());
+                  setArticleSearch("");
+                  setFilteredArticles([]);
+                  setFocusedIndex(-1);
+                }}
+                style={{
+                  cursor: "pointer",
+                  padding: "12px 15px",
+                  opacity: selectedArticles.some(
+                    (item) => item.article_id === article.id
+                  )
+                    ? 0.6
+                    : 1,
+                  backgroundColor: focusedIndex === index ? '#e7f1ff' : 'transparent',
+                  borderLeft: focusedIndex === index ? '4px solid #0d6efd' : 'none',
+                }}
+                onMouseEnter={() => setFocusedIndex(index)}
+              >
+                <div className="d-flex justify-content-between align-items-center">
+                  <div className="flex-grow-1">
+                    {/* Show reference first in larger font */}
+                    <div className="d-flex align-items-center mb-1">
+                      <strong className="fs-6 me-2 text-primary">
+                        {article.reference}
+                      </strong>
+                      <span className="badge bg-light text-dark me-2">
+                        Stock: {article.qte || 0}
+                      </span>
+                    </div>
+                    {/* Show designation in smaller font */}
+                    <small className="text-muted d-block" style={{ fontSize: "0.85rem" }}>
+                      {article.designation}
+                    </small>
+                    {/* Show TTC price prominently */}
+                    <div className="mt-1">
+                      <span className="badge bg-success text-white">
+                        TTC: {(Number(article.puv_ttc) || 0).toFixed(3)} DT
+                      </span>
+                      {article.tva && article.tva > 0 && (
+                        <span className="badge bg-info ms-1">
+                          TVA: {article.tva}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {selectedArticles.some(
+                    (item) => item.article_id === article.id
+                  ) ? (
+                    <Badge color="secondary" className="fs-6">
+                      <i className="ri-check-line me-1"></i>
+                      Ajouté
+                    </Badge>
+                  ) : (
+                    <Badge color="success" className="fs-6">
+                      <i className="ri-add-line me-1"></i>
+                      Ajouter
+                    </Badge>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <div className="text-muted p-3 text-center">
+          <i className="ri-search-line me-2"></i>
+          Aucun article trouvé
+        </div>
+      )}
+    </div>
+  )}
+</div>
 
                           {/* Articles Table */}
                           {selectedArticles.length > 0 && (
@@ -4452,14 +4610,12 @@ const ListFactureClient = () => {
                                           Virement
                                         </option>
                                         <option value="traite">Traite</option>
-                                        <option value="carte">Carte</option>
-                                        <option value="tpe">TPE</option>
+                                        <option value="tpe">Carte Bancaire "TPE"</option>
                                         <option value="retenue">
                                           Retenue à la source
                                         </option>
                                       </Input>
                                     </Col>
-
                                     {/* Montant - Different behavior for retention */}
                                     <Col md={3}>
                                       <Label className="form-label fw-semibold">
@@ -4770,7 +4926,7 @@ const ListFactureClient = () => {
       <Row>
         <Col md={6}>
           <div className="mb-3">
-            <Label>Montant payé*</Label>
+            <Label>Montant a payer*</Label>
             <Input
               type="text"
               name="montant"
@@ -4804,6 +4960,7 @@ const ListFactureClient = () => {
               <option value="Cheque">Chèque</option>
               <option value="Virement">Virement</option>
               <option value="Traite">Traite</option>
+              <option value="tpe">Carte Bancaire "TPE"</option>
               <option value="Autre">Autre</option>
             </Input>
             <FormFeedback>

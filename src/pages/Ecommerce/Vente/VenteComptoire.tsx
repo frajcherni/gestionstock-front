@@ -133,7 +133,7 @@ const VenteComptoire = () => {
   const [paymentMethods, setPaymentMethods] = useState<
     Array<{
       id: string;
-      method: "especes" | "cheque" | "virement" | "traite";
+      method: "especes" | "cheque" | "virement" | "traite" ; // Add "tpe"
       amount: number;
       numero?: string;
       banque?: string;
@@ -148,7 +148,7 @@ const VenteComptoire = () => {
   ]);
 
   const [modeReglement, setModeReglement] = useState<
-    "especes" | "cheque" | "virement" | "carte" | "traite" | "autre"
+  "especes" | "cheque" | "virement" | "carte" | "traite" | "autre" | "tpe" // Add "tpe"
   >("especes");
   const [numeroReglement, setNumeroReglement] = useState("");
   const [dateEcheance, setDateEcheance] = useState(
@@ -161,7 +161,10 @@ const VenteComptoire = () => {
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
   const [subcategories, setSubcategories] = useState<Categorie[]>([]);
-
+// Add near your other state declarations
+const [focusedIndex, setFocusedIndex] = useState(-1);
+const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   const [clientModal, setClientModal] = useState(false);
   const [newClient, setNewClient] = useState({
     raison_sociale: "",
@@ -507,13 +510,21 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
       setNextNumeroCommande(numero);
     } catch (err) {
       toast.error("Échec de la récupération du numéro de vente");
+  
       const year = moment().format("YYYY");
-      const defaultNumber = `Vente${year}${String(
-        bonsCommande.length + 1
-      ).padStart(5, "0")}`;
+  
+      // always start from 925
+      const DEFAULT_START = 925;
+  
+      // if bonsCommande exist, continue from max(bonsCommande.length + 1, 925)
+      const safeSequence = Math.max(bonsCommande.length + 1, DEFAULT_START);
+  
+      const defaultNumber = `VENTE-${String(safeSequence).padStart(4, "0")}/${year}`;
+  
       setNextNumeroCommande(defaultNumber);
     }
   }, [bonsCommande.length]);
+  
 
   useEffect(() => {
     if (modal && !isEdit) {
@@ -1060,6 +1071,67 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     }
   };
 
+
+  // Add these effects after your other effects
+useEffect(() => {
+  // Scroll to focused item
+  if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+    const item = itemRefs[focusedIndex].current;
+    const dropdown = dropdownRef;
+    
+    if (item && dropdown) {
+      const itemTop = item.offsetTop;
+      const itemBottom = itemTop + item.offsetHeight;
+      const dropdownTop = dropdown.scrollTop;
+      const dropdownBottom = dropdownTop + dropdown.clientHeight;
+      
+      if (itemTop < dropdownTop) {
+        dropdown.scrollTop = itemTop;
+      } else if (itemBottom > dropdownBottom) {
+        dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+      }
+    }
+  }
+}, [focusedIndex, dropdownRef, itemRefs]);
+
+useEffect(() => {
+  // Reset item refs when filtered articles change
+  setItemRefs(filteredArticles.map(() => React.createRef()));
+  setFocusedIndex(-1); // Reset focus
+}, [filteredArticles]);
+
+useEffect(() => {
+  const handleClickOutside = (e: MouseEvent) => {
+    if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+    }
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside);
+  };
+}, [dropdownRef]);
+
+useEffect(() => {
+  if (articleSearch.length >= 3) {
+    const filtered = articles.filter(
+      (article) =>
+        article.designation
+          .toLowerCase()
+          .includes(articleSearch.toLowerCase()) ||
+        article.reference.toLowerCase().includes(articleSearch.toLowerCase())
+    );
+    setFilteredArticles(filtered);
+    setFocusedIndex(-1); // Reset focus on new search
+  } else {
+    setFilteredArticles([]);
+    setFocusedIndex(-1);
+  }
+}, [articleSearch, articles]);
+
+
   const columns = useMemo(
     () => [
       {
@@ -1398,688 +1470,566 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
                   />
                 )}
 
-                <Modal
-                  isOpen={detailModal}
-                  toggle={() => setDetailModal(false)}
-                  size="xl"
-                  centered
-                  className="invoice-modal"
-                >
-                  <ModalHeader
-                    toggle={() => setDetailModal(false)}
-                    className="border-0 pb-3"
-                  >
-                    <div className="d-flex align-items-center">
-                      <div className="modal-icon-wrapper bg-info bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-eye-line text-info fs-4"></i>
+<Modal
+  isOpen={detailModal}
+  toggle={() => setDetailModal(false)}
+  size="xl"
+  centered
+  className="invoice-modal"
+>
+  <ModalHeader
+    toggle={() => setDetailModal(false)}
+    className="border-0 pb-3"
+  >
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-info bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-eye-line text-info fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">
+          Vente Comptoire #{selectedBonCommande?.numeroCommande}
+        </h4>
+        <small className="text-muted">
+          {moment(selectedBonCommande?.dateCommande).format("DD MMM YYYY")}
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+
+  <ModalBody className="pt-0">
+    {selectedBonCommande && (
+      <div className="bon-livraison-details">
+        <Row className="g-3 mb-4">
+          <Col md={6}>
+            <Card className="border-0 shadow-sm h-100">
+              <CardBody className="p-4">
+                <h6 className="fw-semibold mb-3 text-primary">
+                  <i className="ri-user-line me-2"></i>
+                  Informations Client
+                </h6>
+
+                <div className="client-info">
+                  {selectedBonCommande.client ? (
+                    <>
+                      <div className="mb-2">
+                        <strong className="text-dark fs-6">
+                          {selectedBonCommande.client.raison_sociale}
+                        </strong>
                       </div>
-                      <div>
-                        <h4 className="mb-0 fw-bold text-dark">
-                          Vente Comptoire #{selectedBonCommande?.numeroCommande}
-                        </h4>
-                        <small className="text-muted">
-                          {moment(selectedBonCommande?.dateCommande).format(
-                            "DD MMM YYYY"
-                          )}
-                        </small>
-                      </div>
+                      {selectedBonCommande.client.designation && (
+                        <div className="mb-2">
+                          <small className="text-muted">
+                            {selectedBonCommande.client.designation}
+                          </small>
+                        </div>
+                      )}
+                      {selectedBonCommande.client.telephone1 && (
+                        <div className="mb-1">
+                          <i className="ri-phone-line me-2 text-muted"></i>
+                          <span className="text-dark">
+                            {formatPhoneDisplay(selectedBonCommande.client.telephone1)}
+                          </span>
+                        </div>
+                      )}
+                      {selectedBonCommande.client.telephone2 && (
+                        <div className="mb-1">
+                          <i className="ri-phone-line me-2 text-muted"></i>
+                          <span className="text-dark">
+                            {formatPhoneDisplay(selectedBonCommande.client.telephone2)}
+                          </span>
+                        </div>
+                      )}
+                      {selectedBonCommande.client.email && (
+                        <div className="mb-1">
+                          <i className="ri-mail-line me-2 text-muted"></i>
+                          <span className="text-dark">
+                            {selectedBonCommande.client.email}
+                          </span>
+                        </div>
+                      )}
+                      {selectedBonCommande.client.adresse && (
+                        <div className="mb-1">
+                          <i className="ri-map-pin-line me-2 text-muted"></i>
+                          <span className="text-dark">
+                            {selectedBonCommande.client.adresse}
+                            {selectedBonCommande.client.ville && `, ${selectedBonCommande.client.ville}`}
+                            {selectedBonCommande.client.code_postal && `, ${selectedBonCommande.client.code_postal}`}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-muted">
+                      <i className="ri-user-unfollow-line me-2"></i>
+                      Aucun client associé
                     </div>
-                  </ModalHeader>
+                  )}
+                </div>
+              </CardBody>
+            </Card>
+          </Col>
 
-                  <ModalBody className="pt-0">
-                    {selectedBonCommande && (
-                      <div className="bon-livraison-details">
-                        <Row className="g-3 mb-4">
-                          <Col md={6}>
-                            <Card className="border-0 shadow-sm h-100">
-                              <CardBody className="p-4">
-                                <h6 className="fw-semibold mb-3 text-primary">
-                                  <i className="ri-user-line me-2"></i>
-                                  Informations Client
-                                </h6>
+          <Col md={6}>
+            <Card className="border-0 shadow-sm h-100">
+              <CardBody className="p-4">
+                <h6 className="fw-semibold mb-3 text-primary">
+                  <i className="ri-information-line me-2"></i>
+                  Informations Vente
+                </h6>
+                <div className="row g-2">
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Vendeur:</span>
+                      <strong>
+                        {selectedBonCommande.vendeur
+                          ? `${selectedBonCommande.vendeur.nom} ${selectedBonCommande.vendeur.prenom}`
+                          : "N/A"}
+                      </strong>
+                    </p>
+                  </div>
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Statut:</span>
+                      <Badge color="success" className="text-uppercase">
+                        Terminé
+                      </Badge>
+                    </p>
+                  </div>
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Date:</span>
+                      <strong>
+                        {moment(selectedBonCommande.dateCommande).format("DD/MM/YYYY")}
+                      </strong>
+                    </p>
+                  </div>
+                  <div className="col-6">
+                    <p className="mb-2">
+                      <span className="text-muted d-block">Numéro:</span>
+                      <strong>{selectedBonCommande.numeroCommande}</strong>
+                    </p>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          </Col>
+        </Row>
 
-                                {/* Enhanced Client Search Section */}
-                                {/* Vente Comptoire - Client Search Section */}
-                                {/* Client Search Section - Exact same as Devis */}
-                                <div className="mb-3">
-                                  <Label className="form-label-lg fw-semibold">
-                                    Client*
-                                    {!selectedClient && (
-                                      <button
-                                        type="button"
-                                        className="btn btn-link text-primary p-0 ms-2"
-                                        onClick={() => setClientModal(true)}
-                                        title="Ajouter un nouveau client"
-                                        style={{ fontSize: "0.8rem" }}
-                                      >
-                                        <i className="ri-add-line me-1"></i>
-                                        Nouveau client
-                                      </button>
-                                    )}
-                                  </Label>
-                                  <div className="position-relative">
-                                    <Input
-                                      type="text"
-                                      placeholder="Rechercher client par nom ou téléphone..."
-                                      value={
-                                        selectedClient
-                                          ? selectedClient.raison_sociale
-                                          : clientSearch
-                                      }
-                                      onChange={(e) => {
-                                        const value = e.target.value;
+        {selectedBonCommande.notes && (
+          <Card className="border-0 shadow-sm mb-4">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-3 text-primary">
+                <i className="ri-sticky-note-line me-2"></i>
+                Notes
+              </h6>
+              <p className="mb-0 text-muted">{selectedBonCommande.notes}</p>
+            </CardBody>
+          </Card>
+        )}
 
-                                        if (!value) {
-                                          setSelectedClient(null);
-                                          validation.setFieldValue(
-                                            "client_id",
-                                            ""
-                                          );
-                                          setClientSearch("");
-                                        } else {
-                                          // Auto-format if it looks like a phone number (mostly digits)
-                                          const digitCount = (
-                                            value.match(/\d/g) || []
-                                          ).length;
-                                          const totalLength = value.length;
+        <Card className="border-0 shadow-sm">
+          <CardBody className="p-0">
+            <div className="table-responsive">
+              <Table className="table table-hover mb-0">
+                <thead className="table-dark">
+                  <tr>
+                    <th className="ps-4">Article</th>
+                    <th>Référence</th>
+                    <th className="text-end">Quantité</th>
+                    <th className="text-end">Prix Unitaire HT</th>
+                    <th className="text-end">Prix Unitaire TTC</th>
+                    <th className="text-end">TVA (%)</th>
+                    <th className="text-end">Remise (%)</th>
+                    <th className="text-end">Total HT</th>
+                    <th className="text-end pe-4">Total TTC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedBonCommande.articles.map((item, index) => {
+                    const quantite = Number(item.quantite) || 0;
+                    const priceHT = Number(item.prixUnitaire) || 0;
+                    const tvaRate = Number(item.tva ?? 0);
+                    const remiseRate = Number(item.remise || 0);
 
-                                          if (digitCount >= totalLength * 0.7) {
-                                            // If 70% or more are digits
-                                            const formatted =
-                                              formatPhoneInput(value);
-                                            setClientSearch(formatted);
-                                          } else {
-                                            setClientSearch(value);
-                                          }
-                                        }
-                                      }}
-                                      onFocus={() => {
-                                        if (clientSearch.length >= 1) {
-                                          setFilteredClients(clients);
-                                        }
-                                      }}
-                                      readOnly={!!selectedClient}
-                                      className="form-control-lg"
-                                    />
-                                    {selectedClient && (
-                                      <Button
-                                        color="link"
-                                        size="sm"
-                                        className="position-absolute end-0 top-50 translate-middle-y text-danger p-0 me-3"
-                                        onClick={() => {
-                                          setSelectedClient(null);
-                                          validation.setFieldValue(
-                                            "client_id",
-                                            ""
-                                          );
-                                          setClientSearch("");
-                                        }}
-                                      >
-                                        <i className="ri-close-line fs-5"></i>
-                                      </Button>
-                                    )}
-                                  </div>
+                    const priceTTC =
+                      Number(item.prix_ttc) ||
+                      Number(item.article?.puv_ttc) ||
+                      priceHT * (1 + tvaRate / 100);
 
-                                  {/* Scrollable Dropdown Results */}
-                                  {!selectedClient &&
-                                    clientSearch.length >= 1 && (
-                                      <div
-                                        className="search-results mt-2 border rounded shadow-sm"
-                                        style={{
-                                          maxHeight: "200px",
-                                          overflowY: "auto",
-                                          position: "absolute",
-                                          width: "100%",
-                                          zIndex: 1000,
-                                          backgroundColor: "white",
-                                        }}
-                                      >
-                                        {filteredClients.length > 0 ? (
-                                          <ul className="list-group list-group-flush">
-                                            {filteredClients.map((c) => (
-                                              <li
-                                                key={c.id}
-                                                className="list-group-item list-group-item-action"
-                                                onClick={() => {
-                                                  setSelectedClient(c);
-                                                  validation.setFieldValue(
-                                                    "client_id",
-                                                    c.id
-                                                  );
-                                                  setClientSearch("");
-                                                  setFilteredClients([]);
-                                                }}
-                                                style={{
-                                                  cursor: "pointer",
-                                                  padding: "10px 15px",
-                                                }}
-                                              >
-                                                <div className="d-flex justify-content-between align-items-center">
-                                                  <span className="fw-medium">
-                                                    {c.raison_sociale}
-                                                  </span>
-                                                  <small className="text-muted">
-                                                    {formatPhoneDisplay(
-                                                      c.telephone1
-                                                    )}
-                                                  </small>
-                                                </div>
-                                                {c.adresse && (
-                                                  <small className="text-muted d-block mt-1">
-                                                    <i className="ri-map-pin-line me-1"></i>
-                                                    {c.adresse}
-                                                  </small>
-                                                )}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        ) : (
-                                          <div className="text-muted p-3 text-center">
-                                            <i className="ri-search-line me-1"></i>
-                                            Aucun résultat trouvé
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
+                    const montantSousTotalHT =
+                      Math.round(quantite * priceHT * 1000) / 1000;
+                    const montantNetHT =
+                      Math.round(
+                        quantite * priceHT * (1 - remiseRate / 100) * 1000
+                      ) / 1000;
+                    const montantTTCLigne =
+                      Math.round(quantite * priceTTC * 1000) / 1000;
 
-                                  {validation.touched.client_id &&
-                                    validation.errors.client_id && (
-                                      <div className="text-danger mt-1 fs-6">
-                                        <i className="ri-error-warning-line me-1"></i>
-                                        {validation.errors.client_id}
-                                      </div>
-                                    )}
-                                </div>
-                              </CardBody>
-                            </Card>
-                          </Col>
-
-                          <Col md={6}>
-                            <Card className="border-0 shadow-sm h-100">
-                              <CardBody className="p-4">
-                                <h6 className="fw-semibold mb-3 text-primary">
-                                  <i className="ri-information-line me-2"></i>
-                                  Informations Vente
-                                </h6>
-                                <div className="row g-2">
-                                  <div className="col-6">
-                                    <p className="mb-2">
-                                      <span className="text-muted d-block">
-                                        Vendeur:
-                                      </span>
-                                      <strong>
-                                        {selectedBonCommande.vendeur
-                                          ? `${selectedBonCommande.vendeur.nom} ${selectedBonCommande.vendeur.prenom}`
-                                          : "N/A"}
-                                      </strong>
-                                    </p>
-                                  </div>
-                                  <div className="col-6">
-                                    <p className="mb-2">
-                                      <span className="text-muted d-block">
-                                        Statut:
-                                      </span>
-                                      <Badge
-                                        color="success"
-                                        className="text-uppercase"
-                                      >
-                                        Terminé
-                                      </Badge>
-                                    </p>
-                                  </div>
-                                </div>
-                              </CardBody>
-                            </Card>
-                          </Col>
-                        </Row>
-
-                        {selectedBonCommande.notes && (
-                          <Card className="border-0 shadow-sm mb-4">
-                            <CardBody className="p-4">
-                              <h6 className="fw-semibold mb-3 text-primary">
-                                <i className="ri-sticky-note-line me-2"></i>
-                                Notes
+                    return (
+                      <tr
+                        key={index}
+                        className={index % 2 === 0 ? "bg-light" : ""}
+                      >
+                        <td className="ps-4">
+                          <div className="d-flex align-items-center">
+                            <div className="flex-grow-1">
+                              <h6 className="mb-0 fw-semibold fs-6">
+                                {item.article?.designation}
                               </h6>
-                              <p className="mb-0 text-muted">
-                                {selectedBonCommande.notes}
-                              </p>
-                            </CardBody>
-                          </Card>
-                        )}
-
-                        <Card className="border-0 shadow-sm">
-                          <CardBody className="p-0">
-                            <div className="table-responsive">
-                              <Table className="table table-hover mb-0">
-                                <thead className="table-dark">
-                                  <tr>
-                                    <th className="ps-4">Article</th>
-                                    <th>Référence</th>
-                                    <th className="text-end">Quantité</th>
-                                    <th className="text-end">
-                                      Prix Unitaire HT
-                                    </th>
-                                    <th className="text-end">
-                                      Prix Unitaire TTC
-                                    </th>
-                                    <th className="text-end">TVA (%)</th>
-                                    <th className="text-end">Remise (%)</th>
-                                    <th className="text-end">Total HT</th>
-                                    <th className="text-end pe-4">Total TTC</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {selectedBonCommande.articles.map(
-                                    (item, index) => {
-                                      const quantite =
-                                        Number(item.quantite) || 0;
-                                      const priceHT =
-                                        Number(item.prixUnitaire) || 0;
-                                      const tvaRate = Number(item.tva ?? 0);
-                                      const remiseRate = Number(
-                                        item.remise || 0
-                                      );
-
-                                      // USE prix_ttc FROM DATABASE OR CALCULATE FROM ARTICLE puv_ttc
-                                      const priceTTC =
-                                        Number(item.prix_ttc) ||
-                                        Number(item.article?.puv_ttc) ||
-                                        priceHT * (1 + tvaRate / 100);
-
-                                      // Calculate exactly like in create/edit modal
-                                      const montantSousTotalHT =
-                                        Math.round(quantite * priceHT * 1000) /
-                                        1000;
-                                      const montantNetHT =
-                                        Math.round(
-                                          quantite *
-                                            priceHT *
-                                            (1 - remiseRate / 100) *
-                                            1000
-                                        ) / 1000;
-                                      const montantTTCLigne =
-                                        Math.round(quantite * priceTTC * 1000) /
-                                        1000;
-
-                                      return (
-                                        <tr
-                                          key={index}
-                                          className={
-                                            index % 2 === 0 ? "bg-light" : ""
-                                          }
-                                        >
-                                          <td className="ps-4">
-                                            <div className="d-flex align-items-center">
-                                              <div className="flex-grow-1">
-                                                <h6 className="mb-0 fw-semibold fs-6">
-                                                  {item.article?.designation}
-                                                </h6>
-                                              </div>
-                                            </div>
-                                          </td>
-                                          <td>
-                                            <Badge
-                                              color="light"
-                                              className="text-dark"
-                                            >
-                                              {item.article?.reference || "-"}
-                                            </Badge>
-                                          </td>
-                                          <td className="text-end fw-semibold">
-                                            {quantite}
-                                          </td>
-                                          <td className="text-end">
-                                            {priceHT.toFixed(3)} DT
-                                          </td>
-                                          <td className="text-end">
-                                            {priceTTC.toFixed(3)} DT
-                                          </td>
-                                          <td className="text-end">
-                                            {tvaRate}%
-                                          </td>
-                                          <td className="text-end">
-                                            {remiseRate}%
-                                          </td>
-                                          <td className="text-end fw-semibold">
-                                            {montantNetHT.toFixed(3)} DT
-                                          </td>
-                                          <td className="text-end pe-4 fw-semibold text-primary">
-                                            {montantTTCLigne.toFixed(3)} DT
-                                          </td>
-                                        </tr>
-                                      );
-                                    }
-                                  )}
-                                </tbody>
-                              </Table>
                             </div>
+                          </div>
+                        </td>
+                        <td>
+                          <Badge color="light" className="text-dark">
+                            {item.article?.reference || "-"}
+                          </Badge>
+                        </td>
+                        <td className="text-end fw-semibold">{quantite}</td>
+                        <td className="text-end">{priceHT.toFixed(3)} DT</td>
+                        <td className="text-end">{priceTTC.toFixed(3)} DT</td>
+                        <td className="text-end">{tvaRate}%</td>
+                        <td className="text-end">{remiseRate}%</td>
+                        <td className="text-end fw-semibold">
+                          {montantNetHT.toFixed(3)} DT
+                        </td>
+                        <td className="text-end pe-4 fw-semibold text-primary">
+                          {montantTTCLigne.toFixed(3)} DT
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
 
-                            <div className="border-top p-4">
-                              <Row className="justify-content-end">
-                                <Col xs={8} sm={6} md={5} lg={4}>
-                                  {(() => {
-                                    let sousTotalHTValue = 0;
-                                    let netHTValue = 0;
-                                    let totalTaxValue = 0;
-                                    let grandTotalValue = 0;
+            <div className="border-top p-4">
+              <Row className="justify-content-end">
+                <Col xs={8} sm={6} md={5} lg={4}>
+                  {(() => {
+                    let sousTotalHTValue = 0;
+                    let netHTValue = 0;
+                    let totalTaxValue = 0;
+                    let grandTotalValue = 0;
 
-                                    // Calculate exactly like in create/edit modal
-                                    selectedBonCommande.articles.forEach(
-                                      (article) => {
-                                        const qty =
-                                          Number(article.quantite) || 0;
-                                        const tvaRate = Number(
-                                          article.tva ?? 0
-                                        );
-                                        const remiseRate = Number(
-                                          article.remise || 0
-                                        );
+                    selectedBonCommande.articles.forEach((article) => {
+                      const qty = Number(article.quantite) || 0;
+                      const tvaRate = Number(article.tva ?? 0);
+                      const remiseRate = Number(article.remise || 0);
 
-                                        const priceHT =
-                                          Number(article.prixUnitaire) || 0;
-                                        // USE prix_ttc FROM DATABASE OR CALCULATE FROM ARTICLE puv_ttc
-                                        const priceTTC =
-                                          Number(article.prix_ttc) ||
-                                          Number(article.article?.puv_ttc) ||
-                                          priceHT * (1 + tvaRate / 100);
+                      const priceHT = Number(article.prixUnitaire) || 0;
+                      const priceTTC =
+                        Number(article.prix_ttc) ||
+                        Number(article.article?.puv_ttc) ||
+                        priceHT * (1 + tvaRate / 100);
 
-                                        // Calculate line amounts with proper rounding
-                                        const montantSousTotalHT =
-                                          Math.round(qty * priceHT * 1000) /
-                                          1000;
-                                        const montantNetHT =
-                                          Math.round(
-                                            qty *
-                                              priceHT *
-                                              (1 - remiseRate / 100) *
-                                              1000
-                                          ) / 1000;
-                                        const montantTTCLigne =
-                                          Math.round(qty * priceTTC * 1000) /
-                                          1000;
-                                        const montantTVA =
-                                          Math.round(
-                                            (montantTTCLigne - montantNetHT) *
-                                              1000
-                                          ) / 1000;
+                      const montantSousTotalHT =
+                        Math.round(qty * priceHT * 1000) / 1000;
+                      const montantNetHT =
+                        Math.round(
+                          qty * priceHT * (1 - remiseRate / 100) * 1000
+                        ) / 1000;
+                      const montantTTCLigne =
+                        Math.round(qty * priceTTC * 1000) / 1000;
+                      const montantTVA =
+                        Math.round((montantTTCLigne - montantNetHT) * 1000) /
+                        1000;
 
-                                        sousTotalHTValue += montantSousTotalHT;
-                                        netHTValue += montantNetHT;
-                                        totalTaxValue += montantTVA;
-                                        grandTotalValue += montantTTCLigne;
-                                      }
-                                    );
+                      sousTotalHTValue += montantSousTotalHT;
+                      netHTValue += montantNetHT;
+                      totalTaxValue += montantTVA;
+                      grandTotalValue += montantTTCLigne;
+                    });
 
-                                    // Round accumulated values
-                                    sousTotalHTValue =
-                                      Math.round(sousTotalHTValue * 1000) /
-                                      1000;
-                                    netHTValue =
-                                      Math.round(netHTValue * 1000) / 1000;
-                                    totalTaxValue =
-                                      Math.round(totalTaxValue * 1000) / 1000;
-                                    grandTotalValue =
-                                      Math.round(grandTotalValue * 1000) / 1000;
+                    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
+                    netHTValue = Math.round(netHTValue * 1000) / 1000;
+                    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+                    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
 
-                                    const remiseValue =
-                                      Number(selectedBonCommande.remise) || 0;
-                                    const remiseTypeValue =
-                                      selectedBonCommande.remiseType ||
-                                      "percentage";
+                    const remiseValue = Number(selectedBonCommande.remise) || 0;
+                    const remiseTypeValue = selectedBonCommande.remiseType || "percentage";
 
-                                    let finalTotalValue = grandTotalValue;
-                                    let discountAmountValue = 0;
-                                    let netHTAfterDiscount = netHTValue;
-                                    let totalTaxAfterDiscount = totalTaxValue;
-                                    let discountPercentage = 0;
+                    let finalTotalValue = grandTotalValue;
+                    let discountAmountValue = 0;
+                    let netHTAfterDiscount = netHTValue;
+                    let totalTaxAfterDiscount = totalTaxValue;
+                    let discountPercentage = 0;
 
-                                    // Apply remise logic with proper rounding (exactly like create/edit modal)
-                                    if (remiseValue > 0) {
-                                      if (remiseTypeValue === "percentage") {
-                                        discountAmountValue =
-                                          Math.round(
-                                            netHTValue *
-                                              (remiseValue / 100) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount =
-                                          Math.round(
-                                            (netHTValue - discountAmountValue) *
-                                              1000
-                                          ) / 1000;
+                    if (remiseValue > 0) {
+                      if (remiseTypeValue === "percentage") {
+                        discountAmountValue =
+                          Math.round(netHTValue * (remiseValue / 100) * 1000) /
+                          1000;
+                        netHTAfterDiscount =
+                          Math.round((netHTValue - discountAmountValue) * 1000) /
+                          1000;
 
-                                        const discountRatio =
-                                          netHTAfterDiscount / netHTValue;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            totalTaxValue * discountRatio * 1000
-                                          ) / 1000;
+                        const discountRatio = netHTAfterDiscount / netHTValue;
+                        totalTaxAfterDiscount =
+                          Math.round(totalTaxValue * discountRatio * 1000) / 1000;
 
-                                        finalTotalValue =
-                                          Math.round(
-                                            (netHTAfterDiscount +
-                                              totalTaxAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                      } else if (remiseTypeValue === "fixed") {
-                                        finalTotalValue =
-                                          Math.round(
-                                            Number(remiseValue) * 1000
-                                          ) / 1000;
+                        finalTotalValue =
+                          Math.round(
+                            (netHTAfterDiscount + totalTaxAfterDiscount) * 1000
+                          ) / 1000;
+                      } else if (remiseTypeValue === "fixed") {
+                        finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
 
-                                        const tvaToHtRatio =
-                                          totalTaxValue / netHTValue;
-                                        const htAfterDiscount =
-                                          Math.round(
-                                            (finalTotalValue /
-                                              (1 + tvaToHtRatio)) *
-                                              1000
-                                          ) / 1000;
+                        const tvaToHtRatio = totalTaxValue / netHTValue;
+                        const htAfterDiscount =
+                          Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) /
+                          1000;
 
-                                        discountAmountValue =
-                                          Math.round(
-                                            (netHTValue - htAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount = htAfterDiscount;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            netHTAfterDiscount *
-                                              tvaToHtRatio *
-                                              1000
-                                          ) / 1000;
+                        discountAmountValue =
+                          Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
+                        netHTAfterDiscount = htAfterDiscount;
+                        totalTaxAfterDiscount =
+                          Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
 
-                                        discountPercentage =
-                                          Math.round(
-                                            (discountAmountValue / netHTValue) *
-                                              100 *
-                                              100
-                                          ) / 100;
-                                      }
-                                    }
+                        discountPercentage =
+                          Math.round((discountAmountValue / netHTValue) * 100 * 100) /
+                          100;
+                      }
+                    }
 
-                                    // Use discounted values for final display
-                                    const displayNetHT =
-                                      remiseValue > 0
-                                        ? netHTAfterDiscount
-                                        : netHTValue;
-                                    const displayTotalTax =
-                                      remiseValue > 0
-                                        ? totalTaxAfterDiscount
-                                        : totalTaxValue;
+                    const displayNetHT =
+                      remiseValue > 0 ? netHTAfterDiscount : netHTValue;
+                    const displayTotalTax =
+                      remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
 
-                                    return (
-                                      <Table className="table-sm table-borderless mb-0">
-                                        <tbody>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Sous-total H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {sousTotalHTValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Net H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayNetHT.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              TVA:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayTotalTax.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Total TTC:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6 text-dark">
-                                              {grandTotalValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          {remiseValue > 0 && (
-                                            <tr className="real-time-update">
-                                              <th className="text-end text-muted fs-6">
-                                                {remiseTypeValue ===
-                                                "percentage"
-                                                  ? `Remise (${remiseValue}%)`
-                                                  : `Remise (Montant fixe) ${discountPercentage}%`}
-                                              </th>
-                                              <td className="text-end text-danger fw-bold fs-6">
-                                                -{" "}
-                                                {discountAmountValue.toFixed(3)}{" "}
-                                                DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {remiseValue > 0 && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {finalTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {!remiseValue && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {grandTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                        </tbody>
-                                      </Table>
-                                    );
-                                  })()}
-                                </Col>
-                              </Row>
-                            </div>
-                          </CardBody>
-                        </Card>
-                        {/* In your detail modal - Payment Information */}
+                    return (
+                      <Table className="table-sm table-borderless mb-0">
+                        <tbody>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">
+                              Sous-total H.T.:
+                            </th>
+                            <td className="text-end fw-semibold fs-6">
+                              {sousTotalHTValue.toFixed(3)} DT
+                            </td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">
+                              Net H.T.:
+                            </th>
+                            <td className="text-end fw-semibold fs-6">
+                              {displayNetHT.toFixed(3)} DT
+                            </td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">
+                              TVA:
+                            </th>
+                            <td className="text-end fw-semibold fs-6">
+                              {displayTotalTax.toFixed(3)} DT
+                            </td>
+                          </tr>
+                          <tr className="real-time-update">
+                            <th className="text-end text-muted fs-6">
+                              Total TTC:
+                            </th>
+                            <td className="text-end fw-semibold fs-6 text-dark">
+                              {grandTotalValue.toFixed(3)} DT
+                            </td>
+                          </tr>
+                          {remiseValue > 0 && (
+                            <tr className="real-time-update">
+                              <th className="text-end text-muted fs-6">
+                                {remiseTypeValue === "percentage"
+                                  ? `Remise (${remiseValue}%)`
+                                  : `Remise (Montant fixe) ${discountPercentage}%`}
+                              </th>
+                              <td className="text-end text-danger fw-bold fs-6">
+                                - {discountAmountValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                          {remiseValue > 0 && (
+                            <tr className="final-total real-time-update border-top">
+                              <th className="text-end fs-5">
+                                NET À PAYER:
+                              </th>
+                              <td className="text-end fw-bold fs-5 text-primary">
+                                {finalTotalValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                          {!remiseValue && (
+                            <tr className="final-total real-time-update border-top">
+                              <th className="text-end fs-5">
+                                NET À PAYER:
+                              </th>
+                              <td className="text-end fw-bold fs-5 text-primary">
+                                {grandTotalValue.toFixed(3)} DT
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </Table>
+                    );
+                  })()}
+                </Col>
+              </Row>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Informations de Paiement */}
+        <Card className="border-0 shadow-sm mt-4">
+          <CardBody className="p-4">
+            <h6 className="fw-semibold mb-3 text-primary">
+              <i className="ri-bank-card-line me-2"></i>
+              Informations de Paiement
+            </h6>
+            
+            {selectedBonCommande.paymentMethods && 
+            selectedBonCommande.paymentMethods.length > 0 ? (
+              <div className="payment-methods">
+                {selectedBonCommande.paymentMethods.map((payment: any, index: number) => (
+                  <div key={payment.id || index} className="border rounded p-3 mb-3 bg-light">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <h6 className="fw-semibold mb-0 text-dark">
+                        Paiement #{index + 1}
+                      </h6>
+                      <Badge 
+                        color={
+                          payment.method === 'especes' ? 'success' :
+                          payment.method === 'cheque' ? 'warning' :
+                          payment.method === 'virement' ? 'info' :
+                          payment.method === 'traite' ? 'primary' : 'secondary'
+                        }
+                      >
+                        {payment.method === 'especes' ? 'Espèces' :
+                         payment.method === 'cheque' ? 'Chèque' :
+                         payment.method === 'virement' ? 'Virement' :
+                         payment.method === 'traite' ? 'Traite' : 'Autre'}
+                      </Badge>
+                    </div>
+                    
+                    <div className="row">
+                      <div className="col-md-6">
+                        <strong>Montant:</strong> {Number(payment.amount || 0).toFixed(3)} DT
                       </div>
-                    )}
-                  </ModalBody>
+                      
+                      {payment.numero && (
+                        <div className="col-md-6">
+                          <strong>Numéro:</strong> {payment.numero}
+                        </div>
+                      )}
+                      
+                      {payment.banque && (
+                        <div className="col-md-6">
+                          <strong>Banque:</strong> {payment.banque}
+                        </div>
+                      )}
+                      
+                      {payment.dateEcheance && (
+                        <div className="col-md-6">
+                          <strong>Date Échéance:</strong> {moment(payment.dateEcheance).format('DD/MM/YYYY')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                
+                <div className="total-payment border-top pt-3 mt-3">
+                  <div className="d-flex justify-content-between align-items-center">
+                    <strong className="fs-6">Total Paiements:</strong>
+                    <strong className="fs-5 text-primary">
+                      {selectedBonCommande.paymentMethods
+                        .reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0)
+                        .toFixed(3)} DT
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-muted">
+                <i className="ri-information-line me-2"></i>
+                Aucune information de paiement disponible
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+    )}
+  </ModalBody>
 
-                  <ModalFooter className="border-0 pt-4">
-                    {selectedBonCommande && (
-                      <>
-                        <Button
-                          color="primary"
-                          onClick={() =>
-                            openPdfModal(selectedBonCommande, "facture")
-                          }
-                          className="btn-invoice btn-invoice-primary me-2"
-                        >
-                          <i className="ri-file-pdf-line me-2"></i> Voir Facture
-                          PDF
-                        </Button>
+  <ModalFooter className="border-0 pt-4">
+    {selectedBonCommande && (
+      <>
+        <Button
+          color="primary"
+          onClick={() => openPdfModal(selectedBonCommande, "facture")}
+          className="btn-invoice btn-invoice-primary me-2"
+        >
+          <i className="ri-file-pdf-line me-2"></i> Voir Facture PDF
+        </Button>
 
-                        <Button
-                          color="success"
-                          onClick={() =>
-                            handleDirectPrint(selectedBonCommande, "receipt")
-                          }
-                          className="btn-invoice btn-invoice-success me-2"
-                        >
-                          <i className="ri-printer-line me-2"></i> Imprimer Reçu
-                        </Button>
+        <Button
+          color="success"
+          onClick={() => handleDirectPrint(selectedBonCommande, "receipt")}
+          className="btn-invoice btn-invoice-success me-2"
+        >
+          <i className="ri-printer-line me-2"></i> Imprimer Reçu
+        </Button>
 
-                        <Button
-                          color="info"
-                          onClick={() => {
-                            setBonCommande(selectedBonCommande);
-                            setSelectedClient(
-                              selectedBonCommande.client || null
-                            );
-                            setSelectedArticles(
-                              selectedBonCommande.articles.map((item: any) => ({
-                                article_id: item.article?.id || 0,
-                                quantite: item.quantite,
-                                prixUnitaire:
-                                  typeof item.prixUnitaire === "string"
-                                    ? parseFloat(item.prixUnitaire)
-                                    : item.prixUnitaire,
-                                // USE prix_ttc FROM DATABASE OR CALCULATE FROM ARTICLE puv_ttc
-                                prixTTC:
-                                  Number(item.prix_ttc) ||
-                                  Number(item.article?.puv_ttc) ||
-                                  (typeof item.prixUnitaire === "string"
-                                    ? parseFloat(item.prixUnitaire)
-                                    : item.prixUnitaire) *
-                                    (1 + (item.tva || 0) / 100),
-                                tva:
-                                  item.tva != null
-                                    ? typeof item.tva === "string"
-                                      ? parseFloat(item.tva)
-                                      : item.tva
-                                    : null,
-                                remise:
-                                  item.remise != null
-                                    ? typeof item.remise === "string"
-                                      ? parseFloat(item.remise)
-                                      : item.remise
-                                    : null,
-                                articleDetails: item.article,
-                              }))
-                            );
-                            setGlobalRemise(selectedBonCommande.remise || 0);
-                            setRemiseType(
-                              selectedBonCommande.remiseType || "percentage"
-                            );
-                            setShowRemise(
-                              (selectedBonCommande.remise || 0) > 0
-                            );
-                            setIsEdit(true);
-                            setModal(true);
-                            setDetailModal(false);
-                          }}
-                          className="btn-invoice btn-invoice-info me-2"
-                        >
-                          <i className="ri-pencil-line me-2"></i> Modifier
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      color="light"
-                      onClick={() => setDetailModal(false)}
-                      className="btn-invoice"
-                    >
-                      <i className="ri-close-line me-2"></i> Fermer
-                    </Button>
-                  </ModalFooter>
-                </Modal>
+        <Button
+          color="info"
+          onClick={() => {
+            setBonCommande(selectedBonCommande);
+            setSelectedClient(selectedBonCommande.client || null);
+            setSelectedArticles(
+              selectedBonCommande.articles.map((item: any) => ({
+                article_id: item.article?.id || 0,
+                quantite: item.quantite,
+                prixUnitaire:
+                  typeof item.prixUnitaire === "string"
+                    ? parseFloat(item.prixUnitaire)
+                    : item.prixUnitaire,
+                prixTTC:
+                  Number(item.prix_ttc) ||
+                  Number(item.article?.puv_ttc) ||
+                  (typeof item.prixUnitaire === "string"
+                    ? parseFloat(item.prixUnitaire)
+                    : item.prixUnitaire) *
+                    (1 + (item.tva || 0) / 100),
+                tva:
+                  item.tva != null
+                    ? typeof item.tva === "string"
+                      ? parseFloat(item.tva)
+                      : item.tva
+                    : null,
+                remise:
+                  item.remise != null
+                    ? typeof item.remise === "string"
+                      ? parseFloat(item.remise)
+                      : item.remise
+                    : null,
+                articleDetails: item.article,
+              }))
+            );
+            setGlobalRemise(selectedBonCommande.remise || 0);
+            setRemiseType(selectedBonCommande.remiseType || "percentage");
+            setShowRemise((selectedBonCommande.remise || 0) > 0);
+            setIsEdit(true);
+            setModal(true);
+            setDetailModal(false);
+          }}
+          className="btn-invoice btn-invoice-info me-2"
+        >
+          <i className="ri-pencil-line me-2"></i> Modifier
+        </Button>
+      </>
+    )}
+    <Button
+      color="light"
+      onClick={() => setDetailModal(false)}
+      className="btn-invoice"
+    >
+      <i className="ri-close-line me-2"></i> Fermer
+    </Button>
+  </ModalFooter>
+</Modal>
 
                 <Modal
                   isOpen={modal}
@@ -2461,120 +2411,179 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
 
                       {/* Articles Section */}
                       <Card className="border-0 shadow-sm mb-4">
-                        <CardBody className="p-4">
-                          <h5 className="fw-semibold mb-4 text-primary">
-                            <i className="ri-shopping-cart-line me-2"></i>
-                            Articles
-                          </h5>
+  <CardBody className="p-4">
+    <h5 className="fw-semibold mb-4 text-primary">
+      <i className="ri-shopping-cart-line me-2"></i>
+      Articles
+    </h5>
 
-                          <div className="mb-4">
-                            <Label className="form-label-lg fw-semibold">
-                              Rechercher Article
-                            </Label>
-                            <div className="search-box position-relative">
-                              <Input
-                                type="text"
-                                placeholder="Rechercher article..."
-                                value={articleSearch}
-                                onChange={(e) =>
-                                  setArticleSearch(e.target.value)
-                                }
-                                className="form-control-lg ps-5 pe-5"
-                              />
-                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
-                              <button
-                                type="button"
-                                className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                onClick={() => setArticleModal(true)}
-                                title="Ajouter un nouvel article"
-                              >
-                                <i className="ri-add-line fs-5"></i>
-                              </button>
-                            </div>
+    <div className="mb-4">
+      <Label className="form-label-lg fw-semibold">
+        Rechercher Article
+      </Label>
+      {/* Update the article search input */}
+      <div className="search-box position-relative">
+        <Input
+          type="text"
+          placeholder="Rechercher article..."
+          value={articleSearch}
+          onChange={(e) => {
+            setArticleSearch(e.target.value);
+            setFocusedIndex(-1); // Reset focus when typing
+          }}
+          onKeyDown={(e) => {
+            if (filteredArticles.length > 0) {
+              // Handle arrow down
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setFocusedIndex(prev => 
+                  prev < filteredArticles.length - 1 ? prev + 1 : 0
+                );
+              }
+              // Handle arrow up
+              else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setFocusedIndex(prev => 
+                  prev > 0 ? prev - 1 : filteredArticles.length - 1
+                );
+              }
+              // Handle Enter to select focused item
+              else if (e.key === 'Enter' && focusedIndex >= 0) {
+                e.preventDefault();
+                const article = filteredArticles[focusedIndex];
+                handleAddArticle(article.id.toString());
+                setArticleSearch("");
+                setFilteredArticles([]);
+                setFocusedIndex(-1);
+              }
+              // Handle Enter to select first item when no focus
+              else if (e.key === 'Enter' && filteredArticles.length > 0 && focusedIndex === -1) {
+                e.preventDefault();
+                const firstArticle = filteredArticles[0];
+                handleAddArticle(firstArticle.id.toString());
+                setArticleSearch("");
+                setFilteredArticles([]);
+                setFocusedIndex(-1);
+              }
+            }
+          }}
+          className="form-control-lg ps-5 pe-5"
+        />
+        <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+        <button
+          type="button"
+          className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+          onClick={() => setArticleModal(true)}
+          title="Ajouter un nouvel article"
+        >
+          <i className="ri-add-line fs-5"></i>
+        </button>
+      </div>
 
-                            {/* Article Dropdown Results - Fix positioning */}
-                            {articleSearch.length >= 1 && (
-                              <div
-                                className="search-results mt-2 border rounded shadow-sm"
-                                style={{
-                                  maxHeight: "300px",
-                                  overflowY: "auto",
-                                  position: "relative", // Change to relative
-                                  zIndex: 9999, // Higher z-index
-                                  backgroundColor: "white",
-                                }}
-                              >
-                                {filteredArticles.length > 0 ? (
-                                  <ul className="list-group list-group-flush">
-                                    {filteredArticles.map((article) => (
-                                      <li
-                                        key={article.id}
-                                        className="list-group-item list-group-item-action"
-                                        onClick={() => {
-                                          handleAddArticle(
-                                            article.id.toString()
-                                          );
-                                          setArticleSearch("");
-                                          setFilteredArticles([]);
-                                        }}
-                                        style={{
-                                          cursor: "pointer",
-                                          padding: "12px 15px",
-                                          opacity: selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          )
-                                            ? 0.6
-                                            : 1,
-                                        }}
-                                      >
-                                        <div className="d-flex justify-content-between align-items-center">
-                                          <div className="flex-grow-1">
-                                            <strong className="d-block">
-                                              {article.designation}
-                                            </strong>
-                                            <small className="text-muted">
-                                              Réf: {article.reference} | Stock:{" "}
-                                              {article.qte} | HT:{" "}
-                                              {(
-                                                Number(article.puv_ht) || 0
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </small>
-                                          </div>
-                                          {selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          ) ? (
-                                            <Badge
-                                              color="secondary"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Ajouté
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-add-line me-1"></i>
-                                              Ajouter
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div className="text-muted p-3 text-center">
-                                    <i className="ri-search-line me-2"></i>
-                                    Aucun article trouvé
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
+      {/* Update the dropdown container */}
+      {articleSearch.length >= 1 && (
+        <div
+          ref={setDropdownRef}
+          className="search-results mt-2 border rounded shadow-sm"
+          style={{
+            maxHeight: "400px",
+            overflowY: "auto",
+            overflowX: "hidden",
+            position: "relative",
+            zIndex: 1000,
+            backgroundColor: "white",
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {filteredArticles.length > 0 ? (
+            <ul className="list-group list-group-flush">
+              {filteredArticles.map((article, index) => {
+                // Create ref for each item
+                const itemRef = React.createRef<HTMLLIElement>();
+                if (!itemRefs[index]) {
+                  itemRefs[index] = itemRef;
+                }
+
+                return (
+                  <li
+                    key={article.id}
+                    ref={itemRefs[index]}
+                    className={`list-group-item list-group-item-action ${
+                      focusedIndex === index ? 'active' : ''
+                    }`}
+                    onClick={() => {
+                      handleAddArticle(article.id.toString());
+                      setArticleSearch("");
+                      setFilteredArticles([]);
+                      setFocusedIndex(-1);
+                    }}
+                    style={{
+                      cursor: "pointer",
+                      padding: "12px 15px",
+                      opacity: selectedArticles.some(
+                        (item) => item.article_id === article.id
+                      )
+                        ? 0.6
+                        : 1,
+                      backgroundColor: focusedIndex === index ? '#e7f1ff' : 'transparent',
+                      borderLeft: focusedIndex === index ? '4px solid #0d6efd' : 'none',
+                    }}
+                    onMouseEnter={() => setFocusedIndex(index)}
+                  >
+                    <div className="d-flex justify-content-between align-items-center">
+                      <div className="flex-grow-1">
+                        {/* Show reference first in larger font - MATCHING PREVIOUS STYLE */}
+                        <div className="d-flex align-items-center mb-1">
+                          <strong className="fs-6 me-2 text-primary">
+                            {article.reference}
+                          </strong>
+                          <span className="badge bg-light text-dark me-2">
+                            Stock: {article.qte || 0}
+                          </span>
+                        </div>
+                        {/* Show designation in smaller font */}
+                        <small className="text-muted d-block" style={{ fontSize: "0.85rem" }}>
+                          {article.designation}
+                        </small>
+                        {/* Show TTC price prominently */}
+                        <div className="mt-1">
+                          <span className="badge bg-success text-white">
+                            TTC: {(Number(article.puv_ttc) || 0).toFixed(3)} DT
+                          </span>
+                          {article.tva && article.tva > 0 && (
+                            <span className="badge bg-info ms-1">
+                              TVA: {article.tva}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {selectedArticles.some(
+                        (item) => item.article_id === article.id
+                      ) ? (
+                        <Badge color="secondary" className="fs-6">
+                          <i className="ri-check-line me-1"></i>
+                          Ajouté
+                        </Badge>
+                      ) : (
+                        <Badge color="success" className="fs-6">
+                          <i className="ri-add-line me-1"></i>
+                          Ajouter
+                        </Badge>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="text-muted p-3 text-center">
+              <i className="ri-search-line me-2"></i>
+              Aucun article trouvé
+            </div>
+          )}
+        </div>
+      )}
+    </div>
 
                           {/* Articles Table */}
                           {selectedArticles.length > 0 && (
@@ -3371,6 +3380,8 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
                                           Virement
                                         </option>
                                         <option value="traite">Traite</option>
+                                        <option value="tpe">Carte Bancaire "TPE"</option> {/* ADD THIS */}
+
                                       </Input>
                                     </Col>
 

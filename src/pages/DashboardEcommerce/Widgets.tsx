@@ -1,35 +1,86 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardBody, Col, Row, Container, Label, Button, Table } from 'reactstrap';
+import { Card, CardBody, Col, Row, Container, Label, Button, Table, Badge } from 'reactstrap';
 import CountUp from "react-countup";
 import Flatpickr from "react-flatpickr";
 import moment from "moment";
 
+import React, { useState, useEffect, useMemo } from 'react';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import TrésoreriePDF from './TrésoreriePDF '; // Adjust the path as needed
+import { useProfile } from "Components/Hooks/UserHooks";
+import logo from "../../assets/images/imglogo.png";
+
 const API_BASE = process.env.REACT_APP_API_BASE;
 
+interface PaymentMethod {
+  method: string;
+  amount: number;
+  numero?: string;
+  banque?: string;
+  dateEcheance?: string;
+  tauxRetention?: number;
+}
+
+interface Transaction {
+  id: number;
+  type: 'facture_direct' | 'encaissement' | 'paiement_bc' | 'bon_commande' | 'vente_comptoire';
+  numero: string;
+  date: string;
+  client: Client;
+  montant: number;
+  paymentMethods: PaymentMethod[];
+  hasRetenue?: boolean;
+  montantRetenue?: number;
+  source?: string;
+}
+
+interface Client {
+  name : string
+}
 interface TrésorerieData {
   totalVentes: number;
   totalPaiementsClients: number;
   totalPaiementsFournisseurs: number;
   earnings: number;
-  paymentMethods?: {
-    espece: number;
+  paymentMethods: {
+    especes: number;
     cheque: number;
     virement: number;
     traite: number;
     autre: number;
+    retenue: number;
   };
-  topProducts?: Array<{
-    id: number;
-    reference: string;
-    nom: string;
-    marque: string;
-    quantite: number;
-    caTTC: number;
-  }>;
-  counts?: {
+  paymentMethodsBySource: {
+    bcPayments: {
+      especes: number;
+      cheque: number;
+      virement: number;
+      traite: number;
+      autre: number;
+    };
+    facturePayments: {
+      especes: number;
+      cheque: number;
+      virement: number;
+      traite: number;
+      autre: number;
+    };
+    ventePayments: {
+      especes: number;
+      cheque: number;
+      virement: number;
+      traite: number;
+      autre: number;
+    };
+  };
+  transactions: Transaction[];
+  counts: {
     ventes: number;
     encaissements: number;
     paiementsFournisseurs: number;
+    factures: number;
+    bonCommandes: number;
+    paiementsBC: number;
+    totalTransactions: number;
   };
 }
 
@@ -40,24 +91,36 @@ const Trésorerie: React.FC = () => {
     totalPaiementsFournisseurs: 0,
     earnings: 0,
     paymentMethods: {
-      espece: 0,
+      especes: 0,
       cheque: 0,
       virement: 0,
       traite: 0,
-      autre: 0
+      autre: 0,
+      retenue: 0
     },
-    topProducts: [],
+    paymentMethodsBySource: {
+      bcPayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 },
+      facturePayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 },
+      ventePayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 }
+    },
+    transactions: [],
     counts: {
       ventes: 0,
       encaissements: 0,
-      paiementsFournisseurs: 0
+      paiementsFournisseurs: 0,
+      factures: 0,
+      bonCommandes: 0,
+      paiementsBC: 0,
+      totalTransactions: 0
     }
   });
   const [loading, setLoading] = useState(true);
   const [startDate, setStartDate] = useState<Date>(moment().startOf('month').toDate());
   const [endDate, setEndDate] = useState<Date>(moment().endOf('month').toDate());
+  const [activeTab, setActiveTab] = useState<'overview' | 'transactions'>('overview');
 
   const fetchTrésorerieData = async () => {
+    debugger
     try {
       setLoading(true);
       const start = moment(startDate).format('YYYY-MM-DD');
@@ -72,11 +135,17 @@ const Trésorerie: React.FC = () => {
         setData({
           ...result.data,
           paymentMethods: result.data.paymentMethods || {
-            espece: 0, cheque: 0, virement: 0, traite: 0, autre: 0
+            especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0, retenue: 0
           },
-          topProducts: result.data.topProducts || [],
-          counts: result.data.counts || {
-            ventes: 0, encaissements: 0, paiementsFournisseurs: 0
+          paymentMethodsBySource: result.data.paymentMethodsBySource || {
+            bcPayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 },
+            facturePayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 },
+            ventePayments: { especes: 0, cheque: 0, virement: 0, traite: 0, autre: 0 }
+          },
+          transactions: result.data.transactions || [],
+          counts: {
+            ...result.data.counts,
+            totalTransactions: (result.data.transactions || []).length
           }
         });
       }
@@ -91,28 +160,154 @@ const Trésorerie: React.FC = () => {
     fetchTrésorerieData();
   }, []);
 
+
+  const { userProfile, loading: profileLoading } = useProfile();
+
+  
+  const companyInfo = useMemo(
+    () => ({
+      name: userProfile?.company_name || "Votre Société",
+      address: userProfile?.company_address || "Adresse",
+      city: userProfile?.company_city || "Ville",
+      phone: userProfile?.company_phone || "Téléphone",
+      email: userProfile?.company_email || "Email",
+      website: userProfile?.company_website || "Site web",
+      taxId: userProfile?.company_tax_id || "MF",
+      logo: logo,
+      gsm: userProfile?.company_gsm,
+    }),
+    [userProfile]
+  );
+
+  // Calculate payment methods by source
+  // Calculate payment methods by source
+const calculatePaymentMethodsBySource = () => {
+  const bcPayments = { especes: 0, cheque: 0, virement: 0, traite: 0, carte: 0, autre: 0, retenue: 0 };
+  const facturePayments = { especes: 0, cheque: 0, virement: 0, traite: 0, carte: 0, autre: 0, retenue: 0 };
+  const ventePayments = { especes: 0, cheque: 0, virement: 0, traite: 0, carte: 0, autre: 0, retenue: 0 };
+
+  data.transactions.forEach(transaction => {
+    const sourcePayments = 
+      transaction.type === 'paiement_bc' || transaction.type === 'bon_commande' ? bcPayments :
+      transaction.type === 'facture_direct' || transaction.type === 'encaissement' ? facturePayments :
+      transaction.type === 'vente_comptoire' ? ventePayments : null;
+
+    if (sourcePayments) {
+      transaction.paymentMethods.forEach(payment => {
+        let method = payment.method.toLowerCase();
+        // Normalize TPE/Carte methods
+        if (method.includes('tpe') || method.includes('carte') || method.includes('cb')) {
+          method = 'carte';
+        }
+        const methodKey = method as keyof typeof sourcePayments;
+        if (sourcePayments[methodKey] !== undefined) {
+          sourcePayments[methodKey] += Number(payment.amount || 0);
+        }
+      });
+    }
+  });
+
+  return { bcPayments, facturePayments, ventePayments };
+};
+
+  const { bcPayments, facturePayments, ventePayments } = calculatePaymentMethodsBySource();
+
+  // Calculate totals by type for main cards
+  const calculateTotals = () => {
+    let totalEncaissementFacture = 0;
+    let totalEncaissementBC = 0;
+    let totalVentesComptoire = 0;
+
+    data.transactions.forEach(transaction => {
+      switch (transaction.type) {
+        case 'facture_direct':
+        case 'encaissement':
+          totalEncaissementFacture += transaction.montant;
+          break;
+        case 'paiement_bc':
+        case 'bon_commande':
+          totalEncaissementBC += transaction.montant;
+          break;
+        case 'vente_comptoire':
+          totalVentesComptoire += transaction.montant;
+          break;
+      }
+    });
+
+    return {
+      totalEncaissementFacture,
+      totalEncaissementBC,
+      totalVentesComptoire
+    };
+  };
+
+  const { totalEncaissementFacture, totalEncaissementBC, totalVentesComptoire } = calculateTotals();
+
+  const getTransactionTypeBadge = (type: string) => {
+    const types = {
+      facture_direct: { color: 'success', label: 'Facture Direct' },
+      encaissement: { color: 'info', label: 'Encaissement' },
+      paiement_bc: { color: 'primary', label: 'Paiement BC' },
+      bon_commande: { color: 'warning', label: 'BC Direct' },
+      vente_comptoire: { color: 'secondary', label: 'Vente Comptoire' }
+    };
+    const typeInfo = types[type as keyof typeof types] || { color: 'secondary', label: type };
+    return <Badge color={typeInfo.color}>{typeInfo.label}</Badge>;
+  };
+
+  const getPaymentMethodBadge = (method: string) => {
+    const methods = {
+      especes: { color: 'success', label: 'Espèces' },
+      cheque: { color: 'primary', label: 'Chèque' },
+      virement: { color: 'info', label: 'Virement' },
+      traite: { color: 'warning', label: 'Traite' },
+      retenue: { color: 'danger', label: 'Retenue' },
+      autre: { color: 'secondary', label: 'Autre' },
+      carte: { color: 'info', label: 'Carte' },
+      tpe: { color: 'info', label: 'TPE' },
+      cb: { color: 'info', label: 'CB' }
+    };
+    const methodKey = method.toLowerCase() as keyof typeof methods;
+    const methodInfo = methods[methodKey] || { color: 'secondary', label: method };
+    return <Badge color={methodInfo.color} className="me-1">{methodInfo.label}</Badge>;
+  };
+
   const widgetsData = [
     {
-      label: "Total Ventes",
-      counter: data.totalVentes,
+      label: "Encaissements Facture Client",
+      counter: totalEncaissementFacture,
+      suffix: " DT",
+      decimals: 3,
+      icon: "ri-file-text-line",
+      cardColor: "success",
+      badgeClass: "success",
+      percentage: "+12.5",
+      link: `${data.counts?.encaissements + data.counts?.factures || 0} Transactions`,
+      description: "Factures directes + Encaissements"
+    },
+    {
+      label: "Encaissements BC Client",
+      counter: totalEncaissementBC,
       suffix: " DT",
       decimals: 3,
       icon: "ri-shopping-bag-line",
       cardColor: "primary",
       badgeClass: "success",
-      percentage: "+12.5",
-      link: `${data.counts?.ventes || 0} Commandes`
+      percentage: "+8.3",
+      link: `${data.counts?.paiementsBC + data.counts?.bonCommandes || 0} Transactions`,
+      description: "BC directes + Paiements BC"
     },
     {
-      label: "Encaissements Clients",
-      counter: data.totalPaiementsClients,
+      label: "Ventes Comptoire",
+      counter: totalVentesComptoire,
       suffix: " DT",
       decimals: 3,
-      icon: "ri-money-dollar-circle-line",
-      cardColor: "success",
+      icon: "ri-store-2-line",
+      cardColor: "info",
       badgeClass: "success",
-      percentage: "+8.3",
-      link: `${data.counts?.encaissements || 0} Paiements`
+      percentage: "+15.2",
+      link: `${data.counts?.ventes || 0} Ventes`,
+      description: "Ventes au comptoire"
     },
     {
       label: "Paiements Fournisseurs",
@@ -123,7 +318,8 @@ const Trésorerie: React.FC = () => {
       cardColor: "warning",
       badgeClass: "danger",
       percentage: "+15.2",
-      link: `${data.counts?.paiementsFournisseurs || 0} Paiements`
+      link: `${data.counts?.paiementsFournisseurs || 0} Paiements`,
+      description: "Sorties de trésorerie"
     },
     {
       label: "Trésorerie Nette",
@@ -132,59 +328,56 @@ const Trésorerie: React.FC = () => {
       suffix: " DT",
       decimals: 3,
       icon: data.earnings >= 0 ? "ri-arrow-up-line" : "ri-arrow-down-line",
-      cardColor: data.earnings >= 0 ? "info" : "danger",
+      cardColor: data.earnings >= 0 ? "dark" : "danger",
       badgeClass: data.earnings >= 0 ? "success" : "danger",
       percentage: data.earnings >= 0 ? "+5.7" : "-3.2",
-      link: data.earnings >= 0 ? "Excédent" : "Déficit"
+      link: data.earnings >= 0 ? "Excédent" : "Déficit",
+      description: "Solde net de trésorerie"
     }
   ];
 
-  const paymentMethodData = [
-    { 
-      label: "Espèces", 
-      counter: data.paymentMethods?.espece || 0, 
-      icon: "ri-money-dollar-box-line", 
-      color: "success",
-      description: "Paiements en espèces"
-    },
-    { 
-      label: "Chèques", 
-      counter: data.paymentMethods?.cheque || 0, 
-      icon: "ri-bank-card-line", 
-      color: "primary",
-      description: "Paiements par chèque"
-    },
-    { 
-      label: "Virements", 
-      counter: data.paymentMethods?.virement || 0, 
-      icon: "ri-exchange-dollar-line", 
-      color: "info",
-      description: "Paiements par virement"
-    },
-    { 
-      label: "Traites", 
-      counter: data.paymentMethods?.traite || 0, 
-      icon: "ri-file-text-line", 
-      color: "warning",
-      description: "Paiements par traite"
-    },
-    { 
-      label: "Autres", 
-      counter: data.paymentMethods?.autre || 0, 
-      icon: "ri-more-line", 
-      color: "secondary",
-      description: "Autres modes de paiement"
-    }
-  ].map(method => ({
-    ...method,
-    percentage: data.totalPaiementsClients > 0 ? 
-      ((method.counter / data.totalPaiementsClients) * 100).toFixed(1) : "0.0"
-  }));
+  // Payment methods by source
+// Payment methods by source
+const paymentMethodsBySource = [
+  {
+    title: "BC Client",
+    description: "Méthodes de paiement pour les BC (direct + paiements BC)",
+    methods: [
+      { label: "Espèces", value: bcPayments.especes, color: "success", icon: "ri-money-dollar-box-line" },
+      { label: "Chèques", value: bcPayments.cheque, color: "primary", icon: "ri-bank-card-line" },
+      { label: "Virements", value: bcPayments.virement, color: "info", icon: "ri-exchange-dollar-line" },
+      { label: "Traites", value: bcPayments.traite, color: "warning", icon: "ri-file-text-line" },
+      { label: "Cartes Bancaire TPE", value: bcPayments.carte, color: "info", icon: "ri-bank-card-2-line" },
+    ]
+  },
+  {
+    title: "Facture Client",
+    description: "Méthodes de paiement pour les factures (direct + encaissements)",
+    methods: [
+      { label: "Espèces", value: facturePayments.especes, color: "success", icon: "ri-money-dollar-box-line" },
+      { label: "Chèques", value: facturePayments.cheque, color: "primary", icon: "ri-bank-card-line" },
+      { label: "Virements", value: facturePayments.virement, color: "info", icon: "ri-exchange-dollar-line" },
+      { label: "Traites", value: facturePayments.traite, color: "warning", icon: "ri-file-text-line" },
+      { label: "Cartes Bancaire TPE", value: facturePayments.carte, color: "info", icon: "ri-bank-card-2-line" },
+    ]
+  },
+  {
+    title: "Vente Comptoire",
+    description: "Méthodes de paiement pour les ventes au comptoire",
+    methods: [
+      { label: "Espèces", value: ventePayments.especes, color: "success", icon: "ri-money-dollar-box-line" },
+      { label: "Chèques", value: ventePayments.cheque, color: "primary", icon: "ri-bank-card-line" },
+      { label: "Virements", value: ventePayments.virement, color: "info", icon: "ri-exchange-dollar-line" },
+      { label: "Traites", value: ventePayments.traite, color: "warning", icon: "ri-file-text-line" },
+      { label: "Cartes Bancaire TPE", value: ventePayments.carte, color: "info", icon: "ri-bank-card-2-line" },
+    ]
+  }
+];
 
   return (
     <div className="page-content">
       <Container fluid>
-        {/* Header Section - Moved Up */}
+        {/* Header Section */}
         <Row className="mb-2">
           <Col xs={12}>
             <div className="d-flex align-items-lg-center flex-lg-row flex-column">
@@ -217,147 +410,291 @@ const Trésorerie: React.FC = () => {
           </Col>
         </Row>
 
-        {/* Main Widgets - Moved Closer to Header */}
+
+<Row className="mb-3">
+  <Col xs={12}>
+    <div className="d-flex justify-content-end">
+    <PDFDownloadLink
+  document={<TrésoreriePDF data={data} companyInfo={companyInfo} dateRange={{ startDate, endDate }} />}
+  fileName={`paiements-clients-${moment().format("YYYY-MM-DD")}.pdf`}
+>
+  {({ loading }) => (
+    <Button color="success" disabled={loading}>
+      <i className="ri-file-pdf-line me-2"></i>
+      {loading ? "Génération..." : "Télécharger PDF"}
+    </Button>
+  )}
+</PDFDownloadLink>
+    </div>
+  </Col>
+</Row>
+
+        {/* Tabs Navigation */}
         <Row className="mb-3">
-          {widgetsData.map((item, key) => (
-            <Col xl={3} md={6} key={key} className="mb-3">
-              <Card className={"card-animate bg-" + item.cardColor}>
+          <Col xs={12}>
+            <div className="d-flex border-bottom">
+              <Button
+                color="light"
+                className={`border-0 me-2 ${activeTab === 'overview' ? 'bg-primary text-white' : ''}`}
+                onClick={() => setActiveTab('overview')}
+              >
+                <i className="ri-dashboard-line me-1"></i> Vue d'ensemble
+              </Button>
+              <Button
+                color="light"
+                className={`border-0 ${activeTab === 'transactions' ? 'bg-primary text-white' : ''}`}
+                onClick={() => setActiveTab('transactions')}
+              >
+                <i className="ri-list-check-2 me-1"></i> Transactions ({data.transactions.length})
+              </Button>
+            </div>
+          </Col>
+        </Row>
+
+        {activeTab === 'overview' ? (
+          <>
+            {/* Main Widgets */}
+            <Row className="mb-3">
+              {widgetsData.map((item, key) => (
+                <Col xl={3} md={6} key={key} className="mb-3">
+                  <Card className={"card-animate bg-" + item.cardColor}>
+                    <CardBody>
+                      <div className="d-flex align-items-center">
+                        <div className="flex-grow-1 overflow-hidden">
+                          <p className="text-uppercase fw-bold text-white-50 text-truncate mb-0">{item.label}</p>
+                          <small className="text-white-50">{item.description}</small>
+                        </div>
+                        <div className="flex-shrink-0">
+                          <h5 className={"fs-14 mb-0 text-" + item.badgeClass}>
+                            <i className={"fs-13 align-middle " + (item.percentage.startsWith('+') ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line")}></i> 
+                            {item.percentage} %
+                          </h5>
+                        </div>
+                      </div>
+                      <div className="d-flex align-items-end justify-content-between mt-4">
+                        <div>
+                          <h4 className="fs-22 fw-bold ff-secondary mb-2 text-white">
+                            {loading ? "Chargement..." : (
+                              <CountUp start={0} prefix={item.prefix} suffix={item.suffix} separator={","}
+                                end={Math.abs(item.counter)} decimals={item.decimals} duration={2} />
+                            )}
+                          </h4>
+                          <a href="#" className="text-decoration-underline text-white-50">{item.link}</a>
+                        </div>
+                        <div className="avatar-sm flex-shrink-0">
+                          <span className="avatar-title rounded fs-3 bg-white bg-opacity-10">
+                            <i className={`text-white ${item.icon}`}></i>
+                          </span>
+                        </div>
+                      </div>
+                    </CardBody>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+
+            {/* Payment Methods by Source */}
+            <Row className="mb-3">
+              {paymentMethodsBySource.map((source, index) => (
+                <Col xl={4} md={6} key={index} className="mb-3">
+                  <Card>
+                    <CardBody>
+                      <h5 className="card-title mb-3">{source.title}</h5>
+                      <p className="text-muted mb-3 fs-12">{source.description}</p>
+                      <div className="payment-methods-list">
+                        {source.methods.map((method, methodIndex) => (
+                          <div key={methodIndex} className="d-flex align-items-center justify-content-between mb-3 p-2 border rounded">
+                            <div className="d-flex align-items-center">
+                              <div className={`avatar-xs me-3 bg-${method.color}-subtle`}>
+                                <i className={`fs-5 text-${method.color} ${method.icon}`}></i>
+                              </div>
+                              <div>
+                                <h6 className="mb-0 fs-14">{method.label}</h6>
+                              </div>
+                            </div>
+                            <div className="text-end">
+                              <h6 className="mb-0 text-primary fw-bold">
+                                <CountUp 
+                                  start={0} 
+                                  suffix=" DT" 
+                                  separator={","} 
+                                  end={method.value} 
+                                  decimals={3} 
+                                  duration={2} 
+                                />
+                              </h6>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardBody>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+
+            {/* Retenue Information */}
+            <Row>
+              <Col xs={12}>
+                <Card>
+                  <CardBody className="p-3">
+                    <h4 className="card-title mb-3">Informations Retenue</h4>
+                    <div className="row text-center">
+                      <div className="col-md-4">
+                        <div className="border-end">
+                          <h4 className="text-danger fw-bold">
+                            <CountUp 
+                              start={0} 
+                              suffix=" DT" 
+                              separator={","} 
+                              end={data.paymentMethods?.retenue || 0} 
+                              decimals={3} 
+                              duration={2} 
+                            />
+                          </h4>
+                          <p className="text-muted mb-0">Total Retenue</p>
+                          <small className="text-muted">Montants retenus sur factures et BC</small>
+                        </div>
+                      </div>
+                      <div className="col-md-4">
+                        <div className="border-end">
+                          <h4 className="text-warning fw-bold">
+                            {data.transactions.filter(t => t.hasRetenue && t.montantRetenue).length}
+                          </h4>
+                          <p className="text-muted mb-0">Documents avec Retenue</p>
+                          <small className="text-muted">Factures et BC avec retenue appliquée</small>
+                        </div>
+                      </div>
+                      <div className="col-md-4">
+                        <div>
+                          <h4 className="text-info fw-bold">
+                            {data.transactions.filter(t => t.paymentMethods.some(p => p.method === 'retenue')).length}
+                          </h4>
+                          <p className="text-muted mb-0">Paiements avec Retenue</p>
+                          <small className="text-muted">Paiements incluant retenue comme méthode</small>
+                        </div>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+              </Col>
+            </Row>
+          </>
+        ) : (
+          /* Transactions Tab */
+          <Row>
+            <Col xs={12}>
+              <Card>
                 <CardBody>
-                  <div className="d-flex align-items-center">
-                    <div className="flex-grow-1 overflow-hidden">
-                      <p className="text-uppercase fw-bold text-white-50 text-truncate mb-0">{item.label}</p>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <h5 className={"fs-14 mb-0 text-" + item.badgeClass}>
-                        <i className={"fs-13 align-middle " + (item.percentage.startsWith('+') ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line")}></i> 
-                        {item.percentage} %
-                      </h5>
-                    </div>
-                  </div>
-                  <div className="d-flex align-items-end justify-content-between mt-4">
-                    <div>
-                      <h4 className="fs-22 fw-bold ff-secondary mb-4 text-white">
-                        {loading ? "Chargement..." : (
-                          <CountUp start={0} prefix={item.prefix} suffix={item.suffix} separator={","}
-                            end={Math.abs(item.counter)} decimals={item.decimals} duration={2} />
+                  <h4 className="card-title mb-3">Détail des Transactions</h4>
+                  <div className="table-responsive">
+                    <Table hover className="mb-0">
+                      <thead className="table-light">
+                        <tr>
+                          <th>Date</th>
+                          <th>Type</th>
+                          <th>Numéro</th>
+                          <th>Client</th>
+                          <th>Source</th>
+                          <th>Méthodes de Paiement</th>
+                          <th className="text-end">Montant</th>
+                          <th>Retenue</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.transactions.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="text-center text-muted py-4">
+                              Aucune transaction trouvée pour la période sélectionnée
+                            </td>
+                          </tr>
+                        ) : (
+                          data.transactions.map((transaction, index) => (
+                            <tr key={index}>
+                              <td>{moment(transaction.date).format('DD/MM/YYYY')}</td>
+                              <td>{getTransactionTypeBadge(transaction.type)}</td>
+                              <td>
+                                <strong>{transaction.numero}</strong>
+                              </td>
+                              <td>{transaction.client.name}</td>
+                              <td>
+                                <small className="text-muted">{transaction.source || 'Direct'}</small>
+                              </td>
+                              <td>
+                                <div className="d-flex flex-wrap gap-1">
+                                  {transaction.paymentMethods.map((payment, pIndex) => (
+                                    <div key={pIndex}>
+                                      {getPaymentMethodBadge(payment.method)}
+                                      {payment.tauxRetention && (
+                                        <Badge color="light" className="ms-1">
+                                          {payment.tauxRetention}%
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="text-end fw-bold">
+                                <CountUp 
+                                  start={0} 
+                                  suffix=" DT" 
+                                  separator={","} 
+                                  end={transaction.montant} 
+                                  decimals={3} 
+                                  duration={1} 
+                                />
+                              </td>
+                              <td>
+                                {transaction.hasRetenue && transaction.montantRetenue ? (
+                                  <Badge color="danger">
+                                    Retenue: <CountUp 
+                                      start={0} 
+                                      suffix=" DT" 
+                                      separator={","} 
+                                      end={transaction.montantRetenue} 
+                                      decimals={3} 
+                                      duration={1} 
+                                    />
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))
                         )}
-                      </h4>
-                      <a href="#" className="text-decoration-underline text-white-50">{item.link}</a>
-                    </div>
-                    <div className="avatar-sm flex-shrink-0">
-                      <span className="avatar-title rounded fs-3 bg-white bg-opacity-10">
-                        <i className={`text-white ${item.icon}`}></i>
-                      </span>
-                    </div>
+                      </tbody>
+                    </Table>
                   </div>
                 </CardBody>
               </Card>
             </Col>
-          ))}
-        </Row>
-
-        {/* Payment Methods Section - Moved Up */}
-        <Row>
-          <Col xl={12}>
-            <Card>
-              <CardBody className="p-3">
-                <h4 className="card-title mb-3">Répartition des Modes de Paiement</h4>
-                <div className="payment-methods-grid">
-                  {paymentMethodData.map((method, index) => (
-                    <Card key={index} className="payment-method-card border-0 shadow-sm">
-                      <CardBody className="text-center p-3">
-                        {/* Icon without background color */}
-                        <div className="payment-icon mb-3">
-                          <i className={`fs-2 text-${method.color} ${method.icon}`}></i>
-                        </div>
-                        <h5 className="fs-14 mb-2 fw-semibold">{method.label}</h5>
-                        <p className="text-muted mb-2 fs-12">{method.description}</p>
-                        <h4 className="text-primary mb-2 fw-bold">
-                          <CountUp 
-                            start={0} 
-                            suffix=" DT" 
-                            separator={","} 
-                            end={method.counter} 
-                            decimals={3} 
-                            duration={2} 
-                          />
-                        </h4>
-                        <div className="progress mt-3" style={{ height: '6px' }}>
-                          <div 
-                            className={`progress-bar bg-${method.color}`}
-                            role="progressbar" 
-                            style={{ width: `${method.percentage}%` }}
-                            aria-valuenow={parseFloat(method.percentage)}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                          ></div>
-                        </div>
-                        <span className="text-muted fs-11 mt-2 d-block">
-                          {method.percentage}% du total
-                        </span>
-                      </CardBody>
-                    </Card>
-                  ))}
-                </div>
-              </CardBody>
-            </Card>
-          </Col>
-        </Row>
+          </Row>
+        )}
 
         <style>{`
-          .payment-methods-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
+          .payment-methods-list .border {
+            border-color: #e9ecef !important;
+            transition: all 0.2s ease;
           }
           
-          .payment-method-card {
-            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-            border-radius: 12px;
-            
+          .payment-methods-list .border:hover {
+            border-color: #0d6efd !important;
+            background-color: #f8f9fa;
           }
           
-          .payment-method-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1) !important;
-          }
-          
-          .payment-icon {
-            display: inline-flex;
+          .avatar-xs {
+            width: 32px;
+            height: 32px;
+            display: flex;
             align-items: center;
             justify-content: center;
-            width: 50px;
-            height: 50px;
-          }
-          
-          .payment-icon i {
-            font-size: 1.8rem !important;
-          }
-          
-          @media (max-width: 768px) {
-            .payment-methods-grid {
-              grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-              gap: 0.75rem;
-            }
-            
-            .payment-icon {
-              width: 45px;
-              height: 45px;
-            }
-            
-            .payment-icon i {
-              font-size: 1.5rem !important;
-            }
-          }
-          
-          @media (max-width: 576px) {
-            .payment-methods-grid {
-              grid-template-columns: repeat(2, 1fr);
-              gap: 0.5rem;
-            }
+            border-radius: 8px;
           }
         `}</style>
       </Container>
+
+      
     </div>
   );
 };

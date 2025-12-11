@@ -55,7 +55,7 @@ import {
 } from "../../../Components/Article/ArticleServices";
 import {
   createBonLivraison,
-  fetchNextLivraisonNumber,
+  fetchNextLivraisonNumberAPI,
 } from "../../../Components/CommandeClient/BonLivraisonServices";
 import {
   Article,
@@ -129,7 +129,8 @@ const BonCommandeClientList = () => {
   const [showRetention, setShowRetention] = useState(false);
   const [retentionRate, setRetentionRate] = useState<number>(1); // Default %
   const [retentionAmount, setRetentionAmount] = useState<number>(0);
-
+// Add this near your other state declarations
+const [timbreFiscal, setTimbreFiscal] = useState<boolean>(false); 
   // Ajouter ces états près des autres états du composant
   // Remplacer le type des méthodes de règlement
   // REPLACE the current methodesReglement state:
@@ -148,6 +149,10 @@ const BonCommandeClientList = () => {
   const [showPaymentMethods, setShowPaymentMethods] = useState(false);
 
   const [espaceNotes, setEspaceNotes] = useState("");
+
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
 
   // Add these state variables near your existing states
   const [clientModal, setClientModal] = useState(false);
@@ -506,6 +511,7 @@ const getSafeNumber = (value: any): number => {
           }
         )
       // In the paiementValidation schema, update the max-reste test:
+// In paiementValidation schema, update the max-reste test:
 .test(
   "max-reste",
   "Le montant ne peut pas dépasser le reste à payer après retenue",
@@ -598,7 +604,7 @@ useEffect(() => {
 
   const fetchNextLivraison = useCallback(async () => {
     try {
-      const numero = await fetchNextLivraisonNumber();
+      const numero = await fetchNextLivraisonNumberAPI();
       setNextNumeroLivraison(numero);
     } catch (err) {
       toast.error("Échec de la récupération du numéro de commande");
@@ -1016,15 +1022,6 @@ useEffect(() => {
     discountAmount,
     retentionMontant,
     netAPayer,
-  }: {
-    sousTotalHT: number;
-    netHT: number;
-    totalTax: number;
-    grandTotal: number;
-    finalTotal: number;
-    discountAmount: number;
-    retentionMontant: number;
-    netAPayer: number;
   } = useMemo(() => {
     if (selectedArticles.length === 0) {
       return {
@@ -1130,6 +1127,11 @@ useEffect(() => {
       }
     }
   
+    // Add timbre fiscal if enabled
+    if (timbreFiscal) {
+      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+    }
+  
     // Use discounted values for final display
     const displayNetHT =
       showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
@@ -1171,6 +1173,7 @@ useEffect(() => {
     editingHT,
     editingTTC,
     methodesReglement,
+    timbreFiscal, // Add timbreFiscal to dependencies
   ]);
 
   const handleDelete = async () => {
@@ -1535,6 +1538,11 @@ const handleSubmit = async (values: any) => {
         totalTVA: totalTaxValue,
         totalTTC: finalTotalValue,
         totalTTCAfterRemise: finalTotalValue,
+        cin :"",
+        voiture:"",
+        chauffeur:"",
+        serie:""
+        
       };
 
       await createBonLivraison(livraisonData);
@@ -1641,9 +1649,63 @@ const handleSubmit = async (values: any) => {
     onSubmit: handleSubmit,
   });
 
+  // Add this useEffect after your other effects
+useEffect(() => {
+  // Scroll to focused item
+  if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+    const item = itemRefs[focusedIndex].current;
+    const dropdown = dropdownRef;
+    
+    if (item && dropdown) {
+      const itemTop = item.offsetTop;
+      const itemBottom = itemTop + item.offsetHeight;
+      const dropdownTop = dropdown.scrollTop;
+      const dropdownBottom = dropdownTop + dropdown.clientHeight;
+      
+      if (itemTop < dropdownTop) {
+        dropdown.scrollTop = itemTop;
+      } else if (itemBottom > dropdownBottom) {
+        dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+      }
+    }
+  }
+}, [focusedIndex, dropdownRef, itemRefs]);
+
+
+// Add this effect to handle click outside
+useEffect(() => {
+  const handleClickOutside = (e: MouseEvent) => {
+    if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+    }
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside);
+  };
+}, [dropdownRef]);
+
+// Add this effect to handle click outside
+useEffect(() => {
+  const handleClickOutside = (e: MouseEvent) => {
+    if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+    }
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside);
+  };
+}, [dropdownRef]);
+
   // In the toggleModal function, REPLACE the payment methods reset:
   const toggleModal = useCallback(() => {
     if (modal) {
+      // Modal is closing
       setModal(false);
       setBonCommande(null);
       setSelectedArticles([]);
@@ -1653,16 +1715,50 @@ const handleSubmit = async (values: any) => {
       setShowRemise(false);
       setIsCreatingLivraison(false);
       setNewDeliveryQuantities({});
-
+      setTimbreFiscal(false); // Add this
+  
       // Reset payment methods to empty array
       setMethodesReglement([]);
       setEspaceNotes("");
-
+      
+      // Clear search and editing states
+      setArticleSearch("");
+      setClientSearch("");
+      setFilteredArticles([]);
+      setFilteredClients([]);
+      setEditingHT({});
+      setEditingTTC({});
+      
+      // Reset validation form
       validation.resetForm();
+      
+      // Clear any retention states
+      setRetentionAmount(0);
+      setShowRetention(false);
+      
     } else {
+      // Modal is opening - Reset everything first
+      setSelectedArticles([]);
+      setSelectedClient(null);
+      setGlobalRemise(0);
+      setRemiseType("percentage");
+      setShowRemise(false);
+      setTimbreFiscal(false);
+      setMethodesReglement([]);
+      setEspaceNotes("");
+      setArticleSearch("");
+      setClientSearch("");
+      setFilteredArticles([]);
+      setFilteredClients([]);
+      setEditingHT({});
+      setEditingTTC({});
+      setRetentionAmount(0);
+      setShowRetention(false);
+      
+      // Reset validation with fresh values      
       setModal(true);
     }
-  }, [modal]);
+  }, [modal, nextNumeroCommande]);
 
   const handleAddArticle = (articleId: string) => {
     const article = articles.find((a) => a.id === parseInt(articleId));
@@ -1706,17 +1802,17 @@ const handleSubmit = async (values: any) => {
       prevArticles.map((item) => {
         if (item.article_id === articleId) {
           const updatedItem = { ...item, [field]: value };
-
+  
           // If quantite changes, update quantiteLivree if it exceeds new quantite
           if (field === "quantite") {
             const newQuantite = value === "" ? 0 : Number(value);
             const currentQuantiteLivree = Number(item.quantiteLivree) || 0;
-
+  
             if (currentQuantiteLivree > newQuantite) {
               updatedItem.quantiteLivree = newQuantite;
             }
           }
-
+  
           // If quantiteLivree changes, ensure it doesn't exceed quantite
           if (field === "quantiteLivree") {
             const quantiteCommandee = Number(item.quantite) || 0;
@@ -1726,45 +1822,59 @@ const handleSubmit = async (values: any) => {
                 : Math.max(0, Math.min(Number(value), quantiteCommandee));
             updatedItem.quantiteLivree = newQuantiteLivree;
           }
-
+  
           // Recalculate TTC when HT changes
           if (field === "prixUnitaire") {
-            const currentHT = value;
+            const currentHT = Number(value) || 0;
             const currentTVA = item.tva || 0;
-
-            let newPriceTTC = Number(currentHT);
-            if (currentTVA > 0) {
-              newPriceTTC = Number(currentHT) * (1 + currentTVA / 100);
-            }
-
-            updatedItem.prixTTC = Math.round(newPriceTTC * 1000) / 1000;
-          }
-
-          // Recalculate HT when TTC changes
-          if (field === "prixTTC") {
-            const currentTTC = value;
-            const currentTVA = item.tva || 0;
-
-            let newPriceHT = Number(currentTTC);
-            if (currentTVA > 0) {
-              newPriceHT = Number(currentTTC) / (1 + currentTVA / 100);
-            }
-
-            updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
-          }
-
-          // Recalculate both when TVA changes
-          if (field === "tva") {
-            const currentTVA = value === "" ? 0 : Number(value);
-            const currentHT = item.prixUnitaire;
-
+  
             let newPriceTTC = currentHT;
             if (currentTVA > 0) {
               newPriceTTC = currentHT * (1 + currentTVA / 100);
             }
-
+  
             updatedItem.prixTTC = Math.round(newPriceTTC * 1000) / 1000;
-
+            
+            // Clear TTC editing state
+            setEditingTTC((prev) => {
+              const newState = { ...prev };
+              delete newState[articleId];
+              return newState;
+            });
+          }
+  
+          // Recalculate HT when TTC changes
+          if (field === "prixTTC") {
+            const currentTTC = Number(value) || 0;
+            const currentTVA = item.tva || 0;
+  
+            let newPriceHT = currentTTC;
+            if (currentTVA > 0) {
+              newPriceHT = currentTTC / (1 + currentTVA / 100);
+            }
+  
+            updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
+            
+            // Clear HT editing state
+            setEditingHT((prev) => {
+              const newState = { ...prev };
+              delete newState[articleId];
+              return newState;
+            });
+          }
+  
+          // Recalculate both when TVA changes
+          if (field === "tva") {
+            const currentTVA = value === "" ? 0 : Number(value);
+            const currentHT = item.prixUnitaire;
+  
+            let newPriceTTC = currentHT;
+            if (currentTVA > 0) {
+              newPriceTTC = currentHT * (1 + currentTVA / 100);
+            }
+  
+            updatedItem.prixTTC = Math.round(newPriceTTC * 1000) / 1000;
+  
             // Clear editing states
             setEditingHT((prev) => {
               const newState = { ...prev };
@@ -1777,25 +1887,12 @@ const handleSubmit = async (values: any) => {
               return newState;
             });
           }
-
+  
           return updatedItem;
         }
         return item;
       })
     );
-
-    if (field === "tva") {
-      setEditingHT((prev) => {
-        const newState = { ...prev };
-        delete newState[articleId];
-        return newState;
-      });
-      setEditingTTC((prev) => {
-        const newState = { ...prev };
-        delete newState[articleId];
-        return newState;
-      });
-    }
   };
 
   const StatusBadge = ({
@@ -3454,7 +3551,10 @@ const handleSubmit = async (values: any) => {
                   className="invoice-modal"
                   style={{ maxWidth: "1200px" }}
                 >
-                  <ModalHeader toggle={toggleModal} className="border-0 pb-3">
+                  <ModalHeader  toggle={() => {
+    toggleModal();
+    // Additional cleanup if needed
+  }}  className="border-0 pb-3">
                     <div className="d-flex align-items-center">
                       <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
                         <i className="ri-file-list-3-line text-primary fs-4"></i>
@@ -3945,116 +4045,169 @@ const handleSubmit = async (values: any) => {
                             <Label className="form-label-lg fw-semibold">
                               Rechercher Article
                             </Label>
-                            <div className="search-box position-relative">
-                              <Input
-                                type="text"
-                                placeholder="Rechercher article..."
-                                value={articleSearch}
-                                onChange={(e) =>
-                                  setArticleSearch(e.target.value)
-                                }
-                                className="form-control-lg ps-5 pe-5"
-                              />
-                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
-                              <button
-                                type="button"
-                                className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                onClick={() => setArticleModal(true)}
-                                title="Ajouter un nouvel article"
-                              >
-                                <i className="ri-add-line fs-5"></i>
-                              </button>
-                            </div>
+{/* Update the article search input */}
+<div className="search-box position-relative">
+  <Input
+    type="text"
+    placeholder="Rechercher article..."
+    value={articleSearch}
+    onChange={(e) => {
+      setArticleSearch(e.target.value);
+      setFocusedIndex(-1); // Reset focus when typing
+    }}
+    onKeyDown={(e) => {
+      if (filteredArticles.length > 0) {
+        // Handle arrow down
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setFocusedIndex(prev => 
+            prev < filteredArticles.length - 1 ? prev + 1 : 0
+          );
+        }
+        // Handle arrow up
+        else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setFocusedIndex(prev => 
+            prev > 0 ? prev - 1 : filteredArticles.length - 1
+          );
+        }
+        // Handle Enter to select focused item
+        else if (e.key === 'Enter' && focusedIndex >= 0) {
+          e.preventDefault();
+          const article = filteredArticles[focusedIndex];
+          handleAddArticle(article.id.toString());
+          setArticleSearch("");
+          setFilteredArticles([]);
+          setFocusedIndex(-1);
+        }
+        // Handle Enter to select first item when no focus
+        else if (e.key === 'Enter' && filteredArticles.length > 0 && focusedIndex === -1) {
+          e.preventDefault();
+          const firstArticle = filteredArticles[0];
+          handleAddArticle(firstArticle.id.toString());
+          setArticleSearch("");
+          setFilteredArticles([]);
+          setFocusedIndex(-1);
+        }
+      }
+    }}
+    className="form-control-lg ps-5 pe-5"
+  />
+  <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+  <button
+    type="button"
+    className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+    onClick={() => setArticleModal(true)}
+    title="Ajouter un nouvel article"
+  >
+    <i className="ri-add-line fs-5"></i>
+  </button>
+</div>
 
-                            {/* Article Dropdown Results */}
-                            {articleSearch.length >= 1 && (
-                              <div
-                                className="search-results mt-2 border rounded shadow-sm"
-                                style={{
-                                  maxHeight: "300px",
-                                  overflowY: "auto",
-                                  position: "relative",
-                                  zIndex: 1000,
-                                  backgroundColor: "white",
-                                }}
-                              >
-                                {filteredArticles.length > 0 ? (
-                                  <ul className="list-group list-group-flush">
-                                    {filteredArticles.map((article) => (
-                                      <li
-                                        key={article.id}
-                                        className="list-group-item list-group-item-action"
-                                        onClick={() => {
-                                          handleAddArticle(
-                                            article.id.toString()
-                                          );
-                                          setArticleSearch("");
-                                          setFilteredArticles([]);
-                                        }}
-                                        style={{
-                                          cursor: "pointer",
-                                          padding: "12px 15px",
-                                          opacity: selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          )
-                                            ? 0.6
-                                            : 1,
-                                        }}
-                                      >
-                                        <div className="d-flex justify-content-between align-items-center">
-                                          <div className="flex-grow-1">
-                                            <strong className="d-block">
-                                              {article.designation}
-                                            </strong>
-                                            <small className="text-muted">
-                                              Réf: {article.reference} | Stock:{" "}
-                                              {article.qte} | HT:{" "}
-                                              {(
-                                                Number(article.puv_ht) || 0
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </small>
-                                          </div>
-                                          {selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          ) ? (
-                                            <Badge
-                                              color="secondary"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Ajouté
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-add-line me-1"></i>
-                                              Ajouter
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div className="text-muted p-3 text-center">
-                                    <i className="ri-search-line me-2"></i>
-                                    Aucun article trouvé
-                                  </div>
-                                )}
-                              </div>
-                            )}
+{/* Update the dropdown container to handle scrolling with proper TypeScript */}
+{articleSearch.length >= 1 && (
+  <div
+    ref={setDropdownRef}
+    className="search-results mt-2 border rounded shadow-sm"
+    style={{
+      maxHeight: "400px",
+      overflowY: "auto",
+      overflowX: "hidden",
+      position: "relative",
+      zIndex: 1000,
+      backgroundColor: "white",
+    }}
+    onKeyDown={(e) => e.stopPropagation()} // Prevent key events from bubbling
+  >
+    {filteredArticles.length > 0 ? (
+      <ul className="list-group list-group-flush">
+        {filteredArticles.map((article, index) => {
+          // Create ref for each item if needed
+          const itemRef = React.createRef<HTMLLIElement>();
+          if (!itemRefs[index]) {
+            itemRefs[index] = itemRef;
+          }
+
+          return (
+            <li
+              key={article.id}
+              ref={itemRefs[index]}
+              className={`list-group-item list-group-item-action ${
+                focusedIndex === index ? 'active' : ''
+              }`}
+              onClick={() => {
+                handleAddArticle(article.id.toString());
+                setArticleSearch("");
+                setFilteredArticles([]);
+                setFocusedIndex(-1);
+              }}
+              style={{
+                cursor: "pointer",
+                padding: "12px 15px",
+                opacity: selectedArticles.some(
+                  (item) => item.article_id === article.id
+                )
+                  ? 0.6
+                  : 1,
+                backgroundColor: focusedIndex === index ? '#e7f1ff' : 'transparent',
+                borderLeft: focusedIndex === index ? '4px solid #0d6efd' : 'none',
+              }}
+              onMouseEnter={() => setFocusedIndex(index)} // Highlight on hover
+            >
+              <div className="d-flex justify-content-between align-items-center">
+                <div className="flex-grow-1">
+                  <div className="d-flex align-items-center mb-1">
+                    <strong className="fs-6 me-2 text-primary">
+                      {article.reference}
+                    </strong>
+                    <span className="badge bg-light text-dark me-2">
+                      Stock: {article.qte || 0}
+                    </span>
+                  </div>
+                  <small className="text-muted d-block" style={{ fontSize: "0.85rem" }}>
+                    {article.designation}
+                  </small>
+                  <div className="mt-1">
+                    <span className="badge bg-success text-white">
+                      TTC: {(Number(article.puv_ttc) || 0).toFixed(3)} DT
+                    </span>
+                    {article.tva && article.tva > 0 && (
+                      <span className="badge bg-info ms-1">
+                        TVA: {article.tva}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {selectedArticles.some(
+                  (item) => item.article_id === article.id
+                ) ? (
+                  <Badge color="secondary" className="fs-6">
+                    <i className="ri-check-line me-1"></i>
+                    Ajouté
+                  </Badge>
+                ) : (
+                  <Badge color="success" className="fs-6">
+                    <i className="ri-add-line me-1"></i>
+                    Ajouter
+                  </Badge>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    ) : (
+      <div className="text-muted p-3 text-center">
+        <i className="ri-search-line me-2"></i>
+        Aucun article trouvé
+      </div>
+    )}
+  </div>
+)}
+
+ 
                           </div>
 
-                          {/* Articles Table */}
-
-                          {/* Articles Table */}
-                          {/* Articles Table */}
-                          {/* Articles Table */}
                           {selectedArticles.length > 0 && (
                             <div className="articles-table">
                               <div
@@ -5167,28 +5320,33 @@ const handleSubmit = async (values: any) => {
         </div>
       )}
       
-      <div className="mb-3 p-2 bg-success bg-opacity-10 rounded">
-        <small className="text-muted d-block">Reste à payer:</small>
-        <strong className="text-success fs-5">
-          {(() => {
-            if (!selectedBonForPaiement) return "0,000";
-            
-            const totalNet = getSafeNumber(selectedBonForPaiement.totalTTC);
-            const retentionAmount = getSafeNumber(selectedBonForPaiement.montantRetenue);
-            const montantPaye = getSafeNumber(selectedBonForPaiement.montantPaye);
-            
-            const amountAfterRetention = totalNet - retentionAmount;
-            const availableAmount = Math.max(0, amountAfterRetention - montantPaye);
-            
-            return availableAmount.toFixed(3).replace(".", ",");
-          })()} DT
-        </strong>
-      </div>
+<div className="mb-3 p-2 bg-success bg-opacity-10 rounded">
+  <small className="text-muted d-block">Reste à payer:</small>
+  <strong className="text-success fs-5">
+    {(() => {
+      if (!selectedBonForPaiement) return "0,000";
+      
+      // Check if there's remise and use totalTTCAfterRemise, else use totalTTC
+      const hasRemise = selectedBonForPaiement.remise && Number(selectedBonForPaiement.remise) > 0;
+      const baseTotal = hasRemise 
+        ? getSafeNumber(selectedBonForPaiement.totalTTCAfterRemise)
+        : getSafeNumber(selectedBonForPaiement.totalTTC);
+      
+      const retentionAmount = getSafeNumber(selectedBonForPaiement.montantRetenue);
+      const montantPaye = getSafeNumber(selectedBonForPaiement.montantPaye);
+      
+      const amountAfterRetention = baseTotal - retentionAmount;
+      const availableAmount = Math.max(0, amountAfterRetention - montantPaye);
+      
+      return availableAmount.toFixed(3).replace(".", ",");
+    })()} DT
+  </strong>
+</div>
 
       <Row>
         <Col md={6}>
           <div className="mb-3">
-            <Label>Montant payé*</Label>
+            <Label>Montant a payer*</Label>
             <Input
               type="text"
               name="montant"
@@ -5222,6 +5380,7 @@ const handleSubmit = async (values: any) => {
               <option value="Cheque">Chèque</option>
               <option value="Virement">Virement</option>
               <option value="Traite">Traite</option>
+              <option value="tpe">Carte Bancaire "TPE"</option>
               <option value="Autre">Autre</option>
             </Input>
             <FormFeedback>
@@ -5325,6 +5484,7 @@ const handleSubmit = async (values: any) => {
             />
           </div>
         </Col>
+        
       </Row>
       <Row>
         <Col md={12}>

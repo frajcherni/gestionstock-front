@@ -54,8 +54,8 @@ const Login = (props: any) => {
     const validation: any = useFormik({
         enableReinitialize: true,
         initialValues: {
-            username: userLogin.username || "admin" || '',
-            password: userLogin.password || "123456" || '',
+            username: userLogin.username || "" || '',
+            password: userLogin.password || "" || '',
         },
         validationSchema: Yup.object({
             username: Yup.string().required("Please Enter Your Username"),

@@ -23,7 +23,8 @@ export interface Client {
     website_description?: string;
     website_images?: string[];
     website_order?: number;
-    
+    code_barre: string; // AJOUTER CETTE LIGNE
+
     remise: number;
   id: number;
   categorie?: Categorie;
@@ -41,7 +42,7 @@ export interface Client {
   fournisseur: Fournisseur;
     type: 'Consigné' | 'Non Consigné';
     tva?: number; // Add this if missing
-    pua_ht?: number; // Add this if missing
+    pua_ht: number; // Add this if missing
 
 }
 
@@ -180,12 +181,12 @@ export interface BonLivraison {
     articles: BonLivraisonArticle[];
     createdAt?: string;
     updatedAt?: string;
-    livraisonInfo?: {
+  
       voiture: string;
       serie: string;
       chauffeur: string;
       cin: string;
-    };
+    
 }
 
 export interface Vendeur {
