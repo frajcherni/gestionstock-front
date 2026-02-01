@@ -1,13 +1,14 @@
-import { Card, CardBody, Col, Row, Container, Label, Button, Table, Badge } from 'reactstrap';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { PDFDownloadLink, pdf } from '@react-pdf/renderer';  // Ajoutez 'pdf' ici
+import { useProfile } from "Components/Hooks/UserHooks";
+import logo from "../../assets/images/imglogo.png";
+import { Card, CardBody, Col, Row, Container, Label, Button, Table, Badge, Modal, ModalHeader, ModalBody } from 'reactstrap';  // Ajoutez Modal, ModalHeader, ModalBody
 import CountUp from "react-countup";
 import Flatpickr from "react-flatpickr";
 import moment from "moment";
+import TrésoreriePDF from './TrésoreriePDF ';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { PDFDownloadLink } from '@react-pdf/renderer';
-import TrésoreriePDF from './TrésoreriePDF '; // Adjust the path as needed
-import { useProfile } from "Components/Hooks/UserHooks";
-import logo from "../../assets/images/imglogo.png";
 
 const API_BASE = process.env.REACT_APP_API_BASE;
 
@@ -118,6 +119,62 @@ const Trésorerie: React.FC = () => {
   const [startDate, setStartDate] = useState<Date>(moment().startOf('month').toDate());
   const [endDate, setEndDate] = useState<Date>(moment().endOf('month').toDate());
   const [activeTab, setActiveTab] = useState<'overview' | 'transactions'>('overview');
+
+
+  // À la ligne 86, après les autres états, ajoutez :
+const [pdfModal, setPdfModal] = useState(false);
+const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+const [generatingPdf, setGeneratingPdf] = useState(false);
+const iframeRef = useRef<HTMLIFrameElement>(null);
+
+
+// À la ligne 180 (après le useEffect), ajoutez ces fonctions :
+
+// Fonction pour afficher le PDF dans une modal
+const handleViewPdf = async () => {
+  try {
+    setGeneratingPdf(true);
+    
+    // Créer le composant PDF
+    const pdfComponent = <TrésoreriePDF data={data} companyInfo={companyInfo} dateRange={{ startDate, endDate }} />;
+    
+    // Convertir en blob
+    const pdfBlob = await pdf(pdfComponent).toBlob();
+    
+    // Créer une URL pour le blob
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    setPdfUrl(blobUrl);
+    
+    // Ouvrir la modal
+    setPdfModal(true);
+    setGeneratingPdf(false);
+  } catch (error) {
+    console.error('Erreur génération PDF:', error);
+    setGeneratingPdf(false);
+    alert('Erreur lors de la génération du PDF');
+  }
+};
+
+// Fonction pour télécharger le PDF depuis la modal
+const handleDownloadFromModal = () => {
+  if (pdfUrl) {
+    const link = document.createElement('a');
+    link.href = pdfUrl;
+    link.download = `paiements-clients-${moment().format("YYYY-MM-DD")}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
+
+// Nettoyer l'URL du blob
+useEffect(() => {
+  return () => {
+    if (pdfUrl) {
+      URL.revokeObjectURL(pdfUrl);
+    }
+  };
+}, [pdfUrl]);
 
   const fetchTrésorerieData = async () => {
     debugger
@@ -411,20 +468,17 @@ const paymentMethodsBySource = [
         </Row>
 
 
-<Row className="mb-3">
+        <Row className="mb-3">
   <Col xs={12}>
     <div className="d-flex justify-content-end">
-    <PDFDownloadLink
-  document={<TrésoreriePDF data={data} companyInfo={companyInfo} dateRange={{ startDate, endDate }} />}
-  fileName={`paiements-clients-${moment().format("YYYY-MM-DD")}.pdf`}
->
-  {({ loading }) => (
-    <Button color="success" disabled={loading}>
-      <i className="ri-file-pdf-line me-2"></i>
-      {loading ? "Génération..." : "Télécharger PDF"}
-    </Button>
-  )}
-</PDFDownloadLink>
+      <Button 
+        color="success" 
+        onClick={handleViewPdf} 
+        disabled={generatingPdf || loading}
+      >
+        <i className="ri-file-pdf-line me-2"></i>
+        {generatingPdf ? "Génération..." : "Voir PDF"}
+      </Button>
     </div>
   </Col>
 </Row>
@@ -691,7 +745,120 @@ const paymentMethodsBySource = [
             justify-content: center;
             border-radius: 8px;
           }
+          .pdf-viewer-modal .modal-content {
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+          }
+          
+          .pdf-viewer-modal .modal-header {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            padding: 1.25rem 1.5rem;
+          }
+          
+          .pdf-viewer-modal .modal-body {
+            padding: 0;
+          }
+          
+          .modal-icon-wrapper {
+            transition: all 0.3s ease;
+          }
+          
+          .modal-icon-wrapper:hover {
+            transform: scale(1.05);
+          }
+
         `}</style>
+
+<Modal
+  isOpen={pdfModal}
+  toggle={() => setPdfModal(false)}
+  centered
+  size="xl"
+  className="pdf-viewer-modal"
+  style={{ maxWidth: '90%', maxHeight: '90vh' }}
+>
+  <ModalHeader toggle={() => setPdfModal(false)} className="border-0">
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-danger bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-file-pdf-line text-danger fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">Rapport des Paiements Clients</h4>
+        <small className="text-muted">
+          Période du {moment(startDate).format("DD/MM/YYYY")} au {moment(endDate).format("DD/MM/YYYY")}
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+  
+  <ModalBody className="p-0 d-flex flex-column" style={{ minHeight: '600px' }}>
+    {pdfUrl ? (
+      <>
+        {/* Barre d'outils */}
+        <div className="d-flex justify-content-between align-items-center p-3 border-bottom bg-light">
+          <div>
+        
+          </div>
+          <div className="d-flex gap-2">
+            <Button
+              color="light"
+              size="sm"
+              onClick={() => {
+                if (iframeRef.current) {
+                  iframeRef.current.contentWindow?.print();
+                }
+              }}
+              title="Imprimer"
+              className="d-flex align-items-center"
+            >
+              <i className="ri-printer-line me-1"></i> Imprimer
+            </Button>
+            <Button
+              color="primary"
+              size="sm"
+              onClick={handleDownloadFromModal}
+              title="Télécharger"
+              className="d-flex align-items-center"
+            >
+              <i className="ri-download-line me-1"></i> Télécharger
+            </Button>
+          </div>
+        </div>
+        
+        {/* Iframe pour afficher le PDF */}
+        <div className="flex-grow-1" style={{ minHeight: '500px' }}>
+          <iframe
+            ref={iframeRef}
+            src={pdfUrl}
+            title="Rapport des Paiements Clients"
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              minHeight: '500px'
+            }}
+          />
+        </div>
+        
+        {/* Note informative */}
+        <div className="p-3 border-top bg-light">
+          <small className="text-muted">
+            <i className="ri-information-line me-1"></i>
+            Cliquez sur "Télécharger" pour enregistrer le PDF ou "Imprimer" pour l'imprimer directement.
+          </small>
+        </div>
+      </>
+    ) : (
+      <div className="text-center py-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Chargement du PDF...</span>
+        </div>
+        <p className="mt-3 text-muted">Chargement du PDF...</p>
+      </div>
+    )}
+  </ModalBody>
+</Modal>
       </Container>
 
       

@@ -1,4 +1,56 @@
+export interface Depot {
+  id: number;
+  nom: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface FactureClient {
+  id: number;
+  bonCommandePaiementsTotal:number;
+  exoneration : string;
+  bonCommandeClient_id?:number;
+  bonCommandeClient?: BonCommandeClient;
+  venteComptoire?:BonCommandeClient;
+  numeroFacture: string;
+  conditionPaiement : string ;
+  timbreFiscal : boolean
+  dateFacture: string;
+  bonCommandePaiements: PaiementClient[]
+  dateEcheance?: string;
+  status: "Brouillon" | "Validee" | "Payee" | "Annulee" | "Partiellement Payee";
+  conditions: "Net à réception" | "30 jours" | "60 jours" | "90 jours" | "Personnalisé";
+  client: Client;
+  vendeur?: Vendeur;
+  bonLivraison?: BonLivraison;
+  articles: FactureClientArticle[];
+  modeReglement: "Espece" | "Cheque" | "Virement" | "Traite" | "Autre";
+  totalHT: number;
+  totalTVA: number;
+  totalTTC: number;
+  client_id : number;
+  notes?: string;
+  remise: number;
+  remiseType?: "percentage" | "fixed";
+  montantPaye: number;
+  resteAPayer: number;
+  hasRetenue: boolean;
+  montantRetenue: number;
+  totalTTCAfterRemise : number;
+  paymentMethods?: Array<{
+    id: string;
+    method: "especes" | "cheque" | "virement" | "traite" | "retenue";
+    amount: number;
+    numero?: string;
+    banque?: string;
+    dateEcheance?: string;
+  }>;
+  totalPaymentAmount?: number;
+  createdAt: string;
+  
+  updatedAt: string;
+}
 export interface Client {
     id: number;
     raison_sociale: string; //
@@ -14,6 +66,7 @@ export interface Client {
     status: "Actif" | "Inactif";
     createdAt?: string;
     updatedAt?: string;
+    
   }
   export interface Article {
     on_website?: boolean;
@@ -23,8 +76,10 @@ export interface Client {
     website_description?: string;
     website_images?: string[];
     website_order?: number;
-    code_barre: string; // AJOUTER CETTE LIGNE
-
+    code_barre: string;
+    code_barre_1 : string;
+    code_barre_2 : string; // AJOUTER CETTE LIGNE
+    code_barres: string[]; // Array of barcodes
     remise: number;
   id: number;
   categorie?: Categorie;
@@ -45,7 +100,16 @@ export interface Client {
     pua_ht: number; // Add this if missing
 
 }
-
+export interface Vendeur {
+  id: number;
+  nom: string;
+  prenom: string;
+  telephone?: string;
+  email?: string;
+  commission?: number;
+  createdAt?: string;
+  updated_at?: string;
+}
 // In your interfaces file
 export interface ClientWebsite {
     id: number;
@@ -189,16 +253,7 @@ export interface BonLivraison {
     
 }
 
-export interface Vendeur {
-    id: number;
-    nom: string;
-    prenom: string;
-    telephone?: string;
-    email?: string;
-    commission?: number;
-    createdAt?: string;
-    updated_at?: string;
-}
+
 
 // Add to your existing interfaces
 export interface PaiementClient {
@@ -223,9 +278,12 @@ export interface PaiementClient {
   // Update BonCommandeClient interface to include payment info
   export interface BonCommandeClient {
     id: number;
+    depot_id:number;
+    depot?: Depot; 
     numeroCommande: string;
     clientWebsite?: ClientWebsite;
     dateCommande: string;
+    dateLivBonCommande :string;
     status: "Brouillon" | "Confirme" | "Livre" | "Partiellement Livre" | "Annule";
     taxMode: "HT" | "TTC";
     remise: number;
@@ -233,6 +291,7 @@ export interface PaiementClient {
     notes?: string;
     created_at?: string;
     updated_at?: string;
+
     client_id: number;
     vendeur_id: number;
     acompte? : number;
@@ -242,6 +301,8 @@ export interface PaiementClient {
     vendeur?: Vendeur;
     totalTTC : number;
     totalTTCAfterRemise :number;
+    totalAfterRemise :number;
+    totalHT:number;
       modeReglement: "especes" | "cheque" | "virement" | "carte" | "traite" | "autre";
       numeroReglement?: string;
       dateEcheance?: string;
@@ -262,6 +323,8 @@ export interface PaiementClient {
       prixUnitaire: number;
       puv_ttc: number;
       prix_ttc: number;
+      designation?: string; // Add this line
+
       tva?: number;
       remise?: number;
       article?: Article;
@@ -343,46 +406,6 @@ export interface FactureClientArticle {
 }
 
 
-export interface FactureClient {
-    id: number;
-    exoneration : string;
-    numeroFacture: string;
-    conditionPaiement : string ;
-    timbreFiscal : boolean
-    dateFacture: string;
-    dateEcheance?: string;
-    status: "Brouillon" | "Validee" | "Payee" | "Annulee" | "Partiellement Payee";
-    conditions: "Net à réception" | "30 jours" | "60 jours" | "90 jours" | "Personnalisé";
-    client: Client;
-    vendeur?: Vendeur;
-    bonLivraison?: BonLivraison;
-    articles: FactureClientArticle[];
-    modeReglement: "Espece" | "Cheque" | "Virement" | "Traite" | "Autre";
-    totalHT: number;
-    totalTVA: number;
-    totalTTC: number;
-    client_id : number;
-    notes?: string;
-    remise: number;
-    remiseType?: "percentage" | "fixed";
-    montantPaye: number;
-    resteAPayer: number;
-    hasRetenue: boolean;
-    montantRetenue: number;
-    totalTTCAfterRemise : number;
-    paymentMethods?: Array<{
-      id: string;
-      method: "especes" | "cheque" | "virement" | "traite";
-      amount: number;
-      numero?: string;
-      banque?: string;
-      dateEcheance?: string;
-    }>;
-    totalPaymentAmount?: number;
-    createdAt: string;
-    
-    updatedAt: string;
-}
 
 export interface EncaissementClient {
     id: number;
@@ -400,6 +423,12 @@ export interface EncaissementClient {
     banque?: string;
     numeroTraite?: string;
     dateEcheance?: string;
+    client_passager?: { // For passager clients
+      raison_sociale: string;
+      telephone: string;
+      adresse?: string;
+      ville?: string;
+    };
 
 }
 

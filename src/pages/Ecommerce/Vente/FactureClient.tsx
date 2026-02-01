@@ -1,9 +1,10 @@
-import React, {
+ import React, {
   Fragment,
   useEffect,
   useState,
   useMemo,
   useCallback,
+  useRef,
 } from "react";
 import {
   Card,
@@ -59,8 +60,8 @@ import {
   fetchNextEncaissementNumberFromAPI,
 } from "./FactureClientServices";
 import {
-  fetchArticles,
-  fetchClients,
+  searchArticles,
+  searchClients,
   fetchVendeurs,
 } from "../../../Components/Article/ArticleServices";
 import {
@@ -110,16 +111,12 @@ const ListFactureClient = () => {
   const [editingTTC, setEditingTTC] = useState<{ [key: number]: string }>({});
   const [editingHT, setEditingHT] = useState<{ [key: number]: string }>({});
   const { userProfile, loading: profileLoading } = useProfile();
+  const [searchPhone, setSearchPhone] = useState("");
+
   const [methodesReglement, setMethodesReglement] = useState<
     Array<{
       id: string;
-      method:
-        | "especes"
-        | "cheque"
-        | "virement"
-        | "traite"
-        | "tpe"
-        | "retenue";
+      method: "especes" | "cheque" | "virement" | "traite" | "tpe" | "retenue";
       amount: string;
       numero?: string;
       banque?: string;
@@ -127,10 +124,12 @@ const ListFactureClient = () => {
       tauxRetention?: number;
     }>
   >([]);
-// Add near your other state declarations
-const [focusedIndex, setFocusedIndex] = useState(-1);
-const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
-const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
+  // Add near your other state declarations
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+  const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>(
+    []
+  );
   const [showRetention, setShowRetention] = useState(false);
   const [retentionRate, setRetentionRate] = useState<number>(1);
   const [retentionAmount, setRetentionAmount] = useState<number>(0);
@@ -141,6 +140,13 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   // Add these state variables near your existing states
   const [clientModal, setClientModal] = useState(false);
   const [articleModal, setArticleModal] = useState(false);
+
+  // Add near your other state declarations
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(
+    null
+  );
+  const articleSearchRef = useRef<HTMLInputElement>(null); // Add this ref if not already present
 
   const [newClient, setNewClient] = useState({
     raison_sociale: "",
@@ -156,31 +162,181 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     status: "Actif" as "Actif" | "Inactif",
   });
 
-  const [newArticle, setNewArticle] = useState({
-    reference: "",
-    nom: "",
-    designation: "",
-    puv_ht: 0,
-    puv_ttc: 0,
-    pua_ht: 0,
-    pua_ttc: 0,
-    qte: 0,
-    tva: 0,
-    remise: 0,
-    taux_fodec: false,
-    type: "Non Consigné" as "Consigné" | "Non Consigné",
-    image: "",
-    on_website: false,
-    is_offre: false,
-    is_top_seller: false,
-    is_new_arrival: false,
-    website_description: "",
-    website_images: [],
-    website_order: 0,
-    categorie_id: "",
-    sous_categorie_id: "",
-    fournisseur_id: "",
-  });
+
+  // === FONCTIONS DE CALCUL TVA/FODEC TUNISIEN ===
+const parseNumber = (value: string | number): number => {
+  if (value === null || value === undefined || value === "") return 0;
+  const strValue = String(value)
+    .replace(/[^\d.,]/g, "")
+    .replace(",", ".");
+  const num = parseFloat(strValue);
+  return isNaN(num) ? 0 : Math.round(num * 100000) / 100000;
+};
+
+// Formatage avec 3 décimales
+const formatNumber = (value: number): string => {
+  if (value === 0) return "";
+  return (Math.round(value * 1000) / 1000).toFixed(3).replace(".", ",");
+};
+
+// === CALCUL TTC AVEC FODEC (Norme tunisienne) ===
+// Formule : TTC = HT × 1.01 × (1 + TVA/100)
+const calculateTTCFromHT = (
+  ht: number,
+  tva: number,
+  hasFodec: boolean
+): number => {
+  const htValue = parseNumber(ht);
+  const tvaRate = parseNumber(tva);
+
+  if (tvaRate === 0 && !hasFodec) return htValue;
+
+  let baseTTC = htValue;
+
+  if (hasFodec) {
+    baseTTC = htValue * 1.01;
+  }
+
+  if (tvaRate > 0) {
+    baseTTC = baseTTC * (1 + tvaRate / 100);
+  }
+
+  return Math.round(baseTTC * 1000) / 1000;
+};
+
+// === CALCUL HT À PARTIR DE TTC (Norme tunisienne) ===
+// Formule inverse : HT = TTC / (1.01 × (1 + TVA/100))
+const calculateHTFromTTC = (
+  ttc: number,
+  tva: number,
+  hasFodec: boolean
+): number => {
+  const ttcValue = parseNumber(ttc);
+  const tvaRate = parseNumber(tva);
+
+  if (tvaRate === 0 && !hasFodec) return ttcValue;
+
+  let factor = 1;
+
+  if (hasFodec) {
+    factor *= 1.01;
+  }
+
+  if (tvaRate > 0) {
+    factor *= 1 + tvaRate / 100;
+  }
+
+  const ht = ttcValue / factor;
+  return Math.round(ht * 1000) / 1000;
+};
+
+// Gestionnaire unifié pour les changements de prix
+const handlePriceChange = (field: keyof typeof newArticle, value: string) => {
+  const newValue = value.replace(",", ".");
+  const tva = parseNumber(newArticle.tva);
+  const hasFodec = newArticle.taux_fodec;
+
+  setNewArticle((prev) => ({ ...prev, [field]: newValue }));
+
+  switch (field) {
+    case "pua_ht": {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case "pua_ttc": {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ht: formatNumber(ht) }));
+      break;
+    }
+    case "puv_ht": {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case "puv_ttc": {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ht: formatNumber(ht) }));
+      break;
+    }
+  }
+};
+
+// Gestionnaire pour TVA
+const handleTVAChange = (value: string) => {
+  const oldTva = parseNumber(newArticle.tva);
+  const newTva = parseNumber(value);
+  const hasFodec = newArticle.taux_fodec;
+
+  setNewArticle((prev) => ({ ...prev, tva: value }));
+
+  setTimeout(() => {
+    if (newArticle.pua_ht) {
+      const ht = parseNumber(newArticle.pua_ht);
+      const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+    }
+
+    if (newArticle.puv_ht) {
+      const ht = parseNumber(newArticle.puv_ht);
+      const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+    }
+  }, 10);
+};
+
+// Gestionnaire pour FODEC
+const handleFodecChange = (checked: boolean) => {
+  const tva = parseNumber(newArticle.tva);
+
+  setNewArticle((prev) => ({ ...prev, taux_fodec: checked }));
+
+  setTimeout(() => {
+    if (newArticle.pua_ht) {
+      const ht = parseNumber(newArticle.pua_ht);
+      const ttc = calculateTTCFromHT(ht, tva, checked);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+    }
+
+    if (newArticle.puv_ht) {
+      const ht = parseNumber(newArticle.puv_ht);
+      const ttc = calculateTTCFromHT(ht, tva, checked);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+    }
+  }, 10);
+};
+
+
+const [newArticle, setNewArticle] = useState({
+  reference: "",
+  code_barre: "",
+  nom: "",
+  designation: "",
+  puv_ht: "",
+  puv_ttc: "",
+  pua_ht: "",
+  pua_ttc: "",
+  qte: "",
+  tva: "19",
+  remise: "0",
+  taux_fodec: false,
+  type: "Consigné" ,
+  image: "",
+  on_website: false,
+  is_offre: false,
+  is_top_seller: false,
+  is_new_arrival: false,
+  website_description: "",
+  website_images: [],
+  website_order: 0,
+  categorie_id: "",
+  sous_categorie_id: "",
+  fournisseur_id: "",
+});
 
   // Add these imports if not already present
 
@@ -199,20 +355,40 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       articleDetails?: Article;
     }[]
   >([]);
-  const formatForDisplay = (
-    value: number | string | undefined | null
-  ): string => {
-    if (value === undefined || value === null) return "0,000";
-    // Convert to number if it's a string
-    const numericValue =
-      typeof value === "string" ? parseNumericInput(value) : Number(value);
-    // Check if it's a valid number
-    if (isNaN(numericValue)) return "0,000";
-    return numericValue.toFixed(3).replace(".", ",");
+
+  // Add this near your other helper functions (around line 100-150)
+  const customRound = (num: number): number => {
+    if (isNaN(num) || !isFinite(num)) return 0;
+
+    // Round to 5 decimal places first for precision
+    const multiplied = Math.round(num * 100000);
+    const result = multiplied / 100000;
+
+    // Then round to 3 decimal places for display/final use
+    return Math.round(result * 1000) / 1000;
   };
-  const [remiseType, setRemiseType] = useState<"percentage" | "fixed">(
-    "percentage"
-  );
+
+  // Update your parseNumericInput function to use customRound:
+// Parse numeric input function
+const parseNumericInput = (value: string): number => {
+  if (!value || value === "") return 0;
+  const cleanValue = value.replace(",", ".");
+  const numericValue = parseFloat(cleanValue);
+  return isNaN(numericValue) ? 0 : Math.round(numericValue * 1000) / 1000;
+};
+
+// Format for display
+const formatForDisplay = (
+  value: number | string | undefined | null
+): string => {
+  if (value === undefined || value === null) return "0,000";
+  const numericValue =
+    typeof value === "string" ? parseNumericInput(value) : Number(value);
+  if (isNaN(numericValue)) return "0,000";
+  return numericValue.toFixed(3).replace(".", ",");
+};
+  const [remiseType, setRemiseType] = useState<"percentage" | "fixed">("fixed");
+
   const [globalRemise, setGlobalRemise] = useState<number>(0);
   const [taxMode, setTaxMode] = useState<"HT" | "TTC">("HT");
   const [pdfModal, setPdfModal] = useState(false);
@@ -231,6 +407,11 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   ];
   const [timbreFiscal, setTimbreFiscal] = useState<boolean>(true);
   const [conditionPaiement, setConditionPaiement] = useState<string>("");
+
+  const [articlesLoading, setArticlesLoading] = useState(false);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
+
   const conditionPaiementOptions = [
     { value: "", label: "Sélectionner condition" },
     { value: "7", label: "7 jours" },
@@ -291,20 +472,6 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     };
     fetchNextEncaissementNumber();
   }, []);
-  useEffect(() => {
-    if (articleSearch.length >= 3) {
-      const filtered = articles.filter(
-        (article) =>
-          article.designation
-            .toLowerCase()
-            .includes(articleSearch.toLowerCase()) ||
-          article.reference.toLowerCase().includes(articleSearch.toLowerCase())
-      );
-      setFilteredArticles(filtered);
-    } else {
-      setFilteredArticles([]);
-    }
-  }, [articleSearch, articles]);
 
   const formatPhoneInput = (value: string): string => {
     // Remove all non-digit characters
@@ -326,7 +493,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     }
   };
 
-  // Display formatting function
+  // Display formatting function (if not already present)
   const formatPhoneDisplay = (phone: string | null | undefined): string => {
     if (!phone) return "N/A";
 
@@ -342,57 +509,79 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
 
   // Update the client search useEffect
   useEffect(() => {
-    if (clientSearch.length >= 3) {
-      const searchTerm = clientSearch.toLowerCase().trim();
+    const searchClientsDebounced = async () => {
+      if (clientSearch.length >= 1) {
+        setClientsLoading(true);
+        try {
+          const result = await searchClients({
+            query: clientSearch,
+            page: 1,
+            limit: 15,
+          });
+          setFilteredClients(result.clients || []);
+        } catch (err) {
+          console.error("Failed to load clients:", err);
+        } finally {
+          setClientsLoading(false);
+        }
+      } else {
+        setFilteredClients([]);
+      }
+    };
 
-      const filtered = clients.filter((client) => {
-        // Search by name (partial match anywhere in the name)
-        const nameMatch =
-          client.raison_sociale?.toLowerCase().includes(searchTerm) ||
-          client.designation?.toLowerCase().includes(searchTerm);
+    const timer = setTimeout(searchClientsDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [clientSearch]);
 
-        // Search by phone - remove spaces for comparison
-        const cleanSearchTerm = searchTerm.replace(/\s/g, "");
-        const phoneMatch =
-          client.telephone1?.replace(/\s/g, "").includes(cleanSearchTerm) ||
-          client.telephone2?.replace(/\s/g, "").includes(cleanSearchTerm);
+  // Replace the current useEffect for article search:
+  useEffect(() => {
+    const searchArticlesDebounced = async () => {
+      if (articleSearch.length >= 3 || createEditModal) {
+        setArticlesLoading(true);
+        try {
+          const result = await searchArticles({
+            query: articleSearch,
+            page: 1,
+            limit: 15,
+          });
+          if (articleSearch === "" && !createEditModal) {
+            setArticles(result.articles || []);
+          }
+          setFilteredArticles(result.articles || []);
+        } catch (err) {
+          console.error("Failed to load articles:", err);
+        } finally {
+          setArticlesLoading(false);
+        }
+      } else {
+        setFilteredArticles([]);
+      }
+    };
 
-        return nameMatch || phoneMatch;
-      });
+    const timer = setTimeout(searchArticlesDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [articleSearch, createEditModal]);
 
-      setFilteredClients(filtered);
-    } else {
-      setFilteredClients([]);
-    }
-  }, [clientSearch, clients]);
-
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (skipSecondary = false) => {
     try {
       setLoading(true);
-      const [
-        facturesData,
-        clientsData,
-        articlesData,
-        encaissementsData,
-        vendeursData,
-        categoriesData,
-        fournisseursData,
-      ] = await Promise.all([
-        fetchFacturesClient(),
-        fetchClients(),
-        fetchArticles(),
-        fetchEncaissementsClient(),
-        fetchVendeurs(),
-        fetchCategories(),
-        fetchFournisseurs(),
-      ]);
+
+      // PHASE 1: Load critical data only
+      const [facturesData, encaissementsData, vendeursData] = await Promise.all(
+        [fetchFacturesClient(), fetchEncaissementsClient(), fetchVendeurs()]
+      );
+
+      // ✅ Update the facturesWithCalculatedEncaissements calculation:
       const facturesWithCalculatedEncaissements = facturesData.map(
         (facture) => {
+          // Get encaissements for this facture
           const relevantEncaissements = encaissementsData.filter(
             (encaissement) =>
               encaissement.factureClient &&
               encaissement.factureClient.id === facture.id
           );
+
+          // Calculate total encaissements from facture
           const totalEncaissements = relevantEncaissements.reduce(
             (sum, encaissement) => {
               let encaissementAmount: number;
@@ -406,14 +595,14 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
             0
           );
 
-          // ✅ Calculate payment methods total (excluding retention)
-          const paymentMethodsTotal = facture.paymentMethods
+          // ✅ 1. Get payment methods from FACTURE (excluding retention)
+          const facturePaymentMethodsTotal = facture.paymentMethods
             ? facture.paymentMethods
                 .filter((pm: any) => pm.method !== "retenue")
                 .reduce((sum: number, pm: any) => {
                   let amountValue: number;
                   if (typeof pm.amount === "string") {
-                    amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
+                    amountValue = parseFloat(pm.amount) || 0;
                   } else if (typeof pm.amount === "number") {
                     amountValue = pm.amount;
                   } else {
@@ -423,9 +612,125 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                 }, 0)
             : 0;
 
+          // ✅ 2. Get payment methods from BON COMMANDE (excluding retention)
+          const bonCommandePaymentMethodsTotal = facture.bonCommandeClient
+            ?.paymentMethods
+            ? facture.bonCommandeClient.paymentMethods
+                .filter((pm: any) => pm.method !== "retenue")
+                .reduce((sum: number, pm: any) => {
+                  let amountValue: number;
+                  if (typeof pm.amount === "string") {
+                    amountValue = parseFloat(pm.amount) || 0;
+                  } else if (typeof pm.amount === "number") {
+                    amountValue = pm.amount;
+                  } else {
+                    amountValue = 0;
+                  }
+                  return sum + amountValue;
+                }, 0)
+            : 0;
+
+          // ✅ 3. Get paiements from BON COMMANDE
+          const bonCommandePaiementsTotal = facture.bonCommandeClient?.paiements
+            ? facture.bonCommandeClient.paiements.reduce(
+                (sum: number, paiement: any) => {
+                  let amountValue: number;
+                  if (typeof paiement.montant === "string") {
+                    amountValue = parseFloat(paiement.montant) || 0;
+                  } else if (typeof paiement.montant === "number") {
+                    amountValue = paiement.montant;
+                  } else {
+                    amountValue = 0;
+                  }
+                  return sum + amountValue;
+                },
+                0
+              )
+            : 0;
+
+          // ✅ 4. Get payment methods from VENTE COMPTOIRE (excluding retention)
+          const venteComptoirePaymentMethodsTotal = facture.venteComptoire
+            ?.paymentMethods
+            ? facture.venteComptoire.paymentMethods
+                .filter((pm: any) => pm.method !== "retenue")
+                .reduce((sum: number, pm: any) => {
+                  let amountValue: number;
+                  if (typeof pm.amount === "string") {
+                    amountValue = parseFloat(pm.amount) || 0;
+                  } else if (typeof pm.amount === "number") {
+                    amountValue = pm.amount;
+                  } else {
+                    amountValue = 0;
+                  }
+                  return sum + amountValue;
+                }, 0)
+            : 0;
+
+          // ✅ 5. Calculate total payment methods from all sources
+          const totalPaymentMethods =
+            facturePaymentMethodsTotal +
+            bonCommandePaymentMethodsTotal +
+            venteComptoirePaymentMethodsTotal;
+
+          // ✅ 6. Calculate retention from all sources
+          // Facture retention
+          const factureRetentionAmount = facture.paymentMethods
+            ? facture.paymentMethods
+                .filter((pm: any) => pm.method === "retenue")
+                .reduce((sum: number, pm: any) => {
+                  const finalTotal =
+                    Number(facture.totalTTCAfterRemise) ||
+                    Number(facture.totalTTC) ||
+                    0;
+                  const rate = pm.tauxRetention || 1;
+                  const amount = finalTotal * (rate / 100);
+                  return sum + amount;
+                }, 0)
+            : Number(facture.montantRetenue) || 0;
+
+          // Bon commande retention
+          const bonCommandeRetentionAmount = facture.bonCommandeClient
+            ?.paymentMethods
+            ? facture.bonCommandeClient.paymentMethods
+                .filter((pm: any) => pm.method === "retenue")
+                .reduce((sum: number, pm: any) => {
+                  const finalTotal =
+                    Number(facture.totalTTCAfterRemise) ||
+                    Number(facture.totalTTC) ||
+                    0;
+                  const rate = pm.tauxRetention || 1;
+                  const amount = finalTotal * (rate / 100);
+                  return sum + amount;
+                }, 0)
+            : Number(facture.bonCommandeClient?.montantRetenue) || 0;
+
+          // Vente comptoire retention
+          const venteComptoireRetentionAmount = facture.venteComptoire
+            ?.paymentMethods
+            ? facture.venteComptoire.paymentMethods
+                .filter((pm: any) => pm.method === "retenue")
+                .reduce((sum: number, pm: any) => {
+                  const finalTotal =
+                    Number(facture.totalTTCAfterRemise) ||
+                    Number(facture.totalTTC) ||
+                    0;
+                  const rate = pm.tauxRetention || 1;
+                  const amount = finalTotal * (rate / 100);
+                  return sum + amount;
+                }, 0)
+            : 0;
+
+          // Total retention
+          const totalRetentionAmount =
+            factureRetentionAmount +
+            bonCommandeRetentionAmount +
+            venteComptoireRetentionAmount;
+
+          // Calculate article totals
           let subTotal = 0;
           let totalTax = 0;
           let grandTotal = 0;
+
           facture.articles.forEach((item) => {
             const qty = Number(item.quantite) || 1;
             const priceHT = Number(item.prixUnitaire) || 0;
@@ -433,18 +738,22 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
             const remiseRate = Number(item.remise || 0);
             const priceTTC =
               Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
+
             const montantHTLigne =
               Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
             const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
             const taxAmount =
               Math.round((montantTTCLigne - montantHTLigne) * 1000) / 1000;
+
             subTotal += montantHTLigne;
             totalTax += taxAmount;
             grandTotal += montantTTCLigne;
           });
-          // Calculate final total with discount and timbre (EXACT SAME LOGIC AS FOURNISSEUR)
+
+          // Calculate final total with discount and timbre
           let finalTotal = grandTotal;
           const hasDiscount = facture.remise && Number(facture.remise) > 0;
+
           if (hasDiscount) {
             if (facture.remiseType === "percentage") {
               finalTotal = grandTotal * (1 - Number(facture.remise) / 100);
@@ -452,6 +761,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
               finalTotal = Number(facture.remise);
             }
           }
+
           if (facture.timbreFiscal) {
             if (hasDiscount) {
               finalTotal += 1;
@@ -460,59 +770,105 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
               finalTotal = grandTotal;
             }
           }
+
           // Fix floating point issues
           subTotal = Math.round(subTotal * 1000) / 1000;
           totalTax = Math.round(totalTax * 1000) / 1000;
           grandTotal = Math.round(grandTotal * 1000) / 1000;
           finalTotal = Math.round(finalTotal * 1000) / 1000;
 
-          // Calculate retention amount
-          const retentionAmount = Number(facture.montantRetenue) || 0;
+          // ✅ CORRECTED: Calculate total payé from ALL sources
+          const totalPaye =
+            totalEncaissements +
+            totalPaymentMethods +
+            bonCommandePaiementsTotal;
 
-          // Calculate reste à payer: (finalTotal - retentionAmount) - totalPaye
-          const totalPaye = totalEncaissements + paymentMethodsTotal;
+          // ✅ CORRECTED: Calculate reste à payer
           let resteAPayer =
-            Math.round((finalTotal - retentionAmount - totalPaye) * 1000) /
+            Math.round((finalTotal - totalRetentionAmount - totalPaye) * 1000) /
             1000;
           resteAPayer = Math.max(0, resteAPayer);
 
+          // Determine status
           let status:
             | "Brouillon"
             | "Validee"
             | "Payee"
             | "Annulee"
             | "Partiellement Payee" = facture.status;
+
           if (facture.status === "Annulee") {
             status = "Annulee";
           } else if (resteAPayer === 0 && finalTotal > 0) {
             status = "Payee";
           } else if (
             totalPaye > 0 &&
-            totalPaye < finalTotal - retentionAmount
+            totalPaye < finalTotal - totalRetentionAmount
           ) {
             status = "Partiellement Payee";
           }
+
+          // Combine all payment sources for display
+          const allPaymentMethods = [
+            ...(facture.paymentMethods || []),
+            ...(facture.bonCommandeClient?.paymentMethods || []),
+            ...(facture.venteComptoire?.paymentMethods || []),
+          ];
+
+          const allPaiements = [
+            ...(facture.bonCommandeClient?.paiements || []),
+          ];
+
           return {
             ...facture,
             totalHT: subTotal,
             totalTVA: totalTax,
             totalTTC: grandTotal,
             totalTTCAfterRemise: finalTotal,
-            montantPaye: totalPaye, // ✅ Now includes payment methods
-            resteAPayer: resteAPayer, // ✅ Now reduced by retention and payment methods
+            montantPaye: totalPaye,
+            resteAPayer: resteAPayer,
+            montantRetenue: totalRetentionAmount,
             status,
             hasPayments: totalPaye > 0,
+            // Store all payment sources for display
+            allPaymentMethods,
+            allPaiements,
+            // Keep original for reference
+            paymentMethods: allPaymentMethods,
+            bonCommandePaiements: allPaiements,
           };
         }
       );
+
       setFactures(facturesWithCalculatedEncaissements);
       setFilteredFactures(facturesWithCalculatedEncaissements);
-      setClients(clientsData);
-      setArticles(articlesData);
       setVendeurs(vendeursData);
-      setCategories(categoriesData);
-      setFournisseurs(fournisseursData);
+
+      // PHASE 2: Load secondary data
+      try {
+        // Load categories and fournisseurs first
+        const [categoriesData, fournisseursData] = await Promise.all([
+          fetchCategories(),
+          fetchFournisseurs(),
+        ]);
+
+        setCategories(categoriesData);
+        setFournisseurs(fournisseursData);
+
+        // ✅ CHANGED: Use searchClients and searchArticles instead of fetchClients and fetchArticles
+        const [clientsResult, articlesResult] = await Promise.all([
+          searchClients({ query: "", page: 1, limit: 25 }), // ✅ Changed to searchClients
+          searchArticles({ query: "", page: 1, limit: 25 }), // ✅ Changed to searchArticles
+        ]);
+
+        setClients(clientsResult.clients || []);
+        setArticles(articlesResult.articles || []);
+      } catch (secondaryErr) {
+        console.error("Secondary data loading failed:", secondaryErr);
+      }
+
       setLoading(false);
+      setError(null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Échec du chargement des données"
@@ -522,10 +878,13 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   }, []);
 
   useEffect(() => {
-    fetchData();
+    fetchData(true); // true means skip secondary data initially
   }, [fetchData]);
 
+  // Load modal data only when modal opens
+
   // Update the main search useEffect for factures
+  // Update your main search useEffect
   useEffect(() => {
     let result = [...factures];
 
@@ -548,58 +907,66 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       });
     }
 
-    // Enhanced search functionality to include phone numbers
+    // Enhanced search functionality
     if (searchText) {
       const searchLower = searchText.toLowerCase();
       result = result.filter(
         (facture) =>
           facture.numeroFacture.toLowerCase().includes(searchLower) ||
-          // Search in client
           (facture.client?.raison_sociale &&
             facture.client.raison_sociale
               .toLowerCase()
               .includes(searchLower)) ||
-          // Search in client phone numbers
-          (facture.client?.telephone1 &&
-            facture.client.telephone1.toLowerCase().includes(searchLower)) ||
-          (facture.client?.telephone2 &&
-            facture.client.telephone2.toLowerCase().includes(searchLower))
+          (facture.client?.designation &&
+            facture.client.designation.toLowerCase().includes(searchLower))
       );
     }
 
+    // Phone search functionality
+    if (searchPhone) {
+      const cleanPhoneSearch = searchPhone.replace(/\s/g, "").trim();
+
+      result = result.filter((facture) => {
+        if (!facture.client) return false;
+
+        const phone1 = facture.client.telephone1?.replace(/\s/g, "") || "";
+        const phone2 = facture.client.telephone2?.replace(/\s/g, "") || "";
+
+        return (
+          phone1.includes(cleanPhoneSearch) || phone2.includes(cleanPhoneSearch)
+        );
+      });
+    }
+
     setFilteredFactures(result);
-  }, [activeTab, startDate, endDate, searchText, factures]);
+  }, [activeTab, startDate, endDate, searchText, searchPhone, factures]);
 
-  // Fix the calculation logic - remove the .replace() calls
-  // FIXED: Better numeric parsing with proper rounding
-  const parseNumericInput = (value: string): number => {
-    if (!value || value === "") return 0;
-    const cleanValue = value.replace(",", ".");
-    const numericValue = parseFloat(cleanValue);
-    return isNaN(numericValue) ? 0 : Math.round(numericValue * 1000) / 1000; // Proper rounding to 3 decimals
-  };
-  // FIXED: Calculation logic with proper rounding at each step
-
-  // Add these functions before the return statement
   const handleCreateClient = async () => {
     try {
-      const createdClient = await createClient(newClient);
+      // Format phone numbers before sending
+      const formattedClient = {
+        ...newClient,
+        telephone1: newClient.telephone1
+          ? newClient.telephone1.replace(/\s/g, "")
+          : "",
+        telephone2: newClient.telephone2
+          ? newClient.telephone2.replace(/\s/g, "")
+          : "",
+      };
+
+      // Create the client
+      const createdClient = await createClient(formattedClient);
       toast.success("Client créé avec succès");
-      setClientModal(false);
-      
-      // Auto-select the newly created client
+
+      // Auto-select the new client
       setSelectedClient(createdClient);
       validation.setFieldValue("client_id", createdClient.id);
-      
-      // Clear the client search
-      setClientSearch(createdClient.raison_sociale);
-      setFilteredClients([]);
-      
-      // Refresh clients list
-      const clientsData = await fetchClients();
-      setClients(clientsData);
-      
-      // Reset new client form
+
+      // Also add to filtered clients for immediate visibility
+      setFilteredClients((prev) => [createdClient, ...prev]);
+
+      // Close client modal and reset form
+      setClientModal(false);
       setNewClient({
         raison_sociale: "",
         designation: "",
@@ -611,13 +978,13 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         telephone1: "",
         telephone2: "",
         email: "",
-        status: "Actif" as "Actif" | "Inactif",
+        status: "Actif",
       });
     } catch (err) {
-      toast.error("Erreur création client");
+      console.error("Error creating client:", err);
+      toast.error("Erreur lors de la création du client");
     }
   };
-
   const calculateTTCForQuickCreate = (
     ht: number,
     tva: number,
@@ -632,23 +999,15 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
 
   const handleCreateArticle = async () => {
     try {
-      // Calculate TTC values before sending
       const articleToCreate = {
         ...newArticle,
-        pua_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.pua_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
-        puv_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.puv_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
+        pua_ht: parseNumber(newArticle.pua_ht),
+        pua_ttc: parseNumber(newArticle.pua_ttc),
+        puv_ht: parseNumber(newArticle.puv_ht),
+        puv_ttc: parseNumber(newArticle.puv_ttc),
+        qte: parseNumber(newArticle.qte),
+        tva: parseNumber(newArticle.tva),
+        remise: parseNumber(newArticle.remise),
         categorie_id: newArticle.categorie_id
           ? Number(newArticle.categorie_id)
           : null,
@@ -660,34 +1019,35 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           : null,
       };
   
-      const createdArticle = await createArticle(articleToCreate);
+      console.log("Creating article:", articleToCreate);
+  
+      await createArticle(articleToCreate);
       toast.success("Article créé avec succès");
-      setArticleModal(false);
-      
-      // Auto-add the new article to the current invoice
-      handleAddArticle(createdArticle.id.toString());
-      
-      // Clear article search and refresh
-      setArticleSearch("");
-      setFilteredArticles([]);
-      
+  
       // Refresh articles list
-      fetchData();
-      
+      const articlesResult = await searchArticles({
+        query: "",
+        page: 1,
+        limit: 25,
+      });
+      setArticles(articlesResult.articles || []);
+  
       // Reset form
+      setArticleModal(false);
       setNewArticle({
         reference: "",
+        code_barre: "",
         nom: "",
         designation: "",
-        puv_ht: 0,
-        puv_ttc: 0,
-        pua_ht: 0,
-        pua_ttc: 0,
-        qte: 0,
-        tva: 0,
-        remise: 0,
+        puv_ht: "",
+        puv_ttc: "",
+        pua_ht: "",
+        pua_ttc: "",
+        qte: "",
+        tva: "19",
+        remise: "0",
         taux_fodec: false,
-        type: "Non Consigné" as "Consigné" | "Non Consigné",
+        type: "Non Consigné",
         image: "",
         on_website: false,
         is_offre: false,
@@ -701,37 +1061,11 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         fournisseur_id: "",
       });
     } catch (err) {
-      toast.error("Erreur création article");
+      console.error("Error creating article:", err);
+      toast.error("Erreur lors de la création de l'article");
     }
   };
 
-  // Add effect for auto-calculation in article modal
-  useEffect(() => {
-    if (articleModal) {
-      const puaTtc = calculateTTCForQuickCreate(
-        newArticle.pua_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-      const puvTtc = calculateTTCForQuickCreate(
-        newArticle.puv_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-
-      setNewArticle((prev) => ({
-        ...prev,
-        pua_ttc: Number(puaTtc),
-        puv_ttc: Number(puvTtc),
-      }));
-    }
-  }, [
-    newArticle.pua_ht,
-    newArticle.puv_ht,
-    newArticle.tva,
-    newArticle.taux_fodec,
-    articleModal,
-  ]);
 
   // Add effect for subcategories
   useEffect(() => {
@@ -755,7 +1089,158 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   // In your ListFactureClient component, add this state variable
   const [exoneration, setExoneration] = useState<boolean>(false);
 
-  // Update the useMemo calculation to include exoneration
+  // Add this near your other helper functions (around line 100-150)
+  // Replace your existing getPaymentMethodsSummary function with this one:
+  // Update your getPaymentMethodsSummary function:
+  const getPaymentMethodsSummary = (facture: FactureClient | null) => {
+    if (!facture) return null;
+
+    // Combine all payment sources
+    const factureMethods = facture.paymentMethods || [];
+    const bonCommandeMethods = facture.bonCommandeClient?.paymentMethods || [];
+    const bonCommandePaiements = facture.bonCommandeClient?.paiements || [];
+    const venteComptoireMethods = facture.venteComptoire?.paymentMethods || []; // Add this
+
+    // Calculate totals
+    const totalFactureMethods = factureMethods.reduce(
+      (sum: number, pm: any) => {
+        let amountValue: number;
+        if (typeof pm.amount === "string") {
+          amountValue = parseFloat(pm.amount) || 0;
+        } else if (typeof pm.amount === "number") {
+          amountValue = pm.amount;
+        } else {
+          amountValue = 0;
+        }
+        return (pm.method as string) !== "retenue" ? sum + amountValue : sum;
+      },
+      0
+    );
+
+    const totalBonCommandeMethods = bonCommandeMethods.reduce(
+      (sum: number, pm: any) => {
+        let amountValue: number;
+        if (typeof pm.amount === "string") {
+          amountValue = parseFloat(pm.amount) || 0;
+        } else if (typeof pm.amount === "number") {
+          amountValue = pm.amount;
+        } else {
+          amountValue = 0;
+        }
+        return (pm.method as string) !== "retenue" ? sum + amountValue : sum;
+      },
+      0
+    );
+
+    const totalBonCommandePaiements = bonCommandePaiements.reduce(
+      (sum: number, paiement: any) => {
+        let amountValue: number;
+        if (typeof paiement.montant === "string") {
+          amountValue = parseFloat(paiement.montant) || 0;
+        } else if (typeof paiement.montant === "number") {
+          amountValue = paiement.montant;
+        } else {
+          amountValue = 0;
+        }
+        return sum + amountValue;
+      },
+      0
+    );
+
+    // ✅ ADD VENTE COMPTOIRE PAYMENTS
+    const totalVenteComptoireMethods = venteComptoireMethods.reduce(
+      (sum: number, pm: any) => {
+        let amountValue: number;
+        if (typeof pm.amount === "string") {
+          amountValue = parseFloat(pm.amount) || 0;
+        } else if (typeof pm.amount === "number") {
+          amountValue = pm.amount;
+        } else {
+          amountValue = 0;
+        }
+        return (pm.method as string) !== "retenue" ? sum + amountValue : sum;
+      },
+      0
+    );
+
+    // Calculate retention - Include vente comptoire
+    const totalRetention =
+      facture.montantRetenue ||
+      factureMethods
+        .filter((pm: any) => (pm.method as string) === "retenue")
+        .reduce((sum: number, pm: any) => {
+          const finalTotal =
+            Number(facture.totalTTCAfterRemise) ||
+            Number(facture.totalTTC) ||
+            0;
+          const rate = pm.tauxRetention || 1;
+          return sum + (finalTotal * rate) / 100;
+        }, 0) +
+        bonCommandeMethods
+          .filter((pm: any) => (pm.method as string) === "retenue")
+          .reduce((sum: number, pm: any) => {
+            const finalTotal =
+              Number(facture.totalTTCAfterRemise) ||
+              Number(facture.totalTTC) ||
+              0;
+            const rate = pm.tauxRetention || 1;
+            return sum + (finalTotal * rate) / 100;
+          }, 0) +
+        venteComptoireMethods
+          .filter((pm: any) => (pm.method as string) === "retenue")
+          .reduce((sum: number, pm: any) => {
+            const finalTotal =
+              Number(facture.totalTTCAfterRemise) ||
+              Number(facture.totalTTC) ||
+              0;
+            const rate = pm.tauxRetention || 1;
+            return sum + (finalTotal * rate) / 100;
+          }, 0);
+
+    return {
+      totalFactureMethods,
+      totalBonCommandeMethods,
+      totalBonCommandePaiements,
+      totalVenteComptoireMethods, // Add this
+      totalRetention,
+      totalAllPayments:
+        totalFactureMethods +
+        totalBonCommandeMethods +
+        totalBonCommandePaiements +
+        totalVenteComptoireMethods,
+      hasBonCommande: !!facture.bonCommandeClient,
+      hasVenteComptoire: !!facture.venteComptoire, // Add this
+      bonCommandeNumber: facture.bonCommandeClient?.numeroCommande,
+      venteComptoireNumber: facture.venteComptoire?.numeroCommande, // Add this
+    };
+  };
+
+  useEffect(() => {
+    if (createEditModal && !isEdit) {
+      setRemiseType("fixed");
+      setGlobalRemise(0);
+    }
+  }, [createEditModal, isEdit]);
+  // Keep the formatPaymentMethodName function
+  const formatPaymentMethodName = (method: string) => {
+    switch (method) {
+      case "especes":
+        return "Espèces";
+      case "cheque":
+        return "Chèque";
+      case "virement":
+        return "Virement";
+      case "traite":
+        return "Traite";
+      case "tpe":
+        return "Carte Bancaire (TPE)";
+      case "retenue":
+        return "Retenue à la source";
+      default:
+        return method;
+    }
+  };
+
   const {
     sousTotalHT,
     netHT,
@@ -763,6 +1248,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     grandTotal,
     finalTotal,
     discountAmount,
+    discountPercentage,
     retentionMontant,
     netAPayer,
   } = useMemo(() => {
@@ -774,141 +1260,208 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         grandTotal: 0,
         finalTotal: 0,
         discountAmount: 0,
+        discountPercentage: 0,
         retentionMontant: 0,
         netAPayer: 0,
       };
     }
   
+    // ✅ STEP 1: Calculate totals WITHOUT considering global remise
     let sousTotalHTValue = 0;
-    let netHTValue = 0;
+    let netHTBeforeGlobalRemise = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
   
-    // Calculate initial totals with proper rounding
     selectedArticles.forEach((article) => {
       const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
-      const tvaRate = Number(article.tva) || 0;
-      const remiseRate = Number(article.remise) || 0;
+      const articleRemise = Number(article.remise) || 0;
   
-      let priceHT = Number(article.prixUnitaire) || 0;
-      let priceTTC = Number(article.prixTTC) || 0;
+      // Get unit prices with proper handling of editing
+      let unitHT = Number(article.prixUnitaire) || 0;
+      let unitTTC = Number(article.prixTTC) || 0;
   
+      // Handle manual editing
       if (editingHT[article.article_id] !== undefined) {
         const editingValue = parseNumericInput(editingHT[article.article_id]);
         if (!isNaN(editingValue) && editingValue >= 0) {
-          priceHT = parseFloat(editingValue.toFixed(3));
-          const tvaAmount =
-            tvaRate > 0
-              ? parseFloat(((priceHT * tvaRate) / 100).toFixed(3))
-              : 0;
-          priceTTC = parseFloat((priceHT + tvaAmount).toFixed(3));
+          unitHT = editingValue;
+          // Recalculate TTC based on TVA rate
+          const tvaRate = exoneration ? 0 : Number(article.tva) || 0;
+          if (tvaRate > 0) {
+            const tvaAmount = (unitHT * tvaRate) / 100;
+            unitTTC = Math.round((unitHT + tvaAmount) * 1000) / 1000;
+          } else {
+            unitTTC = unitHT;
+          }
         }
       } else if (editingTTC[article.article_id] !== undefined) {
         const editingValue = parseNumericInput(editingTTC[article.article_id]);
         if (!isNaN(editingValue) && editingValue >= 0) {
-          priceTTC = parseFloat(editingValue.toFixed(3));
+          unitTTC = editingValue;
+          // Recalculate HT based on TVA rate
+          const tvaRate = exoneration ? 0 : Number(article.tva) || 0;
           if (tvaRate > 0) {
             const coefficient = 1 + tvaRate / 100;
-            priceHT = parseFloat((priceTTC / coefficient).toFixed(3));
+            unitHT = Math.round((unitTTC / coefficient) * 1000) / 1000;
           } else {
-            priceHT = priceTTC;
+            unitHT = unitTTC;
           }
         }
       }
   
       // Calculate line amounts
-      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-      const montantNetHT =
-        Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-      const montantTVA =
-        Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
+      const lineHT = Math.round(unitHT * 1000) / 1000;
+      const lineTTC = Math.round(unitTTC * 1000) / 1000;
   
-      sousTotalHTValue += montantSousTotalHT;
-      netHTValue += montantNetHT;
-      totalTaxValue += montantTVA;
-      grandTotalValue += montantTTCLigne;
+      const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+      const montantNetHTLigne = Math.round(
+        qty * lineHT * (1 - articleRemise / 100) * 1000
+      ) / 1000;
+      const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+      const montantTVALigne = Math.round(
+        (montantTTCLigne - montantNetHTLigne) * 1000
+      ) / 1000;
+  
+      sousTotalHTValue = Math.round((sousTotalHTValue + montantSousTotalHT) * 1000) / 1000;
+      netHTBeforeGlobalRemise = Math.round((netHTBeforeGlobalRemise + montantNetHTLigne) * 1000) / 1000;
+      totalTaxValue = Math.round((totalTaxValue + montantTVALigne) * 1000) / 1000;
+      grandTotalValue = Math.round((grandTotalValue + montantTTCLigne) * 1000) / 1000;
     });
   
-    // Round accumulated values
-    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-    netHTValue = Math.round(netHTValue * 1000) / 1000;
-    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
-    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-  
+    // ✅ STEP 2: Apply global remise according to principle
+    let netHTAfterGlobalRemise = netHTBeforeGlobalRemise;
+    let totalTaxAfterGlobalRemise = totalTaxValue;
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
-    let netHTAfterDiscount = netHTValue;
-    let totalTaxAfterDiscount = totalTaxValue;
+    let discountPercentageValue = 0;
   
-    // Apply remise logic with proper rounding
     if (showRemise && Number(globalRemise) > 0) {
       if (remiseType === "percentage") {
-        discountAmountValue =
-          Math.round(netHTValue * (Number(globalRemise) / 100) * 1000) / 1000;
-        netHTAfterDiscount =
-          Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
+        // ✅ Percentage remise: Apply on HT base
+        discountAmountValue = Math.round(
+          (netHTBeforeGlobalRemise * (Number(globalRemise) / 100)) * 1000
+        ) / 1000;
+        netHTAfterGlobalRemise = Math.round(
+          (netHTBeforeGlobalRemise - discountAmountValue) * 1000
+        ) / 1000;
   
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        totalTaxAfterDiscount =
-          Math.round(totalTaxValue * discountRatio * 1000) / 1000;
+        // ✅ Recalculate TVA proportionally
+        if (netHTBeforeGlobalRemise > 0) {
+          const tvaToHtRatio = Math.round(
+            (totalTaxValue / netHTBeforeGlobalRemise) * 1000
+          ) / 1000;
+          totalTaxAfterGlobalRemise = Math.round(
+            (netHTAfterGlobalRemise * tvaToHtRatio) * 1000
+          ) / 1000;
+        } else {
+          totalTaxAfterGlobalRemise = 0;
+        }
   
-        finalTotalValue =
-          Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) /
-          1000;
+        finalTotalValue = Math.round(
+          (netHTAfterGlobalRemise + totalTaxAfterGlobalRemise) * 1000
+        ) / 1000;
       } else if (remiseType === "fixed") {
+        // ✅ Fixed remise: User enters the final TTC amount
         finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
   
-        const tvaToHtRatio = totalTaxValue / netHTValue;
-        const htAfterDiscount =
-          Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) / 1000;
-  
-        discountAmountValue =
-          Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-        netHTAfterDiscount = htAfterDiscount;
-        totalTaxAfterDiscount =
-          Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+        // ✅ Check if single or multiple TVA rates
+        const uniqueTvaRates = Array.from(
+          new Set(selectedArticles.map((a) => Number(a.tva) || 0))
+        );
+        
+        if (uniqueTvaRates.length === 1 && uniqueTvaRates[0] > 0) {
+          // ✅ SINGLE TVA RATE FORMULA: Net HT = TTC / (1 + TVA rate)
+          const tvaRate = uniqueTvaRates[0] / 100;
+          netHTAfterGlobalRemise = Math.round((finalTotalValue / (1 + tvaRate)) * 1000) / 1000;
+          totalTaxAfterGlobalRemise = Math.round((finalTotalValue - netHTAfterGlobalRemise) * 1000) / 1000;
+        } else {
+          // ✅ MULTIPLE TVA RATES: EXACT SAME CALCULATION AS VENTE COMPTOIRE
+          // IMPORTANT: Ne pas arrondir le coefficient de réduction
+          const discountCoefficient = finalTotalValue / grandTotalValue; // Pas d'arrondi ici
+          
+          let newTotalHT = 0;
+          let newTotalTVA = 0;
+          
+          selectedArticles.forEach((article) => {
+            const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
+            const articleRemise = Number(article.remise) || 0;
+            const unitHT = Number(article.prixUnitaire) || 0;
+            const tvaRate = Number(article.tva) || 0;
+            
+            // Calculer sans arrondi intermédiaire pour avoir exactement le même résultat
+            const lineHTAfterDiscount = qty * unitHT * (1 - articleRemise / 100);
+            const newLineHT = lineHTAfterDiscount * discountCoefficient;
+            const newLineTVA = newLineHT * (tvaRate / 100);
+            
+            newTotalHT += newLineHT;
+            newTotalTVA += newLineTVA;
+          });
+          
+          // Arrondir seulement à la fin
+          netHTAfterGlobalRemise = Math.round(newTotalHT * 1000) / 1000;
+          totalTaxAfterGlobalRemise = Math.round(newTotalTVA * 1000) / 1000;
+        }
+        
+        discountAmountValue = Math.round(
+          (netHTBeforeGlobalRemise - netHTAfterGlobalRemise) * 1000
+        ) / 1000;
+        
+        // Calculate discount percentage for display
+        if (netHTBeforeGlobalRemise > 0) {
+          discountPercentageValue = Math.round(
+            (discountAmountValue / netHTBeforeGlobalRemise) * 100 * 1000
+          ) / 1000;
+        }
       }
     }
   
-    // ========== ADD TIMBRE FISCAL HERE ==========
-    // Add timbre fiscal to finalTotalValue (EXACTLY like fournisseur facture)
+    // ✅ STEP 3: Apply exoneration - IF exoneration is true, TVA should be 0
+    if (exoneration) {
+      totalTaxAfterGlobalRemise = 0;
+      // When exoneration is active, TTC = HT
+      finalTotalValue = netHTAfterGlobalRemise;
+    }
+  
+    // ✅ STEP 4: Add timbre fiscal
     if (timbreFiscal) {
       finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
     }
   
-    // Calculate retention from payment methods with type "retenue"
+    // ✅ STEP 5: Calculate retention
     let retentionMontantValue = 0;
-  
     methodesReglement.forEach((pm) => {
       if (pm.method === "retenue") {
         const tauxRetention = pm.tauxRetention || 1;
-        const retentionAmount = (finalTotalValue * tauxRetention) / 100;
-        retentionMontantValue += Math.round(retentionAmount * 1000) / 1000;
+        const retentionAmount = Math.round(
+          (finalTotalValue * tauxRetention) / 100 * 1000
+        ) / 1000;
+        retentionMontantValue = Math.round(
+          (retentionMontantValue + retentionAmount) * 1000
+        ) / 1000;
       }
     });
   
-    // Calculate net à payer (final total minus retention)
-    let netAPayerValue = finalTotalValue - retentionMontantValue;
-    netAPayerValue = Math.round(netAPayerValue * 1000) / 1000;
-  
-    // Use discounted values for final display
-    const displayNetHT =
-      showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax =
-      showRemise && Number(globalRemise) > 0
-        ? totalTaxAfterDiscount
-        : totalTaxValue;
+    // ✅ STEP 6: Calculate net à payer
+    let netAPayerValue = Math.round((finalTotalValue - retentionMontantValue) * 1000) / 1000;
+    netAPayerValue = Math.max(0, netAPayerValue);
   
     return {
-      sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-      netHT: Math.round(displayNetHT * 1000) / 1000,
-      totalTax: Math.round(displayTotalTax * 1000) / 1000,
-      grandTotal: Math.round(grandTotalValue * 1000) / 1000,
-      finalTotal: Math.round(finalTotalValue * 1000) / 1000, // This includes timbre
-      discountAmount: Math.round(discountAmountValue * 1000) / 1000,
+      sousTotalHT: sousTotalHTValue,
+      netHT:
+        showRemise && Number(globalRemise) > 0
+          ? netHTAfterGlobalRemise
+          : netHTBeforeGlobalRemise,
+      totalTax: exoneration
+        ? 0
+        : showRemise && Number(globalRemise) > 0
+        ? totalTaxAfterGlobalRemise
+        : totalTaxValue,
+      grandTotal: grandTotalValue,
+      finalTotal: finalTotalValue,
+      discountAmount: discountAmountValue,
+      discountPercentage: discountPercentageValue,
       retentionMontant: retentionMontantValue,
-      netAPayer: netAPayerValue, // This includes timbre via finalTotalValue
+      netAPayer: netAPayerValue,
     };
   }, [
     selectedArticles,
@@ -918,19 +1471,29 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     editingHT,
     editingTTC,
     methodesReglement,
-    timbreFiscal, // Add timbreFiscal to dependencies
+    timbreFiscal,
+    exoneration,
   ]);
+
   const handleAddArticle = (articleId: string) => {
-    const article = articles.find((a) => a.id === parseInt(articleId));
+    // First, try to find the article in filteredArticles (from search results)
+    let article = filteredArticles.find((a) => a.id === parseInt(articleId));
+
+    // If not found in filteredArticles, try the main articles array
+    if (!article) {
+      article = articles.find((a) => a.id === parseInt(articleId));
+    }
+
     if (
       article &&
-      !selectedArticles.some((item) => item.article_id === article.id)
+      !selectedArticles.some((item) => item.article_id === article?.id)
     ) {
       // Use puv_ttc from article if available, otherwise calculate it
       const initialHT = article.puv_ht || 0;
       const initialTVA = article.tva || 0;
       const initialTTC =
         article.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+
       setSelectedArticles([
         ...selectedArticles,
         {
@@ -943,8 +1506,23 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           articleDetails: article,
         },
       ]);
+
+      // Clear the search input and results after adding
+      setArticleSearch("");
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+
+      // Optionally, focus back on the search input
+      if (articleSearchRef.current) {
+        articleSearchRef.current.focus();
+      }
+      //toast.success(`Article "${article.designation}" ajouté`);
+    } else if (article) {
+      // Article already exists - show message
+      toast.info(`Article "${article.designation}" déjà ajouté`);
     }
   };
+
   const handleRemoveArticle = (articleId: number) => {
     setSelectedArticles(
       selectedArticles.filter((item) => item.article_id !== articleId)
@@ -1033,17 +1611,149 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     );
   };
 
+  // Barcode scanning handler - add this near your other handler functions
+  const handleBarcodeScan = useCallback(
+    (barcode: string) => {
+      if (!barcode.trim()) return;
+
+      console.log("Code-barres scanné:", barcode);
+
+      // Clean the barcode
+      const cleanBarcode = barcode.trim();
+
+      // Search for article by code_barre
+      const scannedArticle = articles.find(
+        (article) => article.code_barre === cleanBarcode
+      );
+
+      if (scannedArticle) {
+        const existingArticle = selectedArticles.find(
+          (item) => item.article_id === scannedArticle.id
+        );
+
+        if (existingArticle) {
+          // Increment quantity if article already exists
+          handleArticleChange(
+            scannedArticle.id,
+            "quantite",
+            (Number(existingArticle.quantite) || 0) + 1
+          );
+          toast.success(
+            `Quantité augmentée pour "${scannedArticle.designation}"`
+          );
+        } else {
+          // Add new article
+          const initialHT = scannedArticle.puv_ht || 0;
+          const initialTVA = scannedArticle.tva || 0;
+          const initialTTC =
+            scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+
+          setSelectedArticles((prev) => [
+            ...prev,
+            {
+              article_id: scannedArticle.id,
+              quantite: 1,
+              prixUnitaire: initialHT,
+              tva: initialTVA,
+              remise: 0,
+              prixTTC: Math.round(initialTTC * 1000) / 1000,
+              articleDetails: scannedArticle,
+            },
+          ]);
+          toast.success(`Article "${scannedArticle.designation}" ajouté`);
+        }
+
+        // Focus on article search input after scanning
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      } else {
+        toast.error(`Article avec code ${cleanBarcode} non trouvé`);
+      }
+    },
+    [articles, selectedArticles, handleArticleChange]
+  );
+
+  // Keyboard handler for barcode scanner
+  const handleKeyPress = useCallback(
+    (event: KeyboardEvent) => {
+      // Check if user is typing in an input field
+      const target = event.target as HTMLElement;
+      const isInputField =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      if (isInputField) {
+        // Allow normal typing in input fields
+        return;
+      }
+
+      // Barcode scanner handling
+      if (event.key === "Enter") {
+        if (barcodeInput.length > 0) {
+          handleBarcodeScan(barcodeInput);
+          setBarcodeInput("");
+        }
+      } else if (event.key.length === 1) {
+        // Accumulate characters
+        setBarcodeInput((prev) => prev + event.key);
+
+        // Reset timeout
+        if (scanningTimeout) {
+          clearTimeout(scanningTimeout);
+        }
+
+        const newTimeout = setTimeout(() => {
+          if (barcodeInput.length >= 3) {
+            handleBarcodeScan(barcodeInput);
+          }
+          setBarcodeInput("");
+        }, 150);
+
+        setScanningTimeout(newTimeout);
+      }
+    },
+    [barcodeInput, scanningTimeout, handleBarcodeScan]
+  );
+
+  // Set up keyboard listener for barcode scanning - add this useEffect
+  useEffect(() => {
+    // Always listen for barcode scanning
+    document.addEventListener("keydown", handleKeyPress);
+    console.log("Scanner automatique activé - prêt à scanner...");
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+    };
+  }, [handleKeyPress, scanningTimeout]);
+
+  // Focus management for modal
+  useEffect(() => {
+    if (createEditModal && articleSearchRef.current) {
+      // Focus on article search input when modal opens
+      setTimeout(() => {
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      }, 100);
+    }
+  }, [createEditModal]);
+
   const toggleCreateEditModal = useCallback(() => {
     if (createEditModal) {
       setCreateEditModal(false);
       setFacture(null);
       setSelectedArticles([]);
       setGlobalRemise(0);
-      setRemiseType("percentage");
+      setRemiseType("fixed");
       setShowRemise(false);
       setSelectedClient(null);
       setSelectedVendeur(null);
-      setTimbreFiscal(false);
+      setTimbreFiscal(true);
       setExoneration(false);
       setConditionPaiement("");
       setClientSearch("");
@@ -1051,18 +1761,15 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       setFilteredArticles([]);
       setFilteredClients([]);
       setIsEdit(false);
-
-      // RESET PAYMENT METHODS AND RETENTION
       setMethodesReglement([]);
       setEspaceNotes("");
       setRetentionAmount(0);
-
       validation.resetForm();
-      // ... rest of your existing logic
+      setModalLoading(false);
     } else {
       setCreateEditModal(true);
     }
-  }, [createEditModal, isEdit, factures.length]);
+  }, [createEditModal]);
 
   // Ajouter méthode de règlement
   const addMethodeReglement = () => {
@@ -1309,13 +2016,13 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
       const item = itemRefs[focusedIndex].current;
       const dropdown = dropdownRef;
-      
+
       if (item && dropdown) {
         const itemTop = item.offsetTop;
         const itemBottom = itemTop + item.offsetHeight;
         const dropdownTop = dropdown.scrollTop;
         const dropdownBottom = dropdownTop + dropdown.clientHeight;
-        
+
         if (itemTop < dropdownTop) {
           dropdown.scrollTop = itemTop;
         } else if (itemBottom > dropdownBottom) {
@@ -1324,13 +2031,13 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       }
     }
   }, [focusedIndex, dropdownRef, itemRefs]);
-  
+
   useEffect(() => {
     // Reset item refs when filtered articles change
     setItemRefs(filteredArticles.map(() => React.createRef()));
     setFocusedIndex(-1); // Reset focus
   }, [filteredArticles]);
-  
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
@@ -1338,13 +2045,12 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         setFocusedIndex(-1);
       }
     };
-  
-    document.addEventListener('mousedown', handleClickOutside);
+
+    document.addEventListener("mousedown", handleClickOutside);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [dropdownRef]);
-
 
   const validation = useFormik({
     enableReinitialize: true,
@@ -1395,48 +2101,38 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     setDetailModal(true);
   };
 
+  // In the openEncaissementModal function:
+  // In the openEncaissementModal function, update the calculation:
   const openEncaissementModal = async (facture: FactureClient) => {
     setSelectedFacture(facture);
     setEncaissementModal(true);
-    
+
     try {
       const nextNumber = await fetchNextEncaissementNumberFromAPI();
       setNextEncaissementNumber(nextNumber);
-      
-      // ✅ USE THE EXACT SAME CALCULATION AS THE TABLE
-      // Calculate payment methods total (excluding retention)
-      const paymentMethodsTotal = facture.paymentMethods 
-        ? facture.paymentMethods
-            .filter((pm: any) => pm.method !== "retenue")
-            .reduce((sum: number, pm: any) => {
-              let amountValue: number;
-              if (typeof pm.amount === 'string') {
-                amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
-              } else if (typeof pm.amount === 'number') {
-                amountValue = pm.amount;
-              } else {
-                amountValue = 0;
-              }
-              return sum + amountValue;
-            }, 0)
-        : 0;
-  
-      // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+
+      // ✅ Get ALL payment sources including vente comptoire
+      const paymentSummary = getPaymentMethodsSummary(facture);
+
+      // Calculate available amount
       const hasRemise = facture.remise && Number(facture.remise) > 0;
-      const finalTotal = hasRemise 
+      const finalTotal = hasRemise
         ? Number(facture.totalTTCAfterRemise) || Number(facture.totalTTC) || 0
         : Number(facture.totalTTC) || 0;
-      
-      const retentionAmount = Number(facture.montantRetenue) || 0;
-      
-      // ✅ EXACT SAME CALCULATION AS TABLE: (finalTotal - retentionAmount) - totalPaye
+
+      // Include vente comptoire payments in total
+      const totalRetention = paymentSummary?.totalRetention || 0;
       const totalPaye = facture.montantPaye || 0;
-      const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
-      
-      // Format initial value with comma
+
+      // Available for encaissement: (finalTotal - retention) - totalPaye
+      const availableAmount = Math.max(
+        0,
+        finalTotal - totalRetention - totalPaye
+      );
+
+      // Format initial value
       const initialMontant = availableAmount.toFixed(3).replace(".", ",");
-      
-      // Set all values including the new fields
+
       encaissementValidation.setValues({
         montant: initialMontant,
         modePaiement: "Espece",
@@ -1448,40 +2144,62 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         dateEcheance: "",
         notes: "",
       });
+
+      // Show source info if exists
+      if (facture.bonCommandeClient) {
+        toast.info(
+          <div>
+            <strong>
+              Bon de Commande: {facture.bonCommandeClient.numeroCommande}
+            </strong>
+            <div className="small">
+              Déjà payé:{" "}
+              {Number(facture.bonCommandeClient.montantPaye || 0).toFixed(3)} DT
+            </div>
+          </div>,
+          { autoClose: 5000 }
+        );
+      }
+
+      // Add vente comptoire info
+      if (facture.venteComptoire) {
+        toast.info(
+          <div>
+            <strong>
+              Vente Comptoire: {facture.venteComptoire.numeroCommande}
+            </strong>
+            <div className="small">
+              Règlements:{" "}
+              {paymentSummary?.totalVenteComptoireMethods?.toFixed(3) ||
+                "0,000"}{" "}
+              DT
+            </div>
+          </div>,
+          { autoClose: 5000 }
+        );
+      }
     } catch (err) {
       console.error("Failed to fetch next encaissement number:", err);
-      
-      // Same calculation for fallback
-      const paymentMethodsTotal = facture.paymentMethods 
-        ? facture.paymentMethods
-            .filter((pm: any) => pm.method !== "retenue")
-            .reduce((sum: number, pm: any) => {
-              let amountValue: number;
-              if (typeof pm.amount === 'string') {
-                amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
-              } else if (typeof pm.amount === 'number') {
-                amountValue = pm.amount;
-              } else {
-                amountValue = 0;
-              }
-              return sum + amountValue;
-            }, 0)
-        : 0;
-  
-      // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+
+      // Fallback calculation
+      const paymentSummary = getPaymentMethodsSummary(facture);
+      const totalRetention = paymentSummary?.totalRetention || 0;
+      const totalPaye = facture.montantPaye || 0;
+
       const hasRemise = facture.remise && Number(facture.remise) > 0;
-      const finalTotal = hasRemise 
+      const finalTotal = hasRemise
         ? Number(facture.totalTTCAfterRemise) || Number(facture.totalTTC) || 0
         : Number(facture.totalTTC) || 0;
-      
-      const retentionAmount = Number(facture.montantRetenue) || 0;
-      const totalPaye = facture.montantPaye || 0;
-      const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
-      
+
+      const availableAmount = Math.max(
+        0,
+        finalTotal - totalRetention - totalPaye
+      );
+
       const initialMontant = availableAmount.toFixed(3).replace(".", ",");
       const year = moment().format("YYYY");
       const defaultNumber = `ENC-C${year}${String(0 + 1).padStart(5, "0")}`;
-      
+
       encaissementValidation.setValues({
         montant: initialMontant,
         modePaiement: "Espece",
@@ -1521,7 +2239,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
 
   const handleEncaissementSubmit = async (values: any) => {
     if (!selectedFacture) return;
-  
+
     if (
       selectedFacture.status === "Payee" ||
       selectedFacture.status === "Annulee"
@@ -1531,9 +2249,9 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       );
       return;
     }
-  
+
     const encaissementAmount = values.montant;
-  
+
     // ✅ USE THE EXACT SAME CALCULATION AS THE TABLE
     // Calculate payment methods total (excluding retention)
     const paymentMethodsTotal = selectedFacture.paymentMethods
@@ -1541,9 +2259,9 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           .filter((pm: any) => pm.method !== "retenue")
           .reduce((sum: number, pm: any) => {
             let amountValue: number;
-            if (typeof pm.amount === 'string') {
+            if (typeof pm.amount === "string") {
               amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
-            } else if (typeof pm.amount === 'number') {
+            } else if (typeof pm.amount === "number") {
               amountValue = pm.amount;
             } else {
               amountValue = 0;
@@ -1551,30 +2269,34 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
             return sum + amountValue;
           }, 0)
       : 0;
-  
+
     // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
-    const hasRemise = selectedFacture.remise && Number(selectedFacture.remise) > 0;
-    const finalTotal = hasRemise 
-      ? Number(selectedFacture.totalTTCAfterRemise) || Number(selectedFacture.totalTTC) || 0
+    const hasRemise =
+      selectedFacture.remise && Number(selectedFacture.remise) > 0;
+    const finalTotal = hasRemise
+      ? Number(selectedFacture.totalTTCAfterRemise) ||
+        Number(selectedFacture.totalTTC) ||
+        0
       : Number(selectedFacture.totalTTC) || 0;
-    
+
     const retentionAmount = Number(selectedFacture.montantRetenue) || 0;
-    
+
     // ✅ EXACT SAME CALCULATION AS TABLE: (finalTotal - retentionAmount) - totalPaye
     const totalPaye = selectedFacture.montantPaye || 0;
-    const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
-  
+    const availableAmount = Math.max(
+      0,
+      finalTotal - retentionAmount - totalPaye
+    );
+
     if (encaissementAmount > availableAmount) {
       toast.error(
         `Le montant d'encaissement (${encaissementAmount.toFixed(
           3
-        )} DT) dépasse le montant disponible (${availableAmount.toFixed(
-          3
-        )} DT)`
+        )} DT) dépasse le montant disponible (${availableAmount.toFixed(3)} DT)`
       );
       return;
     }
-  
+
     try {
       const encaissementData = {
         facture_id: selectedFacture.id,
@@ -1592,7 +2314,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         }),
         notes: values.notes || "",
       };
-  
+
       await createEncaissementClient(encaissementData);
       setEncaissementModal(false);
       fetchData();
@@ -1645,10 +2367,10 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           function (value) {
             if (!value || !selectedFacture) return false;
             const numericValue = parseFloat(value.replace(",", "."));
-            
+
             // ✅ USE THE EXACT SAME CALCULATION AS TABLE - JUST USE RESTEAPAYER DIRECTLY
             const availableAmount = Number(selectedFacture.resteAPayer) || 0;
-            
+
             const roundedValue = Math.round(numericValue * 1000) / 1000;
             const roundedAvailable = Math.round(availableAmount * 1000) / 1000;
             return roundedValue <= roundedAvailable;
@@ -1658,7 +2380,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       modePaiement: Yup.string()
         .required("Le mode de paiement est requis")
         .oneOf(
-          ["Espece", "Cheque", "Virement", "Traite", "Autre" , "tpe"],
+          ["Espece", "Cheque", "Virement", "Traite", "Autre", "tpe"],
           "Mode de paiement invalide"
         ),
       numeroEncaissement: Yup.string()
@@ -1670,7 +2392,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         .max(new Date(), "La date ne peut pas être dans le futur"),
       numeroCheque: Yup.string().when("modePaiement", {
         is: "Cheque",
-        then: (schema) => 
+        then: (schema) =>
           schema
             .required("Le numéro du chèque est requis")
             .min(2, "Le numéro du chèque doit contenir au moins 2 caractères"),
@@ -1678,7 +2400,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       }),
       banque: Yup.string().when("modePaiement", {
         is: "Cheque",
-        then: (schema) => 
+        then: (schema) =>
           schema
             .required("La banque est requise")
             .min(2, "Le nom de la banque doit contenir au moins 2 caractères"),
@@ -1686,7 +2408,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
       }),
       numeroTraite: Yup.string().when("modePaiement", {
         is: "Traite",
-        then: (schema) => 
+        then: (schema) =>
           schema
             .required("Le numéro de traite est requis")
             .min(2, "Le numéro de traite doit contenir au moins 2 caractères"),
@@ -1796,6 +2518,31 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           </Link>
         ),
       },
+      // In your columns array, add this column:
+      {
+        header: "Source",
+        accessorKey: "sourceInfo",
+        enableColumnFilter: false,
+        cell: (cell: any) => {
+          const facture = cell.row.original;
+          if (facture.bonCommandeClient) {
+            return (
+              <Badge color="info">
+                <i className="ri-shopping-bag-line me-1"></i>
+                {facture.bonCommandeClient.numeroCommande}
+              </Badge>
+            );
+          } else if (facture.venteComptoire) {
+            return (
+              <Badge color="warning">
+                <i className="ri-store-line me-1"></i>
+                {facture.venteComptoire.numeroCommande}
+              </Badge>
+            );
+          }
+          return "-";
+        },
+      },
       {
         header: "Date Facture",
         accessorKey: "dateFacture",
@@ -1851,108 +2598,16 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
           return (
             <ul className="list-inline hstack gap-2 mb-0">
               <li className="list-inline-item">
-                <Link
-                  to="#"
-                  className="text-info d-inline-block"
+                <button
+                  type="button"
+                  className="btn btn-info btn-sm"
+                  style={{ marginRight: "12px" }}
                   onClick={() => openDetailModal(facture)}
+                  title="Voir les détails"
                 >
-                  <i className="ri-eye-line fs-16"></i>
-                </Link>
+                  Details <i className="ri-eye-line fs-12"></i>
+                </button>
               </li>
-              <li className="list-inline-item">
-                <Link
-                  to="#"
-                  className="text-info d-inline-block"
-                  onClick={() => openPdfModal(facture)}
-                >
-                  <i className="ri-file-pdf-line fs-16"></i>
-                </Link>
-              </li>
-              {facture.status !== "Annulee" && !facture.hasPayments && (
-                <li className="list-inline-item edit">
-                  <Link
-                    to="#"
-                    className="text-primary d-inline-block edit-item-btn"
-                    onClick={() => {
-                      setFacture(facture);
-                      setSelectedClient(facture.client);
-                      // In the columns action cell, update the edit click handler:
-                      setSelectedArticles(
-                        facture.articles.map(
-                          (item: FactureClient["articles"][number]) => {
-                            // ✅ FIX: Always use prix_ttc from database first, don't recalculate
-                            const prixTTCFromDB = Number(item.prix_ttc);
-
-                            return {
-                              article_id: item.article.id,
-                              quantite: item.quantite,
-                              prixUnitaire: Number(item.prixUnitaire),
-                              prixTTC: prixTTCFromDB, // Use the stored TTC value directly
-                              tva: item.tva != null ? Number(item.tva) : null,
-                              remise:
-                                item.remise != null
-                                  ? Number(item.remise)
-                                  : null,
-                              articleDetails: item.article,
-                            };
-                          }
-                        )
-                      );
-                      setGlobalRemise(facture.remise || 0);
-                      setRemiseType(facture.remiseType || "percentage");
-                      setShowRemise(!!facture.remise && facture.remise > 0);
-                      setIsEdit(true);
-                      setCreateEditModal(true);
-                      setTimbreFiscal(facture.timbreFiscal || false);
-                      setExoneration(facture.exoneration || false); // Add this line
-                      setMethodesReglement(
-                        facture.paymentMethods &&
-                          facture.paymentMethods.length > 0
-                          ? facture.paymentMethods.map(
-                              (pm: any, index: number) => ({
-                                id: pm.id || `edit-${index}`,
-                                method: pm.method,
-                                amount: pm.amount
-                                  ? pm.amount.toFixed(3).replace(".", ",")
-                                  : "",
-                                numero: pm.numero || "",
-                                banque: pm.banque || "",
-                                dateEcheance: pm.dateEcheance || "",
-                              })
-                            )
-                          : [] // Empty array if no saved payments
-                      );
-                      setConditionPaiement(facture.conditionPaiement);
-                      setSelectedVendeur(facture.vendeur);
-                    }}
-                  >
-                    <i className="ri-pencil-fill fs-16"></i>
-                  </Link>
-                </li>
-              )}
-              <li className="list-inline-item">
-                <Link
-                  to="#"
-                  className="text-success d-inline-block"
-                  onClick={() => openEncaissementModal(facture)}
-                >
-                  <i className="ri-money-dollar-circle-line fs-16"></i>
-                </Link>
-              </li>
-              {facture.status !== "Annulee" && !facture.hasPayments && (
-                <li className="list-inline-item">
-                  <Link
-                    to="#"
-                    className="text-danger d-inline-block"
-                    onClick={() => {
-                      setFacture(facture);
-                      setDeleteModal(true);
-                    }}
-                  >
-                    <i className="ri-delete-bin-5-fill fs-16"></i>
-                  </Link>
-                </li>
-              )}
             </ul>
           );
         },
@@ -1967,7 +2622,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         onDeleteClick={handleDelete}
         onCloseClick={() => setDeleteModal(false)}
       />
-      <Container fluid>
+      <Container fluid style={{ maxWidth: "100%" }}>
         <BreadCrumb title="Factures Clients" pageTitle="Factures" />
         <Row>
           <Col lg={12}>
@@ -1981,6 +2636,19 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                   </div>
                   <div className="col-sm-auto">
                     <div className="d-flex gap-1 flex-wrap">
+                      <Button
+                        color="info"
+                        onClick={() => {
+                          setStartDate(null);
+                          setEndDate(null);
+                          setSearchText("");
+                          setSearchPhone("");
+                        }}
+                        size="sm"
+                      >
+                        <i className="ri-close-line align-bottom me-1"></i>
+                        Réinitialiser tous les filtres
+                      </Button>
                       <Button
                         color="secondary"
                         onClick={() => {
@@ -2051,19 +2719,79 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                 </NavItem>
               </Nav>
               <CardBody className="pt-3">
+                {/* Replace your current Row with search filters with this enhanced version */}
                 <Row className="mb-3">
-                  <Col md={4}>
+                  <Col md={3}>
                     <div className="search-box">
                       <Input
                         type="text"
                         className="form-control"
-                        placeholder="Rechercher..."
+                        placeholder="Rechercher par nom ou numéro..."
                         value={searchText}
                         onChange={(e) => setSearchText(e.target.value)}
                       />
                       <i className="ri-search-line search-icon"></i>
                     </div>
                   </Col>
+                  {/* Phone Search */}
+                  <Col md={3}>
+                    <div className="search-box">
+                      <Input
+                        type="text"
+                        className="form-control"
+                        placeholder="Rechercher par téléphone..."
+                        value={searchPhone}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          // Apply auto-space formatting for phone numbers
+                          if (value) {
+                            const formatted = formatPhoneInput(value);
+                            setSearchPhone(formatted);
+                          } else {
+                            setSearchPhone("");
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          // Allow navigation keys
+                          if (
+                            [
+                              "Backspace",
+                              "Delete",
+                              "ArrowLeft",
+                              "ArrowRight",
+                              "Tab",
+                            ].includes(e.key)
+                          ) {
+                            return;
+                          }
+
+                          // Only allow digits and space
+                          if (
+                            !/[0-9\s]/.test(e.key) &&
+                            e.key !== "Backspace" &&
+                            e.key !== "Delete"
+                          ) {
+                            e.preventDefault();
+                          }
+                        }}
+                      />
+                      <i className="ri-phone-line search-icon"></i>
+                      {searchPhone && (
+                        <button
+                          type="button"
+                          className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-2"
+                          onClick={() => setSearchPhone("")}
+                          title="Effacer"
+                        >
+                          <i className="ri-close-line"></i>
+                        </button>
+                      )}
+                    </div>
+                  </Col>
+
+                  {/* Name/Number Search */}
+
+                  {/* Date Filters */}
                   <Col md={3}>
                     <InputGroup>
                       <InputGroupText>De</InputGroupText>
@@ -2094,21 +2822,10 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                       />
                     </InputGroup>
                   </Col>
-                  <Col md={2}>
-                    <Button
-                      color="light"
-                      className="w-100"
-                      onClick={() => {
-                        setStartDate(null);
-                        setEndDate(null);
-                        setSearchText("");
-                      }}
-                    >
-                      <i className="ri-close-line align-bottom me-1"></i>{" "}
-                      Réinitialiser
-                    </Button>
-                  </Col>
                 </Row>
+
+                {/* Add Reset All Filters Button */}
+
                 {loading ? (
                   <Loader />
                 ) : error ? (
@@ -2126,6 +2843,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                 )}
 
                 {/* Quick Client Creation Modal */}
+                {/* Replace your current Client Creation Modal with this complete version */}
                 <Modal
                   isOpen={clientModal}
                   toggle={() => setClientModal(false)}
@@ -2133,13 +2851,28 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                   size="lg"
                 >
                   <ModalHeader toggle={() => setClientModal(false)}>
-                    Nouveau Client
+                    <div className="d-flex align-items-center">
+                      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+                        <i className="ri-user-add-line text-primary fs-4"></i>
+                      </div>
+                      <div>
+                        <h4 className="mb-0 fw-bold text-dark">
+                          Nouveau Client
+                        </h4>
+                        <small className="text-muted">
+                          Créer un nouveau client rapidement
+                        </small>
+                      </div>
+                    </div>
                   </ModalHeader>
+
                   <ModalBody>
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Raison Sociale</Label>
+                          <Label className="form-label fw-semibold">
+                            Raison Sociale*
+                          </Label>
                           <Input
                             value={newClient.raison_sociale}
                             onChange={(e) =>
@@ -2149,12 +2882,15 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Raison sociale"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Désignation</Label>
+                          <Label className="form-label fw-semibold">
+                            Désignation
+                          </Label>
                           <Input
                             value={newClient.designation}
                             onChange={(e) =>
@@ -2164,6 +2900,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Désignation"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
@@ -2172,7 +2909,9 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Matricule Fiscal</Label>
+                          <Label className="form-label fw-semibold">
+                            Matricule Fiscal
+                          </Label>
                           <Input
                             value={newClient.matricule_fiscal}
                             onChange={(e) =>
@@ -2182,12 +2921,15 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Matricule fiscal"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Registre Commerce</Label>
+                          <Label className="form-label fw-semibold">
+                            Registre Commerce
+                          </Label>
                           <Input
                             value={newClient.register_commerce}
                             onChange={(e) =>
@@ -2197,13 +2939,14 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Registre de commerce"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
                     <div className="mb-3">
-                      <Label>Adresse</Label>
+                      <Label className="form-label fw-semibold">Adresse</Label>
                       <Input
                         value={newClient.adresse}
                         onChange={(e) =>
@@ -2212,14 +2955,17 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                             adresse: e.target.value,
                           })
                         }
-                        placeholder="Adresse"
+                        placeholder="Adresse complète"
+                        className="form-control-lg"
                       />
                     </div>
 
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Ville</Label>
+                          <Label className="form-label fw-semibold">
+                            Ville
+                          </Label>
                           <Input
                             value={newClient.ville}
                             onChange={(e) =>
@@ -2229,12 +2975,15 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Ville"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Code Postal</Label>
+                          <Label className="form-label fw-semibold">
+                            Code Postal
+                          </Label>
                           <Input
                             value={newClient.code_postal}
                             onChange={(e) =>
@@ -2244,426 +2993,619 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               })
                             }
                             placeholder="Code postal"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
+                    {/* Phone Fields with Auto-Space */}
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 1</Label>
-                          <Input
-                            value={newClient.telephone1}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone1: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 1"
-                          />
+                          <Label className="form-label fw-semibold">
+                            Téléphone 1*
+                          </Label>
+                          <div className="position-relative">
+                            <Input
+                              value={newClient.telephone1}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                // Auto-format phone number
+                                if (value) {
+                                  const formatted = formatPhoneInput(value);
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone1: formatted,
+                                  });
+                                } else {
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone1: value,
+                                  });
+                                }
+                              }}
+                              placeholder="22 222 222"
+                              className="form-control-lg pe-5"
+                            />
+                            {newClient.telephone1 && (
+                              <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                                <i className="ri-phone-line text-muted"></i>
+                              </div>
+                            )}
+                          </div>
+                          <small className="text-muted">
+                            Format automatique: XX XXX XXX
+                          </small>
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 2</Label>
-                          <Input
-                            value={newClient.telephone2}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone2: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 2"
-                          />
+                          <Label className="form-label fw-semibold">
+                            Téléphone 2
+                          </Label>
+                          <div className="position-relative">
+                            <Input
+                              value={newClient.telephone2}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                // Auto-format phone number
+                                if (value) {
+                                  const formatted = formatPhoneInput(value);
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone2: formatted,
+                                  });
+                                } else {
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone2: value,
+                                  });
+                                }
+                              }}
+                              placeholder="22 222 222"
+                              className="form-control-lg pe-5"
+                            />
+                            {newClient.telephone2 && (
+                              <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                                <i className="ri-phone-line text-muted"></i>
+                              </div>
+                            )}
+                          </div>
+                          <small className="text-muted">
+                            Format automatique: XX XXX XXX
+                          </small>
                         </div>
                       </Col>
                     </Row>
 
                     <div className="mb-3">
-                      <Label>Email</Label>
+                      <Label className="form-label fw-semibold">Email</Label>
                       <Input
                         type="email"
                         value={newClient.email}
                         onChange={(e) =>
                           setNewClient({ ...newClient, email: e.target.value })
                         }
-                        placeholder="Email"
+                        placeholder="email@example.com"
+                        className="form-control-lg"
                       />
                     </div>
+
+                    <div className="mb-3">
+                      <Label className="form-label fw-semibold">Statut</Label>
+                      <Input
+                        type="select"
+                        value={newClient.status}
+                        onChange={(e) =>
+                          setNewClient({
+                            ...newClient,
+                            status: e.target.value as "Actif" | "Inactif",
+                          })
+                        }
+                        className="form-control-lg"
+                      >
+                        <option value="Actif">Actif</option>
+                        <option value="Inactif">Inactif</option>
+                      </Input>
+                    </div>
                   </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
+
+                  <ModalFooter className="border-0">
+                    <Button
+                      color="light"
                       onClick={() => setClientModal(false)}
+                      className="btn-invoice fs-6 px-4"
                     >
+                      <i className="ri-close-line me-2"></i>
                       Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
+                    </Button>
+                    <Button
+                      color="primary"
                       onClick={handleCreateClient}
+                      disabled={
+                        !newClient.raison_sociale || !newClient.telephone1
+                      }
+                      className="btn-invoice-primary fs-6 px-4"
                     >
+                      <i className="ri-user-add-line me-2"></i>
                       Créer Client
-                    </button>
-                  </div>
+                    </Button>
+                  </ModalFooter>
                 </Modal>
 
                 {/* Quick Article Creation Modal */}
-                <Modal
-                  isOpen={articleModal}
-                  toggle={() => setArticleModal(false)}
-                  centered
-                  size="xl"
+               {/* Quick Article Creation Modal */}
+<Modal
+  isOpen={articleModal}
+  toggle={() => setArticleModal(false)}
+  centered
+  size="lg"
+>
+  <ModalHeader toggle={() => setArticleModal(false)}>
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-success bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-add-box-line text-success fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">Nouvel Article</h4>
+        <small className="text-muted">
+          Ajouter un nouveau produit
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+
+  <Form
+    onSubmit={(e) => {
+      e.preventDefault();
+      handleCreateArticle();
+    }}
+  >
+    <ModalBody>
+      {/* ================= BASIC INFORMATION ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-information-line me-2"></i>
+            Informations de Base
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Référence
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.reference}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      reference: e.target.value,
+                    })
+                  }
+                  placeholder="REF"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Identifiant unique de l'article
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Désignation
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.designation}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      designation: e.target.value,
+                    })
+                  }
+                  placeholder="Nom de l'article"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Nom complet du produit
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= CATEGORIES ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-folder-line me-2"></i>
+            Catégorisation
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Famille Principale
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      categorie_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
                 >
-                  <ModalHeader toggle={() => setArticleModal(false)}>
-                    <div className="d-flex align-items-center">
-                      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-add-box-line text-primary fs-4"></i>
-                      </div>
-                      <div>
-                        <h4 className="mb-0 fw-bold text-dark">
-                          Nouvel Article Rapide
-                        </h4>
-                        <small className="text-muted">
-                          Créer un nouvel article rapidement
-                        </small>
-                      </div>
-                    </div>
-                  </ModalHeader>
-                  <ModalBody>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Référence</Label>
-                          <Input
-                            value={newArticle.reference}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                reference: e.target.value,
-                              })
-                            }
-                            placeholder="Référence article"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Nom</Label>
-                          <Input
-                            value={newArticle.nom}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                nom: e.target.value,
-                              })
-                            }
-                            placeholder="Nom de l'article"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                  <option value="">
+                    Sélectionner une famille principale
+                  </option>
+                  {categories
+                    .filter((c) => !c.parent_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nom}
+                      </option>
+                    ))}
+                </Input>
+                <small className="text-muted">
+                  Catégorie principale
+                </small>
+              </div>
+            </Col>
 
-                    <div className="mb-3">
-                      <Label className="form-label">Désignation</Label>
-                      <Input
-                        value={newArticle.designation}
-                        onChange={(e) =>
-                          setNewArticle({
-                            ...newArticle,
-                            designation: e.target.value,
-                          })
-                        }
-                        placeholder="Désignation complète"
-                      />
-                    </div>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Sous-Famille
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.sous_categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      sous_categorie_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">
+                    Sélectionner une sous-famille
+                  </option>
+                  {subcategories.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.nom}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">
+                  Sous-catégorie
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
 
-                    {/* Categories */}
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Famille Principale
-                          </Label>
-                          <Input
-                            type="select"
-                            value={newArticle.categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                categorie_id: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">Sélectionner une famille</option>
-                            {categories
-                              .filter((cat) => !cat.parent_id)
-                              .map((categorie) => (
-                                <option key={categorie.id} value={categorie.id}>
-                                  {categorie.nom}
-                                </option>
-                              ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Sous-Famille</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.sous_categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                sous_categorie_id: e.target.value,
-                              })
-                            }
-                            disabled={!newArticle.categorie_id}
-                          >
-                            <option value="">
-                              Sélectionner une sous-famille
-                            </option>
-                            {subcategories.map((subcategorie) => (
-                              <option
-                                key={subcategorie.id}
-                                value={subcategorie.id}
-                              >
-                                {subcategorie.nom}
-                              </option>
-                            ))}
-                          </Input>
-                          {!newArticle.categorie_id && (
-                            <small className="text-muted">
-                              Sélectionnez d'abord une famille principale
-                            </small>
-                          )}
-                        </div>
-                      </Col>
-                    </Row>
+      {/* ================= SUPPLIER / TYPE ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-truck-line me-2"></i>
+            Fournisseur & Type
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Fournisseur
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.fournisseur_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      fournisseur_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">
+                    Sélectionner un fournisseur
+                  </option>
+                  {fournisseurs.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.raison_sociale}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">
+                  Fournisseur principal
+                </small>
+              </div>
+            </Col>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Fournisseur</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.fournisseur_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                fournisseur_id: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">
-                              Sélectionner un fournisseur
-                            </option>
-                            {fournisseurs.map((fournisseur) => (
-                              <option
-                                key={fournisseur.id}
-                                value={fournisseur.id}
-                              >
-                                {fournisseur.raison_sociale}
-                              </option>
-                            ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Type</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.type}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                type: e.target.value as
-                                  | "Consigné"
-                                  | "Non Consigné",
-                              })
-                            }
-                          >
-                            <option value="Non Consigné">Non Consigné</option>
-                            <option value="Consigné">Consigné</option>
-                          </Input>
-                        </div>
-                      </Col>
-                    </Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Type
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.type}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      type: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="Non Consigné">
+                    Non Consigné
+                  </option>
+                  <option value="Consigné">Consigné</option>
+                </Input>
+                <small className="text-muted">
+                  Type d'article
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
 
-                    {/* Pricing Section */}
-                    <h6 className="fw-semibold mb-3 text-primary">
-                      Prix et Taxes
-                    </h6>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                pua_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat TTC</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+      {/* ================= PRICING SECTION ================= */}
+      <Row className="mb-4">
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-shopping-bag-line me-2"></i>
+                Prix d'Achat
+              </h6>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix de vente HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                puv_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Prix de vente TTC
-                          </Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Prix d'achat HT (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ht}
+                  onChange={(e) =>
+                    handlePriceChange("pua_ht", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  Prix hors taxes avant marge
+                </small>
+              </div>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Quantité en stock
-                          </Label>
-                          <Input
-                            type="number"
-                            value={newArticle.qte}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                qte: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">TVA (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.tva}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                tva: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">
+                  Prix d'achat TTC (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ttc}
+                  onChange={(e) =>
+                    handlePriceChange("pua_ttc", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                  {1 + parseNumber(newArticle.tva) / 100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Remise (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.remise}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                remise: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3 d-flex align-items-end">
-                          <div className="form-check form-switch">
-                            <Input
-                              type="checkbox"
-                              checked={newArticle.taux_fodec}
-                              onChange={(e) =>
-                                setNewArticle({
-                                  ...newArticle,
-                                  taux_fodec: e.target.checked,
-                                })
-                              }
-                              className="form-check-input"
-                            />
-                            <Label
-                              check
-                              className="form-check-label fw-semibold"
-                            >
-                              Taux FODEC (1%)
-                            </Label>
-                          </div>
-                        </div>
-                      </Col>
-                    </Row>
-                  </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
-                      onClick={() => setArticleModal(false)}
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleCreateArticle}
-                    >
-                      <i className="ri-add-line me-2"></i>
-                      Créer Article
-                    </button>
-                  </div>
-                </Modal>
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-price-tag-3-line me-2"></i>
+                Prix de Vente
+              </h6>
+
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Prix de vente HT (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ht}
+                  onChange={(e) =>
+                    handlePriceChange("puv_ht", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  Prix de vente hors taxes
+                </small>
+              </div>
+
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">
+                  Prix de vente TTC (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ttc}
+                  onChange={(e) =>
+                    handlePriceChange("puv_ttc", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                  {1 + parseNumber(newArticle.tva) / 100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ================= TAX SETTINGS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-percent-line me-2"></i>
+            Paramètres Fiscaux
+          </h5>
+
+          <Row>
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Taux de TVA (%)
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.tva}
+                  onChange={(e) =>
+                    handleTVAChange(e.target.value)
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="0">0% (Exonéré)</option>
+                  <option value="7">7%</option>
+                  <option value="10">10%</option>
+                  <option value="13">13%</option>
+                  <option value="19">19% (Taux normal)</option>
+                  <option value="21">21%</option>
+                </Input>
+                <small className="text-muted">
+                  Taux de TVA applicable
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold d-block">
+                  FODEC
+                </Label>
+                <div className="form-check form-switch form-switch-lg">
+                  <Input
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={!!newArticle.taux_fodec}
+                    onChange={(e) =>
+                      handleFodecChange(e.target.checked)
+                    }
+                    id="fodecSwitch"
+                  />
+                  <Label
+                    className="form-check-label fw-semibold"
+                    for="fodecSwitch"
+                  >
+                    Appliquer FODEC (1%)
+                  </Label>
+                </div>
+                <small className="text-muted">
+                  Taxe FODEC de 1% sur le HT
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= INVENTORY & DETAILS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-store-line me-2"></i>
+            Stock & Détails
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Quantité en stock
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.qte}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      qte: e.target.value,
+                    })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Stock initial disponible
+                </small>
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Remise (%)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.remise}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      remise: e.target.value,
+                    })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Pourcentage de remise par défaut
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+    </ModalBody>
+
+    <ModalFooter className="border-0 pt-4">
+      <Button
+        color="light"
+        onClick={() => setArticleModal(false)}
+        className="btn-invoice fs-6 px-4"
+      >
+        <i className="ri-close-line me-2"></i>
+        Annuler
+      </Button>
+      <Button
+        color="success"
+        type="submit"
+        className="btn-invoice btn-invoice-success fs-6 px-4"
+      >
+        <i className="ri-add-line me-2"></i>
+        Créer Article
+      </Button>
+    </ModalFooter>
+  </Form>
+</Modal>
 
                 <Modal
                   isOpen={detailModal}
@@ -2878,270 +3820,606 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               </Table>
                             </div>
                             <div className="border-top p-4">
-                              <Row className="justify-content-end">
-                                <Col xs={8} sm={6} md={5} lg={4}>
-                                  {(() => {
-                                    let sousTotalHTValue = 0;
-                                    let netHTValue = 0;
-                                    let totalTaxValue = 0;
-                                    let grandTotalValue = 0;
-                                    selectedFacture.articles.forEach(
-                                      (article) => {
-                                        const qty =
-                                          Number(article.quantite) || 0;
-                                        const tvaRate = Number(
-                                          article.tva || 0
-                                        );
-                                        const remiseRate = Number(
-                                          article.remise || 0
-                                        );
-                                        const priceHT =
-                                          Number(article.prixUnitaire) || 0;
-                                        // USE prix_ttc FROM DATABASE OR CALCULATE FROM ARTICLE puv_ttc
-                                        const priceTTC =
-                                          Number(article.prix_ttc) ||
-                                          Number(article.article?.puv_ttc) ||
-                                          priceHT * (1 + tvaRate / 100);
-                                        const montantSousTotalHT =
-                                          Math.round(qty * priceHT * 1000) /
-                                          1000;
-                                        const montantNetHT =
-                                          Math.round(
-                                            qty *
-                                              priceHT *
-                                              (1 - remiseRate / 100) *
-                                              1000
-                                          ) / 1000;
-                                        const montantTTCLigne =
-                                          Math.round(qty * priceTTC * 1000) /
-                                          1000;
-                                        const montantTVA =
-                                          Math.round(
-                                            (montantTTCLigne - montantNetHT) *
-                                              1000
-                                          ) / 1000;
-                                        sousTotalHTValue += montantSousTotalHT;
-                                        netHTValue += montantNetHT;
-                                        totalTaxValue += montantTVA;
-                                        grandTotalValue += montantTTCLigne;
-                                      }
-                                    );
-                                    sousTotalHTValue =
-                                      Math.round(sousTotalHTValue * 1000) /
-                                      1000;
-                                    netHTValue =
-                                      Math.round(netHTValue * 1000) / 1000;
-                                    totalTaxValue =
-                                      Math.round(totalTaxValue * 1000) / 1000;
-                                    grandTotalValue =
-                                      Math.round(grandTotalValue * 1000) / 1000;
-                                    const remiseValue =
-                                      Number(selectedFacture.remise) || 0;
-                                    const remiseTypeValue =
-                                      selectedFacture.remiseType ||
-                                      "percentage";
-                                    let finalTotalValue = grandTotalValue;
-                                    let discountAmountValue = 0;
-                                    let netHTAfterDiscount = netHTValue;
-                                    let totalTaxAfterDiscount = totalTaxValue;
-                                    let discountPercentage = 0;
-                                    if (remiseValue > 0) {
-                                      if (remiseTypeValue === "percentage") {
-                                        discountAmountValue =
-                                          Math.round(
-                                            netHTValue *
-                                              (remiseValue / 100) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount =
-                                          Math.round(
-                                            (netHTValue - discountAmountValue) *
-                                              1000
-                                          ) / 1000;
-                                        const discountRatio =
-                                          netHTAfterDiscount / netHTValue;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            totalTaxValue * discountRatio * 1000
-                                          ) / 1000;
-                                        finalTotalValue =
-                                          Math.round(
-                                            (netHTAfterDiscount +
-                                              totalTaxAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                      } else if (remiseTypeValue === "fixed") {
-                                        finalTotalValue =
-                                          Math.round(
-                                            Number(remiseValue) * 1000
-                                          ) / 1000;
-                                        const tvaToHtRatio =
-                                          totalTaxValue / netHTValue;
-                                        const htAfterDiscount =
-                                          Math.round(
-                                            (finalTotalValue /
-                                              (1 + tvaToHtRatio)) *
-                                              1000
-                                          ) / 1000;
-                                        discountAmountValue =
-                                          Math.round(
-                                            (netHTValue - htAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount = htAfterDiscount;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            netHTAfterDiscount *
-                                              tvaToHtRatio *
-                                              1000
-                                          ) / 1000;
-                                        discountPercentage =
-                                          Math.round(
-                                            (discountAmountValue / netHTValue) *
-                                              100 *
-                                              100
-                                          ) / 100;
-                                      }
-                                    }
-                                    // Add timbre fiscal
-                                    if (selectedFacture.timbreFiscal) {
-                                      finalTotalValue =
-                                        Math.round(
-                                          (finalTotalValue + 1) * 1000
-                                        ) / 1000;
-                                    }
-                                    const displayNetHT =
-                                      remiseValue > 0
-                                        ? netHTAfterDiscount
-                                        : netHTValue;
-                                    const displayTotalTax =
-                                      remiseValue > 0
-                                        ? totalTaxAfterDiscount
-                                        : totalTaxValue;
-                                    return (
-                                      <Table className="table-sm table-borderless mb-0">
-                                        <tbody>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Sous-total H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {sousTotalHTValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Net H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayNetHT.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              TVA:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayTotalTax.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Total TTC:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6 text-dark">
-                                              {grandTotalValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          {remiseValue > 0 && (
-                                            <tr className="real-time-update">
-                                              <th className="text-end text-muted fs-6">
-                                                {remiseTypeValue ===
-                                                "percentage"
-                                                  ? `Remise (${remiseValue}%)`
-                                                  : `Remise (Montant fixe) ${discountPercentage}%`}
-                                              </th>
-                                              <td className="text-end text-danger fw-bold fs-6">
-                                                -{" "}
-                                                {discountAmountValue.toFixed(3)}{" "}
-                                                DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {selectedFacture.timbreFiscal && (
-                                            <tr className="real-time-update">
-                                              <th className="text-end text-muted fs-6">
-                                                Timbre Fiscal:
-                                              </th>
-                                              <td className="text-end fw-semibold fs-6">
-                                                1.000 DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {remiseValue > 0 && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {finalTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {!remiseValue && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {finalTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {/* Payment Information */}
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Montant payé:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {Number(
-                                                selectedFacture.montantPaye
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </td>
-                                          </tr>
-                                          <tr
-                                            className={`real-time-update ${
-                                              Number(
-                                                selectedFacture.resteAPayer
-                                              ) > 0
-                                                ? "table-warning"
-                                                : "table-success"
-                                            }`}
-                                          >
-                                            <th className="text-end text-muted fs-6">
-                                              Reste à payer:
-                                            </th>
-                                            <td className="text-end fw-bold fs-6">
-                                              {Number(
-                                                selectedFacture.resteAPayer
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </td>
-                                          </tr>
-                                        </tbody>
-                                      </Table>
-                                    );
-                                  })()}
-                                </Col>
-                              </Row>
-                            </div>
+  <Row className="justify-content-end">
+    <Col xs={8} sm={6} md={5} lg={4}>
+      {(() => {
+        if (!selectedFacture) return null;
+
+        const articles = selectedFacture.articles || [];
+        const remiseValue = Number(selectedFacture.remise) || 0;
+        const remiseTypeValue = selectedFacture.remiseType || "fixed";
+        const isExoneration = !!selectedFacture.exoneration;
+        const hasTimbreFiscal = !!selectedFacture.timbreFiscal;
+        const retentionAmount = Number(selectedFacture.montantRetenue) || 0;
+
+        // ✅ STEP 1: Calculate totals WITHOUT considering global remise
+        let sousTotalHTValue = 0;
+        let netHTBeforeGlobalRemise = 0;
+        let totalTaxValue = 0;
+        let grandTotalValue = 0;
+
+        articles.forEach((article: any) => {
+          const qty = Number(article.quantite) || 0;
+          const articleRemise = Number(article.remise || 0);
+          
+          const priceHT = Number(article.prixUnitaire) || 0;
+          const tvaRate = isExoneration ? 0 : Number(article.tva ?? 0);
+          const priceTTC = Number(article.prix_ttc) || 
+                          Number(article.article?.puv_ttc) || 
+                          priceHT * (1 + tvaRate / 100);
+
+          const lineHT = Math.round(priceHT * 1000) / 1000;
+          const lineTTC = Math.round(priceTTC * 1000) / 1000;
+
+          const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+          const montantNetHTLigne = Math.round(
+            qty * lineHT * (1 - articleRemise / 100) * 1000
+          ) / 1000;
+          const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+          const montantTVALigne = Math.round(
+            (montantTTCLigne - montantNetHTLigne) * 1000
+          ) / 1000;
+
+          sousTotalHTValue = Math.round((sousTotalHTValue + montantSousTotalHT) * 1000) / 1000;
+          netHTBeforeGlobalRemise = Math.round((netHTBeforeGlobalRemise + montantNetHTLigne) * 1000) / 1000;
+          totalTaxValue = Math.round((totalTaxValue + montantTVALigne) * 1000) / 1000;
+          grandTotalValue = Math.round((grandTotalValue + montantTTCLigne) * 1000) / 1000;
+        });
+
+        // ✅ STEP 2: Apply global remise according to principle
+        let netHTAfterGlobalRemise = netHTBeforeGlobalRemise;
+        let totalTaxAfterGlobalRemise = totalTaxValue;
+        let finalTotalValue = grandTotalValue;
+        let discountAmountValue = 0;
+        let discountPercentage = 0;
+
+        if (remiseValue > 0) {
+          if (remiseTypeValue === "percentage") {
+            // ✅ Percentage remise: Apply on HT base
+            discountAmountValue = Math.round(
+              (netHTBeforeGlobalRemise * (remiseValue / 100)) * 1000
+            ) / 1000;
+            netHTAfterGlobalRemise = Math.round(
+              (netHTBeforeGlobalRemise - discountAmountValue) * 1000
+            ) / 1000;
+
+            if (netHTBeforeGlobalRemise > 0) {
+              const tvaToHtRatio = Math.round(
+                (totalTaxValue / netHTBeforeGlobalRemise) * 1000
+              ) / 1000;
+              totalTaxAfterGlobalRemise = Math.round(
+                (netHTAfterGlobalRemise * tvaToHtRatio) * 1000
+              ) / 1000;
+            } else {
+              totalTaxAfterGlobalRemise = 0;
+            }
+
+            finalTotalValue = Math.round(
+              (netHTAfterGlobalRemise + totalTaxAfterGlobalRemise) * 1000
+            ) / 1000;
+          } else if (remiseTypeValue === "fixed") {
+            // ✅ Fixed remise: User enters the final TTC amount
+            finalTotalValue = Math.round(remiseValue * 1000) / 1000;
+
+            const uniqueTvaRates = Array.from(
+              new Set(articles.map((a: any) => Number(a.tva ?? 0)))
+            );
+            
+            if (uniqueTvaRates.length === 1 && uniqueTvaRates[0] > 0) {
+              // ✅ SINGLE TVA RATE FORMULA: Net HT = TTC / (1 + TVA rate)
+              const tvaRate = uniqueTvaRates[0] / 100;
+              netHTAfterGlobalRemise = Math.round((finalTotalValue / (1 + tvaRate)) * 1000) / 1000;
+              totalTaxAfterGlobalRemise = Math.round((finalTotalValue - netHTAfterGlobalRemise) * 1000) / 1000;
+            } else {
+              // ✅ MULTIPLE TVA RATES: EXACT SAME CALCULATION
+              // IMPORTANT: Pas d'arrondi sur le coefficient
+              const discountCoefficient = finalTotalValue / grandTotalValue;
+              
+              let newTotalHT = 0;
+              let newTotalTVA = 0;
+              
+              articles.forEach((article: any) => {
+                const qty = Number(article.quantite) || 0;
+                const articleRemise = Number(article.remise || 0);
+                const unitHT = Number(article.prixUnitaire) || 0;
+                const tvaRate = Number(article.tva ?? 0) / 100;
+                
+                // Calcul exact sans arrondi intermédiaire
+                const lineHTAfterDiscount = qty * unitHT * (1 - articleRemise / 100);
+                const newLineHT = lineHTAfterDiscount * discountCoefficient;
+                const newLineTVA = newLineHT * tvaRate;
+                
+                newTotalHT += newLineHT;
+                newTotalTVA += newLineTVA;
+              });
+              
+              // Arrondir seulement à la fin
+              netHTAfterGlobalRemise = Math.round(newTotalHT * 1000) / 1000;
+              totalTaxAfterGlobalRemise = Math.round(newTotalTVA * 1000) / 1000;
+            }
+            
+            discountAmountValue = Math.round(
+              (netHTBeforeGlobalRemise - netHTAfterGlobalRemise) * 1000
+            ) / 1000;
+            
+            if (netHTBeforeGlobalRemise > 0) {
+              discountPercentage = Math.round(
+                (discountAmountValue / netHTBeforeGlobalRemise) * 100 * 1000
+              ) / 1000;
+            }
+          }
+        }
+
+        // ✅ STEP 3: Apply exoneration - IF exoneration is true, TVA should be 0
+        if (isExoneration) {
+          totalTaxAfterGlobalRemise = 0;
+          finalTotalValue = netHTAfterGlobalRemise;
+        }
+
+        // ✅ STEP 4: Add timbre fiscal
+        if (hasTimbreFiscal) {
+          finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+        }
+
+        // ✅ STEP 5: Calculate net à payer (after retention)
+        let netAPayerValue = Math.round((finalTotalValue - retentionAmount) * 1000) / 1000;
+        netAPayerValue = Math.max(0, netAPayerValue);
+
+        const displayNetHT = remiseValue > 0 
+          ? netHTAfterGlobalRemise 
+          : netHTBeforeGlobalRemise;
+          
+        const displayTotalTax = isExoneration
+          ? 0
+          : remiseValue > 0
+          ? totalTaxAfterGlobalRemise
+          : totalTaxValue;
+
+        return (
+          <Table className="table-sm table-borderless mb-0">
+            <tbody>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Sous-total H.T.:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {sousTotalHTValue.toFixed(3)} DT
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Net H.T.:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {displayNetHT.toFixed(3)} DT
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  TVA:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {displayTotalTax.toFixed(3)} DT
+                  {isExoneration && (
+                    <i
+                      className="ri-check-line text-success ms-1"
+                      title="TVA exonérée"
+                    ></i>
+                  )}
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Total TTC:
+                </th>
+                <td className="text-end fw-semibold fs-6 text-dark">
+                  {grandTotalValue.toFixed(3)} DT
+                </td>
+              </tr>
+              {remiseValue > 0 && (
+                <tr className="real-time-update">
+                  <th className="text-end text-muted fs-6">
+                    {remiseTypeValue === "percentage"
+                      ? `Remise (${remiseValue}%)`
+                      : `Remise (Montant fixe) ${discountPercentage.toFixed(2)}%`}
+                  </th>
+                  <td className="text-end text-danger fw-bold fs-6">
+                    - {discountAmountValue.toFixed(3)} DT
+                  </td>
+                </tr>
+              )}
+              {hasTimbreFiscal && (
+                <tr className="real-time-update">
+                  <th className="text-end text-muted fs-6">
+                    Timbre Fiscal:
+                  </th>
+                  <td className="text-end fw-semibold fs-6">
+                    1.000 DT
+                  </td>
+                </tr>
+              )}
+              {retentionAmount > 0 && (
+                <tr className="real-time-update table-info">
+                  <th className="text-end text-muted fs-6">
+                    Montant retenu:
+                  </th>
+                  <td className="text-end fw-semibold fs-6 text-danger">
+                    - {retentionAmount.toFixed(3)} DT
+                  </td>
+                </tr>
+              )}
+              <tr className="final-total real-time-update border-top">
+                <th className="text-end fs-5">
+                  NET À PAYER:
+                </th>
+                <td className="text-end fw-bold fs-5 text-primary">
+                  {netAPayerValue.toFixed(3)} DT
+                  {isExoneration && (
+                    <i
+                      className="ri-shield-check-line text-warning ms-1"
+                      title="Facture exonérée"
+                    ></i>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </Table>
+        );
+      })()}
+    </Col>
+  </Row>
+</div>
                           </CardBody>
                         </Card>
                       </div>
                     )}
+
+                    {/* Super Simple Payment Display */}
+                    {selectedFacture && (
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h6 className="fw-semibold mb-3 text-primary">
+                            <i className="ri-money-dollar-circle-line me-2"></i>
+                            État des Paiements
+                          </h6>
+
+                          {/* Payment Summary in Boxes */}
+                          <Row className="g-3 mb-3">
+                            {/* Facture Payments */}
+                            {selectedFacture.paymentMethods &&
+                              selectedFacture.paymentMethods.filter(
+                                (pm: any) =>
+                                  pm.method !== "retenue" &&
+                                  Number(pm.amount || 0) > 0
+                              ).length > 0 && (
+                                <Col md={6}>
+                                  <div className="border rounded p-3 bg-primary bg-opacity-10">
+                                    <div className="d-flex justify-content-between align-items-center">
+                                      <div>
+                                        <h6 className="fw-semibold mb-1">
+                                          Règlements Facture
+                                        </h6>
+                                        <small className="text-muted">
+                                          {
+                                            selectedFacture.paymentMethods.filter(
+                                              (pm: any) =>
+                                                pm.method !== "retenue" &&
+                                                Number(pm.amount || 0) > 0
+                                            ).length
+                                          }{" "}
+                                          règlement(s)
+                                        </small>
+                                      </div>
+                                      <Badge color="primary">
+                                        {selectedFacture.paymentMethods
+                                          .filter(
+                                            (pm: any) => pm.method !== "retenue"
+                                          )
+                                          .reduce(
+                                            (sum: number, pm: any) =>
+                                              sum + (Number(pm.amount) || 0),
+                                            0
+                                          )
+                                          .toFixed(3)}{" "}
+                                        DT
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                </Col>
+                              )}
+
+                            {/* Bon Commande Payments */}
+                            {selectedFacture.bonCommandeClient && (
+                              <Col md={6}>
+                                <div className="border rounded p-3 bg-info bg-opacity-10">
+                                  <div className="d-flex justify-content-between align-items-center mb-2">
+                                    <div>
+                                      <h6 className="fw-semibold mb-1">
+                                        <i className="ri-shopping-bag-line me-1"></i>
+                                        Bon de Commande
+                                      </h6>
+                                      <small className="text-muted">
+                                        {
+                                          selectedFacture.bonCommandeClient
+                                            .numeroCommande
+                                        }
+                                      </small>
+                                    </div>
+                                    <Badge color="info" pill>
+                                      Payé
+                                    </Badge>
+                                  </div>
+
+                                  {/* Bon Commande Payment Methods */}
+                                  {selectedFacture.bonCommandeClient
+                                    .paymentMethods &&
+                                    selectedFacture.bonCommandeClient.paymentMethods.filter(
+                                      (pm: any) =>
+                                        pm.method !== "retenue" &&
+                                        Number(pm.amount || 0) > 0
+                                    ).length > 0 && (
+                                      <div className="mt-2 pt-2 border-top">
+                                        <small className="text-muted d-block">
+                                          Règlements:
+                                        </small>
+                                        <div className="small">
+                                          {selectedFacture.bonCommandeClient.paymentMethods
+                                            .filter(
+                                              (pm: any) =>
+                                                pm.method !== "retenue" &&
+                                                Number(pm.amount || 0) > 0
+                                            )
+                                            .map((pm: any, idx: number) => (
+                                              <div
+                                                key={idx}
+                                                className="d-flex justify-content-between"
+                                              >
+                                                <span>
+                                                  {formatPaymentMethodName(
+                                                    pm.method
+                                                  )}
+                                                </span>
+                                                <span>
+                                                  {Number(
+                                                    pm.amount || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                              </div>
+                                            ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                  {/* Bon Commande Client Payments */}
+                                  {selectedFacture.bonCommandeClient
+                                    .paiements &&
+                                    selectedFacture.bonCommandeClient.paiements
+                                      .length > 0 && (
+                                      <div className="mt-2 pt-2 border-top">
+                                        <small className="text-muted d-block">
+                                          Paiements Client:
+                                        </small>
+                                        <div className="small">
+                                          {selectedFacture.bonCommandeClient.paiements
+                                            .filter(
+                                              (p: any) =>
+                                                Number(p.montant || 0) > 0
+                                            )
+                                            .map(
+                                              (paiement: any, idx: number) => (
+                                                <div
+                                                  key={idx}
+                                                  className="d-flex justify-content-between"
+                                                >
+                                                  <span>
+                                                    {paiement.modePaiement}
+                                                  </span>
+                                                  <span>
+                                                    {Number(
+                                                      paiement.montant || 0
+                                                    ).toFixed(3)}{" "}
+                                                    DT
+                                                  </span>
+                                                </div>
+                                              )
+                                            )}
+                                        </div>
+                                      </div>
+                                    )}
+                                </div>
+                              </Col>
+                            )}
+
+                            {/* ✅ ADD VENTE COMPTOIRE PAYMENTS */}
+                            {selectedFacture.venteComptoire && (
+                              <Col md={6}>
+                                <div className="border rounded p-3 bg-warning bg-opacity-10">
+                                  <div className="d-flex justify-content-between align-items-center mb-2">
+                                    <div>
+                                      <h6 className="fw-semibold mb-1">
+                                        <i className="ri-store-line me-1"></i>
+                                        Vente Comptoire
+                                      </h6>
+                                      <small className="text-muted">
+                                        {
+                                          selectedFacture.venteComptoire
+                                            .numeroCommande
+                                        }
+                                      </small>
+                                    </div>
+                                    <Badge color="warning" pill>
+                                      Source
+                                    </Badge>
+                                  </div>
+
+                                  {/* Vente Comptoire Payment Methods */}
+                                  {selectedFacture.venteComptoire
+                                    .paymentMethods &&
+                                    selectedFacture.venteComptoire.paymentMethods.filter(
+                                      (pm: any) =>
+                                        pm.method !== "retenue" &&
+                                        Number(pm.amount || 0) > 0
+                                    ).length > 0 && (
+                                      <div className="mt-2 pt-2 border-top">
+                                        <small className="text-muted d-block">
+                                          Règlements:
+                                        </small>
+                                        <div className="small">
+                                          {selectedFacture.venteComptoire.paymentMethods
+                                            .filter(
+                                              (pm: any) =>
+                                                pm.method !== "retenue" &&
+                                                Number(pm.amount || 0) > 0
+                                            )
+                                            .map((pm: any, idx: number) => (
+                                              <div
+                                                key={idx}
+                                                className="d-flex justify-content-between"
+                                              >
+                                                <span>
+                                                  {formatPaymentMethodName(
+                                                    pm.method
+                                                  )}
+                                                </span>
+                                                <span>
+                                                  {Number(
+                                                    pm.amount || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                              </div>
+                                            ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                  {/* Show vente comptoire mode reglement */}
+                                  {selectedFacture.venteComptoire
+                                    .modeReglement && (
+                                    <div className="mt-2 pt-2 border-top">
+                                      <small className="text-muted d-block">
+                                        Mode de règlement:
+                                      </small>
+                                      <div className="small fw-semibold">
+                                        {
+                                          selectedFacture.venteComptoire
+                                            .modeReglement
+                                        }
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </Col>
+                            )}
+                          </Row>
+
+                          {/* Total Summary */}
+                          <div className="border-top pt-3">
+                            <Row className="align-items-center">
+                              <Col>
+                                <div className="d-flex align-items-center">
+                                  <div className="bg-success bg-opacity-10 p-2 rounded me-3">
+                                    <i className="ri-wallet-line text-success fs-4"></i>
+                                  </div>
+                                  <div>
+                                    <h6 className="mb-0 fw-semibold">
+                                      Total Payé
+                                    </h6>
+                                    <small className="text-muted">
+                                      Tous paiements confondus
+                                      {selectedFacture.venteComptoire &&
+                                        " (incl. vente comptoire)"}
+                                    </small>
+                                  </div>
+                                </div>
+                              </Col>
+                              <Col className="text-end">
+                                <h4 className="fw-bold text-success mb-0">
+                                  {Number(
+                                    selectedFacture.montantPaye || 0
+                                  ).toFixed(3)}{" "}
+                                  DT
+                                </h4>
+                              </Col>
+                            </Row>
+                          </div>
+                        </CardBody>
+                      </Card>
+                    )}
                   </ModalBody>
                   <ModalFooter className="border-0 pt-4">
+                    {/* Edit Button */}
+                    {selectedFacture && (
+                      <Button
+                        color="primary"
+                        size="md"
+                        onClick={() => {
+                          // Set all the data for editing
+                          setFacture(selectedFacture);
+                          setSelectedClient(selectedFacture.client);
+                          setSelectedArticles(
+                            selectedFacture.articles.map(
+                              (item: FactureClient["articles"][number]) => {
+                                const prixTTCFromDB = Number(item.prix_ttc);
+                                return {
+                                  article_id: item.article.id,
+                                  quantite: item.quantite,
+                                  prixUnitaire: Number(item.prixUnitaire),
+                                  prixTTC: prixTTCFromDB,
+                                  tva:
+                                    item.tva != null ? Number(item.tva) : null,
+                                  remise:
+                                    item.remise != null
+                                      ? Number(item.remise)
+                                      : null,
+                                  articleDetails: item.article,
+                                };
+                              }
+                            )
+                          );
+                          setGlobalRemise(selectedFacture.remise || 0);
+                          setRemiseType(selectedFacture.remiseType || "fixed");
+                          setShowRemise(
+                            !!selectedFacture.remise &&
+                              selectedFacture.remise > 0
+                          );
+                          setIsEdit(true);
+                          setCreateEditModal(true);
+                          setTimbreFiscal(
+                            selectedFacture.timbreFiscal || false
+                          );
+                          setExoneration(!!selectedFacture.exoneration); // FIXED: Use boolean conversion
+                          setMethodesReglement(
+                            selectedFacture.paymentMethods &&
+                              selectedFacture.paymentMethods.length > 0
+                              ? selectedFacture.paymentMethods.map(
+                                  (pm: any, index: number) => ({
+                                    id: pm.id || `edit-${index}`,
+                                    method: pm.method,
+                                    amount: pm.amount
+                                      ? pm.amount.toFixed(3).replace(".", ",")
+                                      : "",
+                                    numero: pm.numero || "",
+                                    banque: pm.banque || "",
+                                    dateEcheance: pm.dateEcheance || "",
+                                  })
+                                )
+                              : []
+                          );
+                          setConditionPaiement(
+                            selectedFacture.conditionPaiement
+                          );
+                          setSelectedVendeur(selectedFacture.vendeur || null); // FIXED: Handle undefined
+                          setDetailModal(false); // Close details modal
+                        }}
+                        className="btn-invoice btn-invoice-primary me-2"
+                      >
+                        <i className="ri-pencil-fill me-2"></i> Modifier
+                      </Button>
+                    )}
+
+                    {/* Encaissement Button */}
                     {selectedFacture &&
                       selectedFacture.resteAPayer > 0 &&
                       selectedFacture.status !== "Annulee" &&
@@ -3149,23 +4427,45 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                         <Button
                           color="success"
                           size="md"
-                          onClick={() => openEncaissementModal(selectedFacture)}
+                          onClick={() => {
+                            openEncaissementModal(selectedFacture);
+                            setDetailModal(false);
+                          }}
                           className="btn-invoice btn-invoice-success me-2"
                         >
                           <i className="ri-money-dollar-circle-line me-2"></i>{" "}
                           Encaissement
                         </Button>
                       )}
+
+                    {/* PDF Button */}
+                    {selectedFacture && (
+                      <Button
+                        color="secondary"
+                        onClick={() => {
+                          openPdfModal(selectedFacture);
+                          setDetailModal(false);
+                        }}
+                        className="btn-invoice btn-invoice-secondary me-2"
+                      >
+                        <i className="ri-file-pdf-line me-2"></i> Facture PDF
+                      </Button>
+                    )}
                     <Button
-                      color="primary"
-                      onClick={() =>
-                        selectedFacture && openPdfModal(selectedFacture)
-                      }
-                      className="btn-invoice btn-invoice-primary me-2"
-                      disabled={!selectedFacture}
+                      color="danger"
+                      size="md"
+                      onClick={() => {
+                        setFacture(selectedFacture);
+                        setDeleteModal(true);
+                        setDetailModal(false);
+                      }}
+                      className="btn-invoice btn-invoice-danger me-2"
                     >
-                      <i className="ri-file-pdf-line me-2"></i> Imprimer PDF
+                      <i className="ri-delete-bin-5-fill me-2"></i> Supprimer
                     </Button>
+
+                    {/* Cancel Invoice Button */}
+                    {/* Close Button */}
                     <Button
                       color="light"
                       onClick={() => setDetailModal(false)}
@@ -3222,7 +4522,8 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                             <Col md={4}>
                               <div className="mb-3">
                                 <Label className="form-label-lg fw-semibold">
-                                  Numéro de Facture*
+                                  Numéro de Facture{" "}
+                                  <span className="text-danger"> *</span>
                                 </Label>
                                 <Input
                                   name="numeroFacture"
@@ -3245,7 +4546,8 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                             <Col md={4}>
                               <div className="mb-3">
                                 <Label className="form-label-lg fw-semibold">
-                                  Date de Facture*
+                                  Date de Facture
+                                  <span className="text-danger"> *</span>
                                 </Label>
                                 <Input
                                   type="date"
@@ -3325,21 +4627,21 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
 
                               {/* Enhanced Client Search Section */}
                               <div className="mb-3">
-                              <Label className="form-label-lg fw-semibold">
-  Client*
-  {!selectedClient && (
-    <button
-      type="button"
-      className="btn btn-link text-primary p-0 ms-2"
-      onClick={() => setClientModal(true)}
-      title="Ajouter un nouveau client"
-      style={{ fontSize: "0.8rem" }}
-    >
-      <i className="ri-add-line me-1"></i>
-      Nouveau client
-    </button>
-  )}
-</Label>
+                                <Label className="form-label-lg fw-semibold">
+                                  Client <span className="text-danger"> *</span>
+                                  {!selectedClient && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-link text-primary p-0 ms-2"
+                                      onClick={() => setClientModal(true)}
+                                      title="Ajouter un nouveau client"
+                                      style={{ fontSize: "0.8rem" }}
+                                    >
+                                      <i className="ri-add-line me-1"></i>
+                                      Nouveau client
+                                    </button>
+                                  )}
+                                </Label>
 
                                 <div className="position-relative">
                                   <Input
@@ -3516,7 +4818,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                               </h6>
                               <div className="mb-3">
                                 <Label className="form-label-lg fw-semibold">
-                                  Vendeur*
+                                  Vendeur<span className="text-danger"> *</span>
                                 </Label>
                                 <Input
                                   type="select"
@@ -3561,7 +4863,7 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                         </Col>
                       </Row>
                       {/* Payment Conditions and Options */}
-                    
+
                       {/* Global Discount Section <Card className="border-0 shadow-sm mb-4">
         <CardBody className="p-4">
           <div className="d-flex justify-content-between align-items-center mb-3">
@@ -3592,17 +4894,19 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
               <Col md={4}>
                 <div className="mb-3">
                   <Label className="form-label-lg fw-semibold">Type de remise</Label>
-                  <Input
-                    type="select"
-                    value={remiseType}
-                    onChange={(e) =>
-                      setRemiseType(e.target.value as "percentage" | "fixed")
-                    }
-                    className="form-control-lg"
-                  >
-                    <option value="percentage">Pourcentage (%)</option>
-                    <option value="fixed">Montant fixe (DT)</option>
-                  </Input>
+          <Input
+  type="select"
+  value={remiseType}
+  onChange={(e) =>
+    setRemiseType(
+      e.target.value as "percentage" | "fixed"
+    )
+  }
+  className="form-control-sm"
+>
+  <option value="fixed">Montant fixe (DT)</option>
+  <option value="percentage">Pourcentage (%)</option>
+</Input>
                 </div>
               </Col>
               <Col md={4}>
@@ -3700,191 +5004,235 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                           </div>
 
                           {/* Rest of the Articles section remains the same */}
-                           {/* Articles Search Section */}
-<div className="mb-4">
-  <Label className="form-label-lg fw-semibold">
-    Rechercher Article
-    <button
-      type="button"
-      className="btn btn-link text-primary p-0 ms-2"
-      onClick={() => setArticleModal(true)}
-      title="Ajouter un nouvel article"
-      style={{ fontSize: "0.8rem" }}
-    >
-      <i className="ri-add-line me-1"></i>
-      Nouvel article
-    </button>
-  </Label>
-  
-  <div className="search-box position-relative">
-    <Input
-      type="text"
-      placeholder="Rechercher article par référence ou désignation..."
-      value={articleSearch}
-      onChange={(e) => {
-        setArticleSearch(e.target.value);
-        setFocusedIndex(-1); // Reset focus when typing
-      }}
-      onKeyDown={(e) => {
-        if (filteredArticles.length > 0) {
-          // Handle arrow down
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setFocusedIndex(prev => 
-              prev < filteredArticles.length - 1 ? prev + 1 : 0
-            );
-          }
-          // Handle arrow up
-          else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setFocusedIndex(prev => 
-              prev > 0 ? prev - 1 : filteredArticles.length - 1
-            );
-          }
-          // Handle Enter to select focused item
-          else if (e.key === 'Enter' && focusedIndex >= 0) {
-            e.preventDefault();
-            const article = filteredArticles[focusedIndex];
-            handleAddArticle(article.id.toString());
-            setArticleSearch("");
-            setFilteredArticles([]);
-            setFocusedIndex(-1);
-          }
-          // Handle Enter to select first item when no focus
-          else if (e.key === 'Enter' && filteredArticles.length > 0 && focusedIndex === -1) {
-            e.preventDefault();
-            const firstArticle = filteredArticles[0];
-            handleAddArticle(firstArticle.id.toString());
-            setArticleSearch("");
-            setFilteredArticles([]);
-            setFocusedIndex(-1);
-          }
-          // Handle Escape to clear search
-          else if (e.key === 'Escape') {
-            e.preventDefault();
-            setArticleSearch("");
-            setFilteredArticles([]);
-            setFocusedIndex(-1);
-          }
-        }
-      }}
-      className="form-control-lg ps-5 pe-5"
-    />
-    <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
-    <button
-      type="button"
-      className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-      onClick={() => setArticleModal(true)}
-      title="Ajouter un nouvel article"
-    >
-      <i className="ri-add-line fs-5"></i>
-    </button>
-  </div>
+                          {/* Articles Search Section */}
+                          <div className="mb-4">
+                            <Label className="form-label-lg fw-semibold">
+                              Rechercher Article
+                              <button
+                                type="button"
+                                className="btn btn-link text-primary p-0 ms-2"
+                                onClick={() => setArticleModal(true)}
+                                title="Ajouter un nouvel article"
+                                style={{ fontSize: "0.8rem" }}
+                              >
+                                <i className="ri-add-line me-1"></i>
+                                Nouvel article
+                              </button>
+                            </Label>
 
-  {/* Enhanced Dropdown with Keyboard Support */}
-  {articleSearch.length >= 1 && (
-    <div
-      ref={setDropdownRef}
-      className="search-results mt-2 border rounded shadow-sm"
-      style={{
-        maxHeight: "400px",
-        overflowY: "auto",
-        overflowX: "hidden",
-        position: "relative",
-        zIndex: 1000,
-        backgroundColor: "white",
-      }}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      {filteredArticles.length > 0 ? (
-        <ul className="list-group list-group-flush">
-          {filteredArticles.map((article, index) => {
-            // Create ref for each item
-            const itemRef = React.createRef<HTMLLIElement>();
-            if (!itemRefs[index]) {
-              itemRefs[index] = itemRef;
-            }
+                            <div className="search-box position-relative">
+                              <Input
+                                type="text"
+                                placeholder="Rechercher article par référence ou désignation..."
+                                value={articleSearch}
+                                innerRef={articleSearchRef}
+                                onChange={(e) => {
+                                  setArticleSearch(e.target.value);
+                                  setFocusedIndex(-1); // Reset focus when typing
+                                }}
+                                onKeyDown={(e) => {
+                                  if (filteredArticles.length > 0) {
+                                    // Handle arrow down
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev < filteredArticles.length - 1
+                                          ? prev + 1
+                                          : 0
+                                      );
+                                    }
+                                    // Handle arrow up
+                                    else if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev > 0
+                                          ? prev - 1
+                                          : filteredArticles.length - 1
+                                      );
+                                    }
+                                    // Handle Enter to select focused item
+                                    else if (
+                                      e.key === "Enter" &&
+                                      focusedIndex >= 0
+                                    ) {
+                                      e.preventDefault();
+                                      const article =
+                                        filteredArticles[focusedIndex];
+                                      handleAddArticle(article.id.toString());
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                    // Handle Enter to select first item when no focus
+                                    else if (
+                                      e.key === "Enter" &&
+                                      filteredArticles.length > 0 &&
+                                      focusedIndex === -1
+                                    ) {
+                                      e.preventDefault();
+                                      const firstArticle = filteredArticles[0];
+                                      handleAddArticle(
+                                        firstArticle.id.toString()
+                                      );
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                    // Handle Escape to clear search
+                                    else if (e.key === "Escape") {
+                                      e.preventDefault();
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                  }
+                                }}
+                                className="form-control-lg ps-5 pe-5"
+                              />
+                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+                              <button
+                                type="button"
+                                className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                                onClick={() => setArticleModal(true)}
+                                title="Ajouter un nouvel article"
+                              >
+                                <i className="ri-add-line fs-5"></i>
+                              </button>
+                            </div>
 
-            return (
-              <li
-                key={article.id}
-                ref={itemRefs[index]}
-                className={`list-group-item list-group-item-action ${
-                  focusedIndex === index ? 'active' : ''
-                }`}
-                onClick={() => {
-                  handleAddArticle(article.id.toString());
-                  setArticleSearch("");
-                  setFilteredArticles([]);
-                  setFocusedIndex(-1);
-                }}
-                style={{
-                  cursor: "pointer",
-                  padding: "12px 15px",
-                  opacity: selectedArticles.some(
-                    (item) => item.article_id === article.id
-                  )
-                    ? 0.6
-                    : 1,
-                  backgroundColor: focusedIndex === index ? '#e7f1ff' : 'transparent',
-                  borderLeft: focusedIndex === index ? '4px solid #0d6efd' : 'none',
-                }}
-                onMouseEnter={() => setFocusedIndex(index)}
-              >
-                <div className="d-flex justify-content-between align-items-center">
-                  <div className="flex-grow-1">
-                    {/* Show reference first in larger font */}
-                    <div className="d-flex align-items-center mb-1">
-                      <strong className="fs-6 me-2 text-primary">
-                        {article.reference}
-                      </strong>
-                      <span className="badge bg-light text-dark me-2">
-                        Stock: {article.qte || 0}
-                      </span>
-                    </div>
-                    {/* Show designation in smaller font */}
-                    <small className="text-muted d-block" style={{ fontSize: "0.85rem" }}>
-                      {article.designation}
-                    </small>
-                    {/* Show TTC price prominently */}
-                    <div className="mt-1">
-                      <span className="badge bg-success text-white">
-                        TTC: {(Number(article.puv_ttc) || 0).toFixed(3)} DT
-                      </span>
-                      {article.tva && article.tva > 0 && (
-                        <span className="badge bg-info ms-1">
-                          TVA: {article.tva}%
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {selectedArticles.some(
-                    (item) => item.article_id === article.id
-                  ) ? (
-                    <Badge color="secondary" className="fs-6">
-                      <i className="ri-check-line me-1"></i>
-                      Ajouté
-                    </Badge>
-                  ) : (
-                    <Badge color="success" className="fs-6">
-                      <i className="ri-add-line me-1"></i>
-                      Ajouter
-                    </Badge>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <div className="text-muted p-3 text-center">
-          <i className="ri-search-line me-2"></i>
-          Aucun article trouvé
-        </div>
-      )}
-    </div>
-  )}
-</div>
+                            {/* Enhanced Dropdown with Keyboard Support */}
+                            {articleSearch.length >= 1 && (
+                              <div
+                                ref={setDropdownRef}
+                                className="search-results mt-2 border rounded shadow-sm"
+                                style={{
+                                  maxHeight: "400px",
+                                  overflowY: "auto",
+                                  overflowX: "hidden",
+                                  position: "relative",
+                                  zIndex: 1000,
+                                  backgroundColor: "white",
+                                }}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                {filteredArticles.length > 0 ? (
+                                  <ul className="list-group list-group-flush">
+                                    {filteredArticles.map((article, index) => {
+                                      // Create ref for each item
+                                      const itemRef =
+                                        React.createRef<HTMLLIElement>();
+                                      if (!itemRefs[index]) {
+                                        itemRefs[index] = itemRef;
+                                      }
+
+                                      return (
+                                        <li
+                                          key={article.id}
+                                          ref={itemRefs[index]}
+                                          className={`list-group-item list-group-item-action ${
+                                            focusedIndex === index
+                                              ? "active"
+                                              : ""
+                                          }`}
+                                          onClick={() => {
+                                            handleAddArticle(
+                                              article.id.toString()
+                                            );
+                                            setArticleSearch("");
+                                            setFilteredArticles([]);
+                                            setFocusedIndex(-1);
+                                          }}
+                                          style={{
+                                            cursor: "pointer",
+                                            padding: "12px 15px",
+                                            opacity: selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            )
+                                              ? 0.6
+                                              : 1,
+                                            backgroundColor:
+                                              focusedIndex === index
+                                                ? "#e7f1ff"
+                                                : "transparent",
+                                            borderLeft:
+                                              focusedIndex === index
+                                                ? "4px solid #0d6efd"
+                                                : "none",
+                                          }}
+                                          onMouseEnter={() =>
+                                            setFocusedIndex(index)
+                                          }
+                                        >
+                                          <div className="d-flex justify-content-between align-items-center">
+                                            <div className="flex-grow-1">
+                                              {/* Show reference first in larger font */}
+                                              <div className="d-flex align-items-center mb-1">
+                                                <strong className="fs-6 me-2 text-primary">
+                                                  {article.reference}
+                                                </strong>
+                                                <span className="badge bg-light text-dark me-2">
+                                                  Stock: {article.qte || 0}
+                                                </span>
+                                              </div>
+                                              {/* Show designation in smaller font */}
+                                              <small
+                                                className="text-muted d-block"
+                                                style={{ fontSize: "0.85rem" }}
+                                              >
+                                                {article.designation}
+                                              </small>
+                                              {/* Show TTC price prominently */}
+                                              <div className="mt-1">
+                                                <span className="badge bg-success text-white">
+                                                  TTC:{" "}
+                                                  {(
+                                                    Number(article.puv_ttc) || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                                {article.tva &&
+                                                  article.tva > 0 && (
+                                                    <span className="badge bg-info ms-1">
+                                                      TVA: {article.tva}%
+                                                    </span>
+                                                  )}
+                                              </div>
+                                            </div>
+                                            {selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            ) ? (
+                                              <Badge
+                                                color="secondary"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-check-line me-1"></i>
+                                                Ajouté
+                                              </Badge>
+                                            ) : (
+                                              <Badge
+                                                color="success"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-add-line me-1"></i>
+                                                Ajouter
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                ) : (
+                                  <div className="text-muted p-3 text-center">
+                                    <i className="ri-search-line me-2"></i>
+                                    Aucun article trouvé
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
 
                           {/* Articles Table */}
                           {selectedArticles.length > 0 && (
@@ -4348,17 +5696,16 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                                             onChange={(e) =>
                                               setRemiseType(
                                                 e.target.value as
-                                                  | "percentage"
                                                   | "fixed"
+                                                  | "percentage"
                                               )
                                             }
-                                            className="form-control-sm"
                                           >
-                                            <option value="percentage">
-                                              Pourcentage (%)
-                                            </option>
                                             <option value="fixed">
                                               Montant fixe (DT)
+                                            </option>
+                                            <option value="percentage">
+                                              Pourcentage (%)
                                             </option>
                                           </Input>
                                         </div>
@@ -4472,9 +5819,10 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                                               {remiseType === "percentage"
                                                 ? `Remise (${globalRemise}%)`
                                                 : `Remise (Montant fixe) ${(
-                                                    (discountAmount / netHT) *
+                                                    (discountAmount /
+                                                      grandTotal) *
                                                     100
-                                                  ).toFixed(1)}%`}
+                                                  ).toFixed(2)}%`}
                                             </th>
                                             <td className="text-end text-danger fw-bold fs-6">
                                               - {discountAmount.toFixed(3)} DT
@@ -4610,7 +5958,9 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                                           Virement
                                         </option>
                                         <option value="traite">Traite</option>
-                                        <option value="tpe">Carte Bancaire "TPE"</option>
+                                        <option value="tpe">
+                                          Carte Bancaire "TPE"
+                                        </option>
                                         <option value="retenue">
                                           Retenue à la source
                                         </option>
@@ -4848,249 +6198,295 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
                   </Form>
                 </Modal>
                 <Modal
-  isOpen={encaissementModal}
-  toggle={() => setEncaissementModal(false)}
-  centered
-  className="invoice-modal"
-  size="lg"
->
-  <ModalHeader toggle={() => setEncaissementModal(false)}>
-    Ajouter Encaissement - Facture #{selectedFacture?.numeroFacture}
-  </ModalHeader>
-  <Form
-    onSubmit={encaissementValidation.handleSubmit}
-    className="invoice-form"
-  >
-    <ModalBody style={{ padding: "20px" }}>
-      {/* Show retention and payment methods information */}
-      {selectedFacture?.montantRetenue && Number(selectedFacture.montantRetenue) > 0 && (
-        <div className="mb-3 p-2 bg-light rounded">
-          <small className="text-muted d-block">
-            <strong>Retenue à la source:</strong> -{Number(selectedFacture.montantRetenue).toFixed(3)} DT
-          </small>
-        </div>
-      )}
-      
-      {selectedFacture?.paymentMethods && selectedFacture.paymentMethods.filter((pm: any) => pm.method !== "retenue" && Number(pm.amount) > 0).length > 0 && (
-        <div className="mb-3 p-2 bg-info bg-opacity-10 rounded">
-          <small className="text-muted d-block">
-            <strong>Règlements enregistrés:</strong> -
-            {selectedFacture.paymentMethods
-              .filter((pm: any) => pm.method !== "retenue")
-              .reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0)
-              .toFixed(3)} DT
-          </small>
-        </div>
-      )}
-      
-      <div className="mb-3 p-2 bg-success bg-opacity-10 rounded">
-        <small className="text-muted d-block">Montant disponible pour encaissement:</small>
-        <strong className="text-success fs-5">
-          {(() => {
-            if (!selectedFacture) return "0,000";
-            
-            // ✅ EXACT SAME CALCULATION AS TABLE
-            const paymentMethodsTotal = selectedFacture.paymentMethods 
-              ? selectedFacture.paymentMethods
-                  .filter((pm: any) => pm.method !== "retenue")
-                  .reduce((sum: number, pm: any) => {
-                    let amountValue: number;
-                    if (typeof pm.amount === 'string') {
-                      amountValue = parseFloat(pm.amount.replace(",", ".")) || 0;
-                    } else if (typeof pm.amount === 'number') {
-                      amountValue = pm.amount;
-                    } else {
-                      amountValue = 0;
-                    }
-                    return sum + amountValue;
-                  }, 0)
-              : 0;
+                  isOpen={encaissementModal}
+                  toggle={() => setEncaissementModal(false)}
+                  centered
+                  className="invoice-modal"
+                  size="lg"
+                >
+                  <ModalHeader toggle={() => setEncaissementModal(false)}>
+                    Ajouter Encaissement - Facture #
+                    {selectedFacture?.numeroFacture}
+                  </ModalHeader>
+                  <Form
+                    onSubmit={encaissementValidation.handleSubmit}
+                    className="invoice-form"
+                  >
+                    <ModalBody style={{ padding: "20px" }}>
+                      {/* Show retention and payment methods information */}
+                      {selectedFacture?.montantRetenue &&
+                      Number(selectedFacture.montantRetenue) > 0 ? (
+                        <div className="mb-3 p-2 bg-light rounded">
+                          <small className="text-muted d-block">
+                            <strong>Retenue à la source:</strong> -
+                            {Number(selectedFacture.montantRetenue).toFixed(3)}{" "}
+                            DT
+                          </small>
+                        </div>
+                      ) : null}
 
-            // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
-            const hasRemise = selectedFacture.remise && Number(selectedFacture.remise) > 0;
-            const finalTotal = hasRemise 
-              ? Number(selectedFacture.totalTTCAfterRemise) || Number(selectedFacture.totalTTC) || 0
-              : Number(selectedFacture.totalTTC) || 0;
-            
-            const retentionAmount = Number(selectedFacture.montantRetenue) || 0;
-            const totalPaye = selectedFacture.montantPaye || 0;
-            
-            const availableAmount = Math.max(0, (finalTotal - retentionAmount) - totalPaye);
-            
-            return availableAmount.toFixed(3).replace(".", ",");
-          })()} DT
-        </strong>
-      </div>
+                      {selectedFacture?.paymentMethods &&
+                        selectedFacture.paymentMethods.filter(
+                          (pm: any) =>
+                            pm.method !== "retenue" && Number(pm.amount) > 0
+                        ).length > 0 && (
+                          <div className="mb-3 p-2 bg-info bg-opacity-10 rounded">
+                            <small className="text-muted d-block">
+                              <strong>Règlements enregistrés:</strong> -
+                              {selectedFacture.paymentMethods
+                                .filter((pm: any) => pm.method !== "retenue")
+                                .reduce(
+                                  (sum: number, pm: any) =>
+                                    sum + (Number(pm.amount) || 0),
+                                  0
+                                )
+                                .toFixed(3)}{" "}
+                              DT
+                            </small>
+                          </div>
+                        )}
 
-      {/* Rest of your form fields remain the same */}
-      <Row>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Montant a payer*</Label>
-            <Input
-              type="text"
-              name="montant"
-              value={encaissementValidation.values.montant}
-              onChange={handleMontantChange}
-              invalid={
-                encaissementValidation.touched.montant &&
-                !!encaissementValidation.errors.montant
-              }
-              placeholder="0,000"
-            />
-            <FormFeedback>
-              {encaissementValidation.errors.montant}
-            </FormFeedback>
-          </div>
-        </Col>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Mode de paiement*</Label>
-            <Input
-              type="select"
-              name="modePaiement"
-              value={encaissementValidation.values.modePaiement}
-              onChange={encaissementValidation.handleChange}
-              invalid={
-                encaissementValidation.touched.modePaiement &&
-                !!encaissementValidation.errors.modePaiement
-              }
-            >
-              <option value="Espece">En espèces</option>
-              <option value="Cheque">Chèque</option>
-              <option value="Virement">Virement</option>
-              <option value="Traite">Traite</option>
-              <option value="tpe">Carte Bancaire "TPE"</option>
-              <option value="Autre">Autre</option>
-            </Input>
-            <FormFeedback>
-              {encaissementValidation.errors.modePaiement}
-            </FormFeedback>
-          </div>
-        </Col>
-      </Row>
-      
-      {/* Cheque Fields */}
-      {encaissementValidation.values.modePaiement === "Cheque" && (
-        <Row>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Numéro du chèque*</Label>
-              <Input
-                type="text"
-                name="numeroCheque"
-                value={encaissementValidation.values.numeroCheque}
-                onChange={encaissementValidation.handleChange}
-                placeholder="Saisir le numéro du chèque"
-              />
-            </div>
-          </Col>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Banque*</Label>
-              <Input
-                type="text"
-                name="banque"
-                value={encaissementValidation.values.banque}
-                onChange={encaissementValidation.handleChange}
-                placeholder="Nom de la banque"
-              />
-            </div>
-          </Col>
-        </Row>
-      )}
-      
-      {/* Traite Fields */}
-      {encaissementValidation.values.modePaiement === "Traite" && (
-        <Row>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Numéro de traite*</Label>
-              <Input
-                type="text"
-                name="numeroTraite"
-                value={encaissementValidation.values.numeroTraite}
-                onChange={encaissementValidation.handleChange}
-                placeholder="Saisir le numéro de traite"
-              />
-            </div>
-          </Col>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Date d'échéance*</Label>
-              <Input
-                type="date"
-                name="dateEcheance"
-                value={encaissementValidation.values.dateEcheance}
-                onChange={encaissementValidation.handleChange}
-                min={moment().format("YYYY-MM-DD")}
-              />
-            </div>
-          </Col>
-        </Row>
-      )}
-     
-      <Row>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Encaissement n °*</Label>
-            <Input
-              type="text"
-              name="numeroEncaissement"
-              value={encaissementValidation.values.numeroEncaissement}
-              onChange={encaissementValidation.handleChange}
-              invalid={
-                encaissementValidation.touched.numeroEncaissement &&
-                !!encaissementValidation.errors.numeroEncaissement
-              }
-            />
-            <FormFeedback>
-              {encaissementValidation.errors.numeroEncaissement}
-            </FormFeedback>
-          </div>
-        </Col>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Date*</Label>
-            <Input
-              type="date"
-              name="date"
-              value={encaissementValidation.values.date}
-              onChange={encaissementValidation.handleChange}
-              invalid={
-                encaissementValidation.touched.date &&
-                !!encaissementValidation.errors.date
-              }
-            />
-          </div>
-        </Col>
-      </Row>
+                      <div className="mb-3 p-2 bg-success bg-opacity-10 rounded">
+                        <small className="text-muted d-block">
+                          Montant disponible pour encaissement:
+                        </small>
+                        <strong className="text-success fs-5">
+                          {(() => {
+                            if (!selectedFacture) return "0,000";
 
-      <div className="mb-3">
-        <Label>Notes</Label>
-        <Input
-          type="textarea"
-          name="notes"
-          value={encaissementValidation.values.notes}
-          onChange={encaissementValidation.handleChange}
-          placeholder="Notes supplémentaires..."
-          rows="2"
-        />
-      </div>
-    </ModalBody>
-    <ModalFooter>
-      <Button
-        color="light"
-        onClick={() => setEncaissementModal(false)}
-      >
-        <i className="ri-close-line align-bottom me-1"></i> Annuler
-      </Button>
-      <Button color="primary" type="submit">
-        <i className="ri-save-line align-bottom me-1"></i> Enregistrer Encaissement
-      </Button>
-    </ModalFooter>
-  </Form>
-</Modal>
+                            // ✅ EXACT SAME CALCULATION AS TABLE
+                            const paymentMethodsTotal =
+                              selectedFacture.paymentMethods
+                                ? selectedFacture.paymentMethods
+                                    .filter(
+                                      (pm: any) => pm.method !== "retenue"
+                                    )
+                                    .reduce((sum: number, pm: any) => {
+                                      let amountValue: number;
+                                      if (typeof pm.amount === "string") {
+                                        amountValue =
+                                          parseFloat(
+                                            pm.amount.replace(",", ".")
+                                          ) || 0;
+                                      } else if (
+                                        typeof pm.amount === "number"
+                                      ) {
+                                        amountValue = pm.amount;
+                                      } else {
+                                        amountValue = 0;
+                                      }
+                                      return sum + amountValue;
+                                    }, 0)
+                                : 0;
+
+                            // ✅ CHECK IF THERE'S REMISE AND USE THE APPROPRIATE TOTAL
+                            const hasRemise =
+                              selectedFacture.remise &&
+                              Number(selectedFacture.remise) > 0;
+                            const finalTotal = hasRemise
+                              ? Number(selectedFacture.totalTTCAfterRemise) ||
+                                Number(selectedFacture.totalTTC) ||
+                                0
+                              : Number(selectedFacture.totalTTC) || 0;
+
+                            const retentionAmount =
+                              Number(selectedFacture.montantRetenue) || 0;
+                            const totalPaye = selectedFacture.montantPaye || 0;
+
+                            const availableAmount = Math.max(
+                              0,
+                              finalTotal - retentionAmount - totalPaye
+                            );
+
+                            return availableAmount.toFixed(3).replace(".", ",");
+                          })()}{" "}
+                          DT
+                        </strong>
+                      </div>
+
+                      {/* Rest of your form fields remain the same */}
+                      <Row>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Montant a payer*</Label>
+                            <Input
+                              type="text"
+                              name="montant"
+                              value={encaissementValidation.values.montant}
+                              onChange={handleMontantChange}
+                              invalid={
+                                encaissementValidation.touched.montant &&
+                                !!encaissementValidation.errors.montant
+                              }
+                              placeholder="0,000"
+                            />
+                            <FormFeedback>
+                              {encaissementValidation.errors.montant}
+                            </FormFeedback>
+                          </div>
+                        </Col>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Mode de paiement*</Label>
+                            <Input
+                              type="select"
+                              name="modePaiement"
+                              value={encaissementValidation.values.modePaiement}
+                              onChange={encaissementValidation.handleChange}
+                              invalid={
+                                encaissementValidation.touched.modePaiement &&
+                                !!encaissementValidation.errors.modePaiement
+                              }
+                            >
+                              <option value="Espece">En espèces</option>
+                              <option value="Cheque">Chèque</option>
+                              <option value="Virement">Virement</option>
+                              <option value="Traite">Traite</option>
+                              <option value="tpe">Carte Bancaire "TPE"</option>
+                              <option value="Autre">Autre</option>
+                            </Input>
+                            <FormFeedback>
+                              {encaissementValidation.errors.modePaiement}
+                            </FormFeedback>
+                          </div>
+                        </Col>
+                      </Row>
+
+                      {/* Cheque Fields */}
+                      {encaissementValidation.values.modePaiement ===
+                        "Cheque" && (
+                        <Row>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Numéro du chèque*</Label>
+                              <Input
+                                type="text"
+                                name="numeroCheque"
+                                value={
+                                  encaissementValidation.values.numeroCheque
+                                }
+                                onChange={encaissementValidation.handleChange}
+                                placeholder="Saisir le numéro du chèque"
+                              />
+                            </div>
+                          </Col>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Banque*</Label>
+                              <Input
+                                type="text"
+                                name="banque"
+                                value={encaissementValidation.values.banque}
+                                onChange={encaissementValidation.handleChange}
+                                placeholder="Nom de la banque"
+                              />
+                            </div>
+                          </Col>
+                        </Row>
+                      )}
+
+                      {/* Traite Fields */}
+                      {encaissementValidation.values.modePaiement ===
+                        "Traite" && (
+                        <Row>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Numéro de traite*</Label>
+                              <Input
+                                type="text"
+                                name="numeroTraite"
+                                value={
+                                  encaissementValidation.values.numeroTraite
+                                }
+                                onChange={encaissementValidation.handleChange}
+                                placeholder="Saisir le numéro de traite"
+                              />
+                            </div>
+                          </Col>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Date d'échéance*</Label>
+                              <Input
+                                type="date"
+                                name="dateEcheance"
+                                value={
+                                  encaissementValidation.values.dateEcheance
+                                }
+                                onChange={encaissementValidation.handleChange}
+                                min={moment().format("YYYY-MM-DD")}
+                              />
+                            </div>
+                          </Col>
+                        </Row>
+                      )}
+
+                      <Row>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Encaissement n °*</Label>
+                            <Input
+                              type="text"
+                              name="numeroEncaissement"
+                              value={
+                                encaissementValidation.values.numeroEncaissement
+                              }
+                              onChange={encaissementValidation.handleChange}
+                              invalid={
+                                encaissementValidation.touched
+                                  .numeroEncaissement &&
+                                !!encaissementValidation.errors
+                                  .numeroEncaissement
+                              }
+                            />
+                            <FormFeedback>
+                              {encaissementValidation.errors.numeroEncaissement}
+                            </FormFeedback>
+                          </div>
+                        </Col>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Date*</Label>
+                            <Input
+                              type="date"
+                              name="date"
+                              value={encaissementValidation.values.date}
+                              onChange={encaissementValidation.handleChange}
+                              invalid={
+                                encaissementValidation.touched.date &&
+                                !!encaissementValidation.errors.date
+                              }
+                            />
+                          </div>
+                        </Col>
+                      </Row>
+
+                      <div className="mb-3">
+                        <Label>Notes</Label>
+                        <Input
+                          type="textarea"
+                          name="notes"
+                          value={encaissementValidation.values.notes}
+                          onChange={encaissementValidation.handleChange}
+                          placeholder="Notes supplémentaires..."
+                          rows="2"
+                        />
+                      </div>
+                    </ModalBody>
+                    <ModalFooter>
+                      <Button
+                        color="light"
+                        onClick={() => setEncaissementModal(false)}
+                      >
+                        <i className="ri-close-line align-bottom me-1"></i>{" "}
+                        Annuler
+                      </Button>
+                      <Button color="primary" type="submit">
+                        <i className="ri-save-line align-bottom me-1"></i>{" "}
+                        Enregistrer Encaissement
+                      </Button>
+                    </ModalFooter>
+                  </Form>
+                </Modal>
                 <ToastContainer />
               </CardBody>
             </Card>

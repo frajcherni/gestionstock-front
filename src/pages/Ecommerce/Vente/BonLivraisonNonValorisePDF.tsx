@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
   },
   colN: { width: "5%" },
   colArticle: { width: "15%", textAlign: "left" },
-  colDesignation: { width: "22%", textAlign: "left" },
+  colDesignation: { width: "29%", textAlign: "left" },
   colQuantite: { width: "8%" },
   colPUHT: { width: "10%", textAlign: "right" },
   colTVA: { width: "8%" },
@@ -235,7 +235,45 @@ const styles = StyleSheet.create({
   },
   paymentContainerAboveTable: {
     width: '40%',
-  }
+  },
+
+
+deliveryInfoHeader: {
+  backgroundColor: "#00aeef",
+  paddingVertical: 4,
+  paddingHorizontal: 8,
+  margin: -8,
+  marginBottom: 8,
+},
+deliveryInfoTitle: {
+  fontSize: 11,
+  fontWeight: "bold",
+  color: "#ffffff",
+  textAlign: "center",
+},
+deliveryInfoRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  marginBottom: 6,
+},
+deliveryInfoItem: {
+  width: "48%",
+},
+deliveryInfoLabel: {
+  fontSize: 10,
+  fontWeight: "bold",
+  marginBottom: 2,
+},
+deliveryInfoValue: {
+  fontSize: 10,
+},
+deliveryInfoBox: {
+  padding: 8,
+  border: "1pt solid #ddd",
+  width: "100%",
+  marginBottom: 10,
+},
+
 });
 
 interface BonLivraisonPDFProps {
@@ -298,6 +336,44 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
   };
 
 
+  // Check if delivery information exists
+const hasDeliveryInfo = bonLivraison.voiture || bonLivraison.serie || bonLivraison.chauffeur || bonLivraison.cin;
+
+// Render delivery information box
+const renderDeliveryInfoBox = () => {
+  if (!hasDeliveryInfo) return null;
+
+  return (
+    <View style={styles.deliveryInfoBox}>
+      <View style={styles.deliveryInfoHeader}>
+        <Text style={styles.deliveryInfoTitle}>INFORMATIONS DE LIVRAISON</Text>
+      </View>
+      <View style={styles.deliveryInfoRow}>
+        <View style={styles.deliveryInfoItem}>
+          <Text style={styles.deliveryInfoLabel}>Voiture:</Text>
+          <Text style={styles.deliveryInfoValue}>{bonLivraison.voiture || "Non spécifié"}</Text>
+        </View>
+        <View style={styles.deliveryInfoItem}>
+          <Text style={styles.deliveryInfoLabel}>Série:</Text>
+          <Text style={styles.deliveryInfoValue}>{bonLivraison.serie || "Non spécifié"}</Text>
+        </View>
+      </View>
+      <View style={styles.deliveryInfoRow}>
+        <View style={styles.deliveryInfoItem}>
+          <Text style={styles.deliveryInfoLabel}>Chauffeur:</Text>
+          <Text style={styles.deliveryInfoValue}>{bonLivraison.chauffeur || "Non spécifié"}</Text>
+        </View>
+        <View style={styles.deliveryInfoItem}>
+          <Text style={styles.deliveryInfoLabel}>CIN:</Text>
+          <Text style={styles.deliveryInfoValue}>{bonLivraison.cin || "Non spécifié"}</Text>
+        </View>
+      </View>
+    </View>
+  );
+};
+
+
+
 
   const renderSummarySection = () => {
     const bottomPos = 160;
@@ -305,42 +381,12 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
     return (
       <View style={[styles.summaryArea, { bottom: bottomPos }]}>
         <View style={styles.leftColumn}>
+        {renderDeliveryInfoBox()}
         </View>
         <View style={styles.totalsContainer}>
-          <View style={styles.totalsBox}>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total H.T.:</Text>
-              <Text style={styles.summaryValue}> </Text>
-            </View>
-            {Number(bonLivraison.remise) > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {bonLivraison.remiseType === "percentage"
-                    ? `Remise (${bonLivraison.remise}%)`
-                    : "Remise"}
-                  :
-                </Text>
-                <Text style={styles.summaryValue}> </Text>
-              </View>
-            )}
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Net H.T.:</Text>
-              <Text style={styles.summaryValue}> </Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>TVA:</Text>
-              <Text style={styles.summaryValue}> </Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total TTC:</Text>
-              <Text style={styles.summaryValue}> </Text>
-            </View>
-            
-            {/* NET À PAYER as table - Same design as FacturePDF but empty */}
-            <View style={styles.netAPayerContainer}>
-              <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
-              <Text style={styles.netAPayerValue}> </Text>
-            </View>
+          {/* Completely remove the totals box */}
+          <View style={{ width: '100%' }}>
+            {/* Empty - no totals to display */}
           </View>
         </View>
       </View>
@@ -456,7 +502,7 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
               <View>
                 <View style={styles.commandeDetailItem}>
                   <Text style={styles.N}>
-                    N°:{" "}
+                   
                     <Text style={styles.commandeNumberValue}>
                       {safeBonLivraison.numeroLivraison || "N/A"}
                     </Text>
@@ -505,6 +551,11 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
                 {safeBonLivraison.client?.telephone1 && (
                   <Text style={styles.clientLine}>
                     Tél: {safeBonLivraison.client.telephone1}
+                  </Text>
+                )}
+                  {safeBonLivraison.client?.telephone2 && (
+                  <Text style={styles.clientLine}>
+                    Tél: {safeBonLivraison.client.telephone2}
                   </Text>
                 )}
               </View>
@@ -562,11 +613,7 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
     return (
       <>
         {renderSummarySection()}
-        <View style={[styles.amountInWords, { bottom: amountBottom }]}>
-          <Text style={styles.amountText}>
-            Arrêtée le présent bon de livraison
-          </Text>
-        </View>
+       
         <View style={styles.cachetSignatureSection}>
           <View style={styles.signatureContainer}>
             <Text style={styles.signatureText}>Signature & Cachet</Text>
@@ -626,4 +673,4 @@ const BonLivraisonNonValorisePDF: React.FC<BonLivraisonPDFProps> = ({ bonLivrais
   );
 };
 
-export default BonLivraisonNonValorisePDF;
+export default BonLivraisonNonValorisePDF

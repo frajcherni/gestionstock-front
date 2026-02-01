@@ -576,17 +576,10 @@ const TrésoreriePDF: React.FC<any> = ({ data, companyInfo, dateRange }) => {
             <View>
               {companyInfo.logo && <Image src={companyInfo.logo} style={styles.logo} />}
             </View>
-            <View style={styles.companyInfo}>
-              <Text style={styles.companyName}>{companyInfo.name}</Text>
-              <Text>{companyInfo.address}</Text>
-              <Text>{companyInfo.city}</Text>
-              <Text>Tél: {companyInfo.phone} {companyInfo.gsm ? `| ${companyInfo.gsm}` : ""}</Text>
-              <Text>MF: {companyInfo.taxId}</Text>
-            </View>
+        
           </View>
 
           <Text style={styles.title}>RAPPORT DES PAIEMENTS CLIENTS</Text>
-          <Text style={styles.subtitle}>État des encaissements clients</Text>
           
           <View style={styles.period}>
             <Text>Période du {moment(dateRange.startDate).format("DD/MM/YYYY")} au {moment(dateRange.endDate).format("DD/MM/YYYY")}</Text>
@@ -615,17 +608,11 @@ const TrésoreriePDF: React.FC<any> = ({ data, companyInfo, dateRange }) => {
           <View>
             {companyInfo.logo && <Image src={companyInfo.logo} style={styles.logo} />}
           </View>
-          <View style={styles.companyInfo}>
-            <Text style={styles.companyName}>{companyInfo.name}</Text>
-            <Text>{companyInfo.address}</Text>
-            <Text>{companyInfo.city}</Text>
-            <Text>Tél: {companyInfo.phone} {companyInfo.gsm ? `| ${companyInfo.gsm}` : ""}</Text>
-            <Text>MF: {companyInfo.taxId}</Text>
-          </View>
+      
         </View>
 
         <Text style={styles.title}>RAPPORT DES PAIEMENTS CLIENTS</Text>
-        <Text style={styles.subtitle}>État des encaissements clients</Text>
+        <Text style={styles.subtitle}></Text>
         
         <View style={styles.period}>
           <Text>Période du {moment(dateRange.startDate).format("DD/MM/YYYY")} au {moment(dateRange.endDate).format("DD/MM/YYYY")}</Text>

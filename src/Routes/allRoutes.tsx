@@ -80,6 +80,9 @@ import EncaissementClientList from "pages/Ecommerce/Vente/EncaissementClientList
 import Login from "pages/Authentication/Login";
 import Logout from "pages/Authentication/Logout";
 import PaiementBcClientList from "pages/Ecommerce/Vente/PaiementBcClientList";
+import DepotPage from "pages/Ecommerce/Stock/Depot";
+//import InventairePage from "pages/Ecommerce/Stock/InventairePage";
+//import TransferPage from "pages/Ecommerce/Stock/TransferPage";
 
 const authProtectedRoutes = [
   { path: "/dashboard-analytics", component: <DashboardAnalytics /> },
@@ -102,6 +105,14 @@ const authProtectedRoutes = [
   { path: "/articlelist", component: <EcommerceOrders /> },
   { path: "/WebSiteSettings", component: <WebSiteSettings /> },
 
+  { path: "/depots", component: <DepotPage /> },
+  //{ path: "/inventaire", component: <InventairePage /> },
+//  { path: "/transfert", component: <TransferPage /> },
+
+
+
+
+
   {
     path: "/apps-ecommerce-order-details",
     component: <EcommerceOrderDetail />,
@@ -114,6 +125,7 @@ const authProtectedRoutes = [
     path: "/apps-ecommerce-seller-details",
     component: <EcommerceSellerDetail />,
   },
+
 
   //Chat
   { path: "/Fournisseurs", component: <FournisseursList /> },

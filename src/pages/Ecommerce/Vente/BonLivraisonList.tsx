@@ -4,6 +4,7 @@
   useState,
   useMemo,
   useCallback,
+  useRef
 } from "react";
 import {
   Card,
@@ -49,9 +50,10 @@ import {
   fetchNextLivraisonNumberAPI,
 } from "../../../Components/CommandeClient/BonLivraisonServices";
 import {
-  fetchArticles,
-  fetchClients,
+
   fetchVendeurs,
+  searchArticles,  // Add this
+  searchClients,   // Add this
 } from "../../../Components/Article/ArticleServices";
 import {
   createFacture,
@@ -138,6 +140,21 @@ const BonLivraisonList = () => {
     []
   );
 
+  // Add near your other state declarations
+const [barcodeInput, setBarcodeInput] = useState("");
+const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(null);
+const [phoneSearch, setPhoneSearch] = useState("");
+
+// Add ref for article search input
+const articleSearchRef = useRef<HTMLInputElement>(null);
+
+
+// Add these loading states
+const [secondaryLoading, setSecondaryLoading] = useState(false);
+const [articlesLoading, setArticlesLoading] = useState(false);
+const [clientsLoading, setClientsLoading] = useState(false);
+const [modalLoading, setModalLoading] = useState(false);
+
   // Add these with your other state declarations at the top of the component
   const [valorisationModal, setValorisationModal] = useState(false);
   const [
@@ -170,19 +187,167 @@ const BonLivraisonList = () => {
     status: "Actif" as "Actif" | "Inactif",
   });
 
+ // === FONCTIONS DE CALCUL TVA/FODEC TUNISIEN ===
+const parseNumber = (value: string | number): number => {
+  if (value === null || value === undefined || value === "") return 0;
+  const strValue = String(value)
+    .replace(/[^\d.,]/g, "")
+    .replace(",", ".");
+  const num = parseFloat(strValue);
+  return isNaN(num) ? 0 : Math.round(num * 100000) / 100000;
+};
+
+// Formatage avec 3 décimales
+const formatNumber = (value: number): string => {
+  if (value === 0) return "";
+  return (Math.round(value * 1000) / 1000).toFixed(3).replace(".", ",");
+};
+
+// === CALCUL TTC AVEC FODEC (Norme tunisienne) ===
+// Formule : TTC = HT × 1.01 × (1 + TVA/100)
+const calculateTTCFromHT = (
+  ht: number,
+  tva: number,
+  hasFodec: boolean
+): number => {
+  const htValue = parseNumber(ht);
+  const tvaRate = parseNumber(tva);
+
+  if (tvaRate === 0 && !hasFodec) return htValue;
+
+  let baseTTC = htValue;
+
+  if (hasFodec) {
+    baseTTC = htValue * 1.01;
+  }
+
+  if (tvaRate > 0) {
+    baseTTC = baseTTC * (1 + tvaRate / 100);
+  }
+
+  return Math.round(baseTTC * 1000) / 1000;
+};
+
+// === CALCUL HT À PARTIR DE TTC (Norme tunisienne) ===
+// Formule inverse : HT = TTC / (1.01 × (1 + TVA/100))
+const calculateHTFromTTC = (
+  ttc: number,
+  tva: number,
+  hasFodec: boolean
+): number => {
+  const ttcValue = parseNumber(ttc);
+  const tvaRate = parseNumber(tva);
+
+  if (tvaRate === 0 && !hasFodec) return ttcValue;
+
+  let factor = 1;
+
+  if (hasFodec) {
+    factor *= 1.01;
+  }
+
+  if (tvaRate > 0) {
+    factor *= 1 + tvaRate / 100;
+  }
+
+  const ht = ttcValue / factor;
+  return Math.round(ht * 1000) / 1000;
+};
+
+// Gestionnaire unifié pour les changements de prix
+const handlePriceChange = (field: keyof typeof newArticle, value: string) => {
+  const newValue = value.replace(",", ".");
+  const tva = parseNumber(newArticle.tva);
+  const hasFodec = newArticle.taux_fodec;
+
+  setNewArticle((prev) => ({ ...prev, [field]: newValue }));
+
+  switch (field) {
+    case "pua_ht": {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case "pua_ttc": {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ht: formatNumber(ht) }));
+      break;
+    }
+    case "puv_ht": {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case "puv_ttc": {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ht: formatNumber(ht) }));
+      break;
+    }
+  }
+};
+
+// Gestionnaire pour TVA
+const handleTVAChange = (value: string) => {
+  const oldTva = parseNumber(newArticle.tva);
+  const newTva = parseNumber(value);
+  const hasFodec = newArticle.taux_fodec;
+
+  setNewArticle((prev) => ({ ...prev, tva: value }));
+
+  setTimeout(() => {
+    if (newArticle.pua_ht) {
+      const ht = parseNumber(newArticle.pua_ht);
+      const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+    }
+
+    if (newArticle.puv_ht) {
+      const ht = parseNumber(newArticle.puv_ht);
+      const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+    }
+  }, 10);
+};
+
+// Gestionnaire pour FODEC
+const handleFodecChange = (checked: boolean) => {
+  const tva = parseNumber(newArticle.tva);
+
+  setNewArticle((prev) => ({ ...prev, taux_fodec: checked }));
+
+  setTimeout(() => {
+    if (newArticle.pua_ht) {
+      const ht = parseNumber(newArticle.pua_ht);
+      const ttc = calculateTTCFromHT(ht, tva, checked);
+      setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+    }
+
+    if (newArticle.puv_ht) {
+      const ht = parseNumber(newArticle.puv_ht);
+      const ttc = calculateTTCFromHT(ht, tva, checked);
+      setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+    }
+  }, 10);
+};
+
   const [newArticle, setNewArticle] = useState({
     reference: "",
+    code_barre: "",
     nom: "",
     designation: "",
-    puv_ht: 0,
-    puv_ttc: 0,
-    pua_ht: 0,
-    pua_ttc: 0,
-    qte: 0,
-    tva: 0,
-    remise: 0,
+    puv_ht: "",
+    puv_ttc: "",
+    pua_ht: "",
+    pua_ttc: "",
+    qte: "",
+    tva: "19",
+    remise: "0",
     taux_fodec: false,
-    type: "Non Consigné" as "Consigné" | "Non Consigné",
+    type: "Non Consigné" ,
     image: "",
     on_website: false,
     is_offre: false,
@@ -361,20 +526,34 @@ const BonLivraisonList = () => {
     fetchNextFactureNumber,
   ]);
 
-  useEffect(() => {
-    if (articleSearch.length >= 3) {
-      const filtered = articles.filter(
-        (article) =>
-          article.designation
-            .toLowerCase()
-            .includes(articleSearch.toLowerCase()) ||
-          article.reference.toLowerCase().includes(articleSearch.toLowerCase())
-      );
-      setFilteredArticles(filtered);
+
+  // Replace the current useEffect for articleSearch:
+useEffect(() => {
+  const searchArticlesDebounced = async () => {
+    if (articleSearch.length >= 3 || modal) {
+      await loadArticles(articleSearch, 1, 20);
     } else {
       setFilteredArticles([]);
     }
-  }, [articleSearch, articles]);
+  };
+
+  const timer = setTimeout(searchArticlesDebounced, 300);
+  return () => clearTimeout(timer);
+}, [articleSearch, modal]);
+
+
+  // Focus management for modal
+useEffect(() => {
+  if (modal && articleSearchRef.current) {
+    // Focus on article search input when modal opens
+    setTimeout(() => {
+      if (articleSearchRef.current) {
+        articleSearchRef.current.focus();
+      }
+    }, 100);
+  }
+}, [modal]);
+
 
   // Phone formatting functions - add these near the top of your component
   const formatPhoneInput = (value: string): string => {
@@ -411,77 +590,145 @@ const BonLivraisonList = () => {
     return phone;
   };
 
-  useEffect(() => {
-    if (clientSearch.length >= 3) {
-      const searchTerm = clientSearch.toLowerCase().trim();
-
-      const filtered = clients.filter((client) => {
-        // Search by name (partial match anywhere in the name)
-        const nameMatch =
-          client.raison_sociale?.toLowerCase().includes(searchTerm) ||
-          client.designation?.toLowerCase().includes(searchTerm);
-
-        // Search by phone - remove spaces for comparison
-        const cleanSearchTerm = searchTerm.replace(/\s/g, "");
-        const phoneMatch =
-          client.telephone1?.replace(/\s/g, "").includes(cleanSearchTerm) ||
-          client.telephone2?.replace(/\s/g, "").includes(cleanSearchTerm);
-
-        return nameMatch || phoneMatch;
-      });
-
-      setFilteredClients(filtered);
+// Replace the current useEffect for clientSearch:
+useEffect(() => {
+  const searchClientsDebounced = async () => {
+    if (clientSearch.length >= 1 || modal) {
+      await loadClients(clientSearch, 1, 20);
     } else {
       setFilteredClients([]);
     }
-  }, [clientSearch, clients]);
+  };
 
-  const fetchData = useCallback(async () => {
+  const timer = setTimeout(searchClientsDebounced, 300);
+  return () => clearTimeout(timer);
+}, [clientSearch, modal]);
+
+  const fetchData = useCallback(async (skipSecondary = false) => {
     try {
       setLoading(true);
-      const [
-        livraisonData,
-        clientsData,
-        vendeursData,
-        articlesData,
-        commandesData,
-        categoriesData,
-        fournisseursData,
-      ] = await Promise.all([
+      
+      // PHASE 1: Load critical data only
+      const [livraisonData, vendeursData] = await Promise.all([
         FetchBonLivraison(),
-        fetchClients(),
         fetchVendeurs(),
-        fetchArticles(),
-        fetchBonsCommandeClient(),
-        fetchCategories(),
-        fetchFournisseurs(),
       ]);
-
+  
       setBonsLivraison(livraisonData);
       setFilteredBonsLivraison(livraisonData);
-      setClients(clientsData);
       setVendeurs(vendeursData);
-      setCategories(categoriesData);
-      setFournisseurs(fournisseursData);
-      setArticles(articlesData);
-      setBonsCommande(commandesData);
-
+      
+      // PHASE 2: Load secondary data only if not skipped
+      if (!skipSecondary) {
+        setSecondaryLoading(true);
+        
+        try {
+          // Load articles and clients in parallel with limit
+          const [articlesResult, clientsResult] = await Promise.all([
+            searchArticles({ query: "", page: 1, limit: 25 }),
+            searchClients({ query: "", page: 1, limit: 25 }),
+          ]);
+          
+          setArticles(articlesResult.articles || []);
+          setFilteredClients(clientsResult.clients || []);
+        } catch (secondaryErr) {
+          console.error("Secondary data loading failed:", secondaryErr);
+          // Continue without secondary data
+        } finally {
+          setSecondaryLoading(false);
+        }
+      }
+      
       setLoading(false);
+      setError(null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Échec du chargement des données"
       );
       setLoading(false);
+      setSecondaryLoading(false);
     }
   }, []);
-
+  
+  // Initial load - only critical data
   useEffect(() => {
-    fetchData();
+    fetchData(true); // true means skip secondary data initially
   }, [fetchData]);
+
+
+  // Load modal data only when modal opens
+const loadModalData = async () => {
+  if (modal) {
+    setModalLoading(true);
+    try {
+
+      const [ categoriesResult, fournisseursData] = await Promise.all([
+        fetchCategories(),
+        fetchFournisseurs(), // ADD THIS LINE
+      ]);
+
+      setCategories(categoriesResult);
+      setFournisseurs(fournisseursData); 
+      // Load initial articles and clients for modal
+      await Promise.all([
+        loadArticles("", 1, 15),
+        loadClients("", 1, 15),
+      ]);
+    } catch (err) {
+      console.error("Modal data loading failed:", err);
+    } finally {
+      setModalLoading(false);
+    }
+  }
+};
+
+// Load modal data when modal opens
+useEffect(() => {
+  if (modal) {
+    loadModalData();
+  }
+}, [modal]);
+// Load articles only when needed (modal opens or search)
+const loadArticles = async (query = "", page = 1, limit = 15) => {
+  if (modal || articleSearch) {
+    setArticlesLoading(true);
+    try {
+      const result = await searchArticles({ query, page, limit });
+      if (query === "" && page === 1) {
+        setArticles(result.articles || []);
+      }
+      setFilteredArticles(result.articles || []);
+    } catch (err) {
+      console.error("Failed to load articles:", err);
+    } finally {
+      setArticlesLoading(false);
+    }
+  }
+};
+
+// Load clients only when needed
+const loadClients = async (query = "", page = 1, limit = 15) => {
+  if (modal || clientSearch) {
+    setClientsLoading(true);
+    try {
+      const result = await searchClients({ query, page, limit });
+      if (query === "" && page === 1) {
+        setFilteredClients(result.clients || []);
+      } else {
+        setFilteredClients(result.clients || []);
+      }
+    } catch (err) {
+      console.error("Failed to load clients:", err);
+    } finally {
+      setClientsLoading(false);
+    }
+  }
+};
+
 
   useEffect(() => {
     let result = [...bonsLivraison];
-
+  
     if (activeTab === "2") {
       result = result.filter((bon) => bon.status === "Brouillon");
     } else if (activeTab === "3") {
@@ -491,7 +738,7 @@ const BonLivraisonList = () => {
     } else if (activeTab === "5") {
       result = result.filter((bon) => bon.status === "Annulee");
     }
-
+  
     if (startDate && endDate) {
       const start = moment(startDate).startOf("day");
       const end = moment(endDate).endOf("day");
@@ -500,29 +747,42 @@ const BonLivraisonList = () => {
         return bonDate.isBetween(start, end, null, "[]");
       });
     }
-
-    // Enhanced search functionality to include phone numbers
+  
+    // Apply regular text search
     if (searchText) {
-      const searchLower = searchText.toLowerCase();
-      result = result.filter(
-        (bon) =>
-          bon.numeroLivraison.toLowerCase().includes(searchLower) ||
-          (bon.client?.raison_sociale &&
-            bon.client.raison_sociale.toLowerCase().includes(searchLower)) ||
-          // Search in client phone numbers
-          (bon.client?.telephone1 &&
-            bon.client.telephone1.toLowerCase().includes(searchLower)) ||
-          (bon.client?.telephone2 &&
-            bon.client.telephone2.toLowerCase().includes(searchLower)) ||
-          (bon.bonCommandeClient?.numeroCommande &&
-            bon.bonCommandeClient.numeroCommande
-              .toLowerCase()
-              .includes(searchLower))
-      );
+      const searchLower = searchText.toLowerCase().trim();
+  
+      result = result.filter((bon) => {
+        const bonNumero = bon.numeroLivraison?.toLowerCase() || "";
+        const clientName = bon.client?.raison_sociale?.toLowerCase() || "";
+        const clientDesignation = bon.client?.designation?.toLowerCase() || "";
+  
+        return (
+          bonNumero.includes(searchLower) ||
+          clientName.includes(searchLower) ||
+          clientDesignation.includes(searchLower)
+        );
+      });
     }
-
+  
+    // Apply phone number search separately
+    if (phoneSearch) {
+      const cleanPhoneSearch = phoneSearch.replace(/\s/g, "").trim();
+  
+      result = result.filter((bon) => {
+        if (!bon.client) return false;
+  
+        const phone1 = bon.client.telephone1?.replace(/\s/g, "") || "";
+        const phone2 = bon.client.telephone2?.replace(/\s/g, "") || "";
+  
+        return (
+          phone1.includes(cleanPhoneSearch) || phone2.includes(cleanPhoneSearch)
+        );
+      });
+    }
+  
     setFilteredBonsLivraison(result);
-  }, [activeTab, startDate, endDate, searchText, bonsLivraison]);
+  }, [activeTab, startDate, endDate, searchText, phoneSearch, bonsLivraison]);
 
   const openDetailModal = (bonLivraison: BonLivraison) => {
     setSelectedBonLivraison(bonLivraison);
@@ -555,6 +815,9 @@ const BonLivraisonList = () => {
     grandTotal,
     finalTotal,
     discountAmount,
+    discountPercentage,
+    retentionMontant,
+    netAPayer,
   } = useMemo(() => {
     if (selectedArticles.length === 0) {
       return {
@@ -564,131 +827,200 @@ const BonLivraisonList = () => {
         grandTotal: 0,
         finalTotal: 0,
         discountAmount: 0,
+        discountPercentage: 0,
+        retentionMontant: 0,
+        netAPayer: 0,
       };
     }
-
+  
     let sousTotalHTValue = 0;
-    let netHTValue = 0;
+    let netHTBeforeGlobalRemise = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
-
-    // Calculate initial totals with proper rounding
+  
+    // ✅ STEP 1: Calculate totals WITHOUT considering global remise
     selectedArticles.forEach((article) => {
       const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
-      const tvaRate = Number(article.tva) || 0;
-      const remiseRate = Number(article.remise) || 0;
-
-      let priceHT = Number(article.prixUnitaire) || 0;
-      let priceTTC = Number(article.prixTTC) || 0;
-
+      const articleRemise = Number(article.remise) || 0;
+  
+      // Get unit prices with proper handling of editing
+      let unitHT = Number(article.prixUnitaire) || 0;
+      let unitTTC = Number(article.prixTTC) || 0;
+  
+      // Handle manual editing
       if (editingHT[article.article_id] !== undefined) {
         const editingValue = parseNumericInput(editingHT[article.article_id]);
         if (!isNaN(editingValue) && editingValue >= 0) {
-          priceHT = parseFloat(editingValue.toFixed(3));
-          const tvaAmount =
-            tvaRate > 0
-              ? parseFloat(((priceHT * tvaRate) / 100).toFixed(3))
-              : 0;
-          priceTTC = parseFloat((priceHT + tvaAmount).toFixed(3));
+          unitHT = editingValue;
+          // Recalculate TTC based on TVA rate
+          const tvaRate = Number(article.tva) || 0;
+          if (tvaRate > 0) {
+            const tvaAmount = (unitHT * tvaRate) / 100;
+            unitTTC = Math.round((unitHT + tvaAmount) * 1000) / 1000;
+          } else {
+            unitTTC = unitHT;
+          }
         }
       } else if (editingTTC[article.article_id] !== undefined) {
         const editingValue = parseNumericInput(editingTTC[article.article_id]);
         if (!isNaN(editingValue) && editingValue >= 0) {
-          priceTTC = parseFloat(editingValue.toFixed(3));
+          unitTTC = editingValue;
+          // Recalculate HT based on TVA rate
+          const tvaRate = Number(article.tva) || 0;
           if (tvaRate > 0) {
-            const coefficient = 1 + tvaRate / 100;
-            priceHT = parseFloat((priceTTC / coefficient).toFixed(3));
+            const coefficient = Math.round((1 + tvaRate / 100) * 1000) / 1000;
+            unitHT = Math.round((unitTTC / coefficient) * 1000) / 1000;
           } else {
-            priceHT = priceTTC;
+            unitHT = unitTTC;
           }
         }
       }
-
+  
       // Calculate line amounts
-      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-      const montantNetHT =
-        Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-      const montantTVA =
-        Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-
-      sousTotalHTValue += montantSousTotalHT;
-      netHTValue += montantNetHT;
-      totalTaxValue += montantTVA;
-      grandTotalValue += montantTTCLigne;
+      const lineHT = Math.round(unitHT * 1000) / 1000;
+      const lineTTC = Math.round(unitTTC * 1000) / 1000;
+  
+      const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+      const montantNetHTLigne = Math.round(
+        qty * lineHT * (1 - articleRemise / 100) * 1000
+      ) / 1000;
+      const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+      const montantTVALigne = Math.round(
+        (montantTTCLigne - montantNetHTLigne) * 1000
+      ) / 1000;
+  
+      sousTotalHTValue = Math.round(
+        (sousTotalHTValue + montantSousTotalHT) * 1000
+      ) / 1000;
+      netHTBeforeGlobalRemise = Math.round(
+        (netHTBeforeGlobalRemise + montantNetHTLigne) * 1000
+      ) / 1000;
+      totalTaxValue = Math.round((totalTaxValue + montantTVALigne) * 1000) / 1000;
+      grandTotalValue = Math.round(
+        (grandTotalValue + montantTTCLigne) * 1000
+      ) / 1000;
     });
-
-    // Round accumulated values
-    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-    netHTValue = Math.round(netHTValue * 1000) / 1000;
-    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
-    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-
+  
+    // ✅ STEP 2: Apply global remise according to principle (EXACT SAME AS FACTURE)
+    let netHTAfterGlobalRemise = netHTBeforeGlobalRemise;
+    let totalTaxAfterGlobalRemise = totalTaxValue;
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
-    let netHTAfterDiscount = netHTValue;
-    let totalTaxAfterDiscount = totalTaxValue;
-
-    // Apply remise logic with proper rounding
+    let discountPercentageValue = 0;
+  
     if (showRemise && Number(globalRemise) > 0) {
       if (remiseType === "percentage") {
-        discountAmountValue =
-          Math.round(netHTValue * (Number(globalRemise) / 100) * 1000) / 1000;
-        netHTAfterDiscount =
-          Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
-
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        totalTaxAfterDiscount =
-          Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-
-        finalTotalValue =
-          Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) /
-          1000;
+        // ✅ Percentage remise: Apply on HT base
+        discountAmountValue = Math.round(
+          netHTBeforeGlobalRemise * (Number(globalRemise) / 100) * 1000
+        ) / 1000;
+        netHTAfterGlobalRemise = Math.round(
+          (netHTBeforeGlobalRemise - discountAmountValue) * 1000
+        ) / 1000;
+  
+        // ✅ Recalculate TVA proportionally
+        if (netHTBeforeGlobalRemise > 0) {
+          const tvaToHtRatio = Math.round(
+            (totalTaxValue / netHTBeforeGlobalRemise) * 1000
+          ) / 1000;
+          totalTaxAfterGlobalRemise = Math.round(
+            netHTAfterGlobalRemise * tvaToHtRatio * 1000
+          ) / 1000;
+        } else {
+          totalTaxAfterGlobalRemise = 0;
+        }
+  
+        finalTotalValue = Math.round(
+          (netHTAfterGlobalRemise + totalTaxAfterGlobalRemise) * 1000
+        ) / 1000;
       } else if (remiseType === "fixed") {
+        // ✅ Fixed remise: User enters the final TTC amount (EXACT SAME AS FACTURE)
         finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
-
-        const tvaToHtRatio = totalTaxValue / netHTValue;
-        const htAfterDiscount =
-          Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) / 1000;
-
-        discountAmountValue =
-          Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-        netHTAfterDiscount = htAfterDiscount;
-        totalTaxAfterDiscount =
-          Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+  
+        // ✅ CHECK IF SINGLE OR MULTIPLE TVA RATES
+        const uniqueTvaRates = Array.from(
+          new Set(selectedArticles.map((a) => Number(a.tva) || 0))
+        );
+        
+        if (uniqueTvaRates.length === 1 && uniqueTvaRates[0] > 0) {
+          // ✅ SINGLE TVA RATE FORMULA: Net HT = TTC / (1 + TVA rate)
+          const tvaRate = uniqueTvaRates[0] / 100;
+          netHTAfterGlobalRemise = Math.round((finalTotalValue / (1 + tvaRate)) * 1000) / 1000;
+          totalTaxAfterGlobalRemise = Math.round((finalTotalValue - netHTAfterGlobalRemise) * 1000) / 1000;
+        } else {
+          // ✅ MULTIPLE TVA RATES: EXACT SAME CALCULATION AS FACTURE
+          const discountCoefficient = finalTotalValue / grandTotalValue;
+          
+          let newTotalHT = 0;
+          let newTotalTVA = 0;
+          
+          selectedArticles.forEach((article) => {
+            const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
+            const articleRemise = Number(article.remise) || 0;
+            const unitHT = Number(article.prixUnitaire) || 0;
+            const tvaRate = Number(article.tva) || 0;
+            
+            const lineHTAfterDiscount = qty * unitHT * (1 - articleRemise / 100);
+            const newLineHT = lineHTAfterDiscount * discountCoefficient;
+            const newLineTVA = newLineHT * (tvaRate / 100);
+            
+            newTotalHT += newLineHT;
+            newTotalTVA += newLineTVA;
+          });
+          
+          netHTAfterGlobalRemise = Math.round(newTotalHT * 1000) / 1000;
+          totalTaxAfterGlobalRemise = Math.round(newTotalTVA * 1000) / 1000;
+        }
+        
+        discountAmountValue = Math.round(
+          (netHTBeforeGlobalRemise - netHTAfterGlobalRemise) * 1000
+        ) / 1000;
+        
+        // Calculate discount percentage for display
+        if (netHTBeforeGlobalRemise > 0) {
+          discountPercentageValue = Math.round(
+            (discountAmountValue / netHTBeforeGlobalRemise) * 100 * 1000
+          ) / 1000;
+        }
       }
     }
-
-    // Add timbre fiscal for factures
+  
+    // ✅ STEP 3: Calculate timbre fiscal if applicable
+    let timbreAmount = 0;
     if (isCreatingFacture && timbreFiscal) {
-      finalTotalValue = Math.round((finalTotalValue + 1) * 1000) / 1000;
+      timbreAmount = 1.000;
+      finalTotalValue = Math.round((finalTotalValue + timbreAmount) * 1000) / 1000;
     }
-
-    // Use discounted values for final display
-    const displayNetHT =
-      showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax =
-      showRemise && Number(globalRemise) > 0
-        ? totalTaxAfterDiscount
-        : totalTaxValue;
-
+  
+    // ✅ STEP 4: For bon livraison, we don't have retention, so netAPayer = finalTotal
+    const netAPayerValue = finalTotalValue;
+  
     return {
-      sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-      netHT: Math.round(displayNetHT * 1000) / 1000,
-      totalTax: Math.round(displayTotalTax * 1000) / 1000,
-      grandTotal: Math.round(grandTotalValue * 1000) / 1000,
-      finalTotal: Math.round(finalTotalValue * 1000) / 1000,
-      discountAmount: Math.round(discountAmountValue * 1000) / 1000,
+      sousTotalHT: sousTotalHTValue,
+      netHT:
+        showRemise && Number(globalRemise) > 0
+          ? netHTAfterGlobalRemise
+          : netHTBeforeGlobalRemise,
+      totalTax:
+        showRemise && Number(globalRemise) > 0
+          ? totalTaxAfterGlobalRemise
+          : totalTaxValue,
+      grandTotal: grandTotalValue,
+      finalTotal: finalTotalValue,
+      discountAmount: discountAmountValue,
+      discountPercentage: discountPercentageValue,
+      retentionMontant: 0, // Bon livraison doesn't have retention
+      netAPayer: netAPayerValue,
     };
   }, [
     selectedArticles,
     showRemise,
     globalRemise,
     remiseType,
-    isCreatingFacture,
-    timbreFiscal,
     editingHT,
     editingTTC,
+    isCreatingFacture,
+    timbreFiscal,
   ]);
 
   const handleDelete = async () => {
@@ -709,14 +1041,27 @@ const BonLivraisonList = () => {
   // Add these functions before the return statement
   const handleCreateClient = async () => {
     try {
+      // Create the client
       const createdClient = await createClient(newClient);
       toast.success("Client créé avec succès");
+  
+      // Refresh clients list using search with empty query (limited results)
+      const clientsSearchResult = await searchClients({
+        query: "",
+        page: 1,
+        limit: 50 // Limit to reasonable number
+      });
       
-      // Auto-select the newly created client
-      setSelectedClient(createdClient);
-      validation.setFieldValue("client_id", createdClient.id);
-      setClientSearch(createdClient.raison_sociale);
+      // Use the searched clients instead of all clients
+      const newClientData = createdClient; // The API returns the created client
       
+      if (newClientData) {
+        // Auto-select the new client
+        setSelectedClient(newClientData);
+        validation.setFieldValue("client_id", newClientData.id);
+      }
+  
+      // Close modal and reset form
       setClientModal(false);
       setNewClient({
         raison_sociale: "",
@@ -732,45 +1077,27 @@ const BonLivraisonList = () => {
         status: "Actif" as "Actif" | "Inactif",
       });
       
-      // Refresh clients list
-      const clientsData = await fetchClients();
-      setClients(clientsData);
+      // Also add to filtered clients for immediate visibility
+      setFilteredClients(prev => [newClientData, ...prev]);
     } catch (err) {
-      toast.error("Erreur création client");
+      console.error("Error creating client:", err);
+      toast.error("Erreur lors de la création du client");
     }
   };
 
-  const calculateTTCForQuickCreate = (
-    ht: number,
-    tva: number,
-    hasFodec: boolean
-  ) => {
-    const htValue = Number(ht) || 0;
-    const tvaRate = Number(tva) || 0;
-    const tvaAmount = htValue * (tvaRate / 100);
-    const fodecAmount = hasFodec ? htValue * 0.01 : 0;
-    return (htValue + tvaAmount + fodecAmount).toFixed(3);
-  };
+
 
   const handleCreateArticle = async () => {
     try {
-      // Calculate TTC values before sending
       const articleToCreate = {
         ...newArticle,
-        pua_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.pua_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
-        puv_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.puv_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
+        pua_ht: parseNumber(newArticle.pua_ht),
+        pua_ttc: parseNumber(newArticle.pua_ttc),
+        puv_ht: parseNumber(newArticle.puv_ht),
+        puv_ttc: parseNumber(newArticle.puv_ttc),
+        qte: parseNumber(newArticle.qte),
+        tva: parseNumber(newArticle.tva),
+        remise: parseNumber(newArticle.remise),
         categorie_id: newArticle.categorie_id
           ? Number(newArticle.categorie_id)
           : null,
@@ -781,23 +1108,36 @@ const BonLivraisonList = () => {
           ? Number(newArticle.fournisseur_id)
           : null,
       };
-
+  
+      console.log("Creating article:", articleToCreate);
+  
       await createArticle(articleToCreate);
       toast.success("Article créé avec succès");
+  
+      // Refresh articles list
+      const articlesResult = await searchArticles({
+        query: "",
+        page: 1,
+        limit: 25,
+      });
+      setArticles(articlesResult.articles || []);
+  
+      // Reset form
       setArticleModal(false);
       setNewArticle({
         reference: "",
+        code_barre: "",
         nom: "",
         designation: "",
-        puv_ht: 0,
-        puv_ttc: 0,
-        pua_ht: 0,
-        pua_ttc: 0,
-        qte: 0,
-        tva: 0,
-        remise: 0,
+        puv_ht: "",
+        puv_ttc: "",
+        pua_ht: "",
+        pua_ttc: "",
+        qte: "",
+        tva: "19",
+        remise: "0",
         taux_fodec: false,
-        type: "Non Consigné" as "Consigné" | "Non Consigné",
+        type: "Non Consigné",
         image: "",
         on_website: false,
         is_offre: false,
@@ -810,39 +1150,13 @@ const BonLivraisonList = () => {
         sous_categorie_id: "",
         fournisseur_id: "",
       });
-      fetchData(); // Refresh articles list
     } catch (err) {
-      toast.error("Erreur création article");
+      console.error("Error creating article:", err);
+      toast.error("Erreur lors de la création de l'article");
     }
   };
 
-  // Add effect for auto-calculation in article modal
-  useEffect(() => {
-    if (articleModal) {
-      const puaTtc = calculateTTCForQuickCreate(
-        newArticle.pua_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-      const puvTtc = calculateTTCForQuickCreate(
-        newArticle.puv_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
 
-      setNewArticle((prev) => ({
-        ...prev,
-        pua_ttc: Number(puaTtc),
-        puv_ttc: Number(puvTtc),
-      }));
-    }
-  }, [
-    newArticle.pua_ht,
-    newArticle.puv_ht,
-    newArticle.tva,
-    newArticle.taux_fodec,
-    articleModal,
-  ]);
 
   // Add effect for subcategories
   useEffect(() => {
@@ -957,55 +1271,84 @@ const BonLivraisonList = () => {
   });
   const toggleModal = useCallback(() => {
     if (modal) {
+      // Clear all search results when closing modal
+      setFilteredArticles([]);
+      setFilteredClients([]);
+      setArticleSearch("");
+      setClientSearch("");
+      setFocusedIndex(-1);
+      
       setModal(false);
       setBonLivraison(null);
       setSelectedArticles([]);
+      setSelectedClient(null);
+      setSelectedBonCommande(null);
       setGlobalRemise(0);
       setRemiseType("percentage");
       setShowRemise(false);
-      setSelectedBonCommande(null);
-      setSelectedClient(null);
-      setNextNumeroLivraison("");
       setIsCreatingFacture(false);
+      setIsEdit(false);
       setTimbreFiscal(false);
-
-      // ✅ FIX: Properly reset delivery info
+      setModalLoading(false);
+      
+      // Reset delivery info
       setLivraisonInfo({
         voiture: "",
         serie: "",
         chauffeur: "",
         cin: "",
       });
-
+      
       validation.resetForm();
     } else {
       setModal(true);
+      // Don't load modal data here - useEffect will handle it
     }
   }, [modal]);
 
   const handleAddArticle = (articleId: string) => {
-    const article = articles.find((a) => a.id === parseInt(articleId));
-    if (
-      article &&
-      !selectedArticles.some((item) => item.article_id === article.id)
-    ) {
-      // ✅ Use TTC price from article like in BC Client
+    // First, try to find the article in filteredArticles (from search results)
+    let article = filteredArticles.find((a) => a.id === parseInt(articleId));
+    
+    // If not found in filteredArticles, try the main articles array
+    if (!article) {
+      article = articles.find((a) => a.id === parseInt(articleId));
+    }
+    
+    if (article && !selectedArticles.some((item) => item.article_id === article?.id)) {
       const initialHT = article.puv_ht || 0;
       const initialTVA = article.tva || 0;
-      const initialTTC = article.puv_ttc || initialHT * (1 + (article.tva || 0) / 100); // Use puv_ttc if available
+      // USE puv_ttc FROM ARTICLE IF AVAILABLE, OTHERWISE CALCULATE
+      const initialTTC = article.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
   
       setSelectedArticles([
         ...selectedArticles,
         {
           article_id: article.id,
-          quantite: "", // Empty for user to fill
+          quantite: "", // Start with empty instead of 0
           prixUnitaire: initialHT,
+          prixTTC: Math.round(initialTTC * 1000) / 1000, // Use article's puv_ttc
           tva: initialTVA,
           remise: 0,
-          prixTTC: Math.round(initialTTC * 1000) / 1000, // ✅ Use TTC from article like BC Client
           articleDetails: article,
         },
       ]);
+      
+      // Clear the search input and results after adding
+      setArticleSearch("");
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+      
+      // Optionally, focus back on the search input
+      if (articleSearchRef.current) {
+        articleSearchRef.current.focus();
+      }
+      
+      // Optional: Show success toast
+      toast.success(`Article "${article.designation}" ajouté`);
+    } else if (article) {
+      // Article already exists - show message
+      toast.info(`Article "${article.designation}" déjà ajouté`);
     }
   };
 
@@ -1014,6 +1357,11 @@ const BonLivraisonList = () => {
       selectedArticles.filter((item) => item.article_id !== articleId)
     );
   };
+
+  // Custom round function - same as used in create/edit
+const customRound = (value: number, decimals: number = 3): number => {
+  return Math.round(value * Math.pow(10, decimals)) / Math.pow(10, decimals);
+};
 
   const handleArticleChange = (
     articleId: number,
@@ -1099,6 +1447,121 @@ const BonLivraisonList = () => {
       });
     }
   };
+
+
+  // Barcode scanning handler
+const handleBarcodeScan = useCallback((barcode: string) => {
+  if (!barcode.trim()) return;
+  
+  console.log("Code-barres scanné:", barcode);
+  
+  // Clean the barcode
+  const cleanBarcode = barcode.trim();
+  
+  // Search for article by code_barre
+  const scannedArticle = articles.find(article => 
+    article.code_barre === cleanBarcode
+  );
+
+  if (scannedArticle) {
+    const existingArticle = selectedArticles.find(
+      item => item.article_id === scannedArticle.id
+    );
+
+    if (existingArticle) {
+      // Increment quantity if article already exists
+      handleArticleChange(
+        scannedArticle.id,
+        "quantite",
+        (Number(existingArticle.quantite) || 0) + 1
+      );
+      toast.success(`Quantité augmentée pour "${scannedArticle.designation}"`);
+    } else {
+      // Add new article
+      const initialHT = scannedArticle.puv_ht || 0;
+      const initialTVA = scannedArticle.tva || 0;
+      const initialTTC = scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+
+      setSelectedArticles(prev => [
+        ...prev,
+        {
+          article_id: scannedArticle.id,
+          quantite: 1,
+          prixUnitaire: initialHT,
+          tva: initialTVA,
+          remise: 0,
+          prixTTC: Math.round(initialTTC * 1000) / 1000,
+          articleDetails: scannedArticle,
+        },
+      ]);
+      toast.success(`Article "${scannedArticle.designation}" ajouté`);
+    }
+    
+    // Focus on article search input after scanning
+    if (articleSearchRef.current) {
+      articleSearchRef.current.focus();
+    }
+  } else {
+    toast.error(`Article avec code ${cleanBarcode} non trouvé`);
+  }
+}, [articles, selectedArticles, handleArticleChange]);
+
+// Keyboard handler for barcode scanning
+const handleKeyPress = useCallback((event: KeyboardEvent) => {
+  // Check if user is typing in an input field
+  const target = event.target as HTMLElement;
+  const isInputField = 
+    target.tagName === 'INPUT' || 
+    target.tagName === 'TEXTAREA' || 
+    target.isContentEditable;
+  
+  if (isInputField) {
+    // Allow normal typing in input fields
+    return;
+  }
+  
+  // Barcode scanner handling
+  if (event.key === 'Enter') {
+    if (barcodeInput.length > 0) {
+      handleBarcodeScan(barcodeInput);
+      setBarcodeInput("");
+    }
+  } else if (event.key.length === 1) {
+    // Accumulate characters
+    setBarcodeInput(prev => prev + event.key);
+    
+    // Reset timeout
+    if (scanningTimeout) {
+      clearTimeout(scanningTimeout);
+    }
+    
+    const newTimeout = setTimeout(() => {
+      if (barcodeInput.length >= 3) {
+        handleBarcodeScan(barcodeInput);
+      }
+      setBarcodeInput("");
+    }, 150);
+    
+    setScanningTimeout(newTimeout);
+  }
+}, [barcodeInput, scanningTimeout, handleBarcodeScan]);
+
+
+// Set up keyboard listener for barcode scanning
+useEffect(() => {
+  // Always listen for barcode scanning
+  document.addEventListener('keydown', handleKeyPress);
+  console.log("Scanner automatique activé - prêt à scanner...");
+  
+  return () => {
+    document.removeEventListener('keydown', handleKeyPress);
+    if (scanningTimeout) {
+      clearTimeout(scanningTimeout);
+    }
+  };
+}, [handleKeyPress, scanningTimeout]);
+
+
 
   const StatusBadge = ({
     status,
@@ -1239,39 +1702,45 @@ const BonLivraisonList = () => {
         enableColumnFilter: false,
         cell: (cell: any) => {
           const total = cell.getValue().reduce((sum: number, item: any) => {
-            const itemTotal = item.quantite * item.prix_unitaire;
-            const itemDiscount = item.remise
-              ? itemTotal * (item.remise / 100)
-              : 0;
-            const taxableAmount = itemTotal - itemDiscount;
-            const itemTax = item.tva ? taxableAmount * (item.tva / 100) : 0;
-            return sum + taxableAmount + itemTax;
+            const qty = Number(item.quantite) || 1;
+            // USE prix_ttc FROM DATABASE OR CALCULATE
+            const priceTTC =
+              Number(item.prix_ttc) ||
+              Number(item.prixUnitaire) * (1 + (item.tva || 0) / 100);
+            const remiseRate = Number(item.remise || 0);
+
+            const montantHTLigne =
+              qty * Number(item.prixUnitaire) * (1 - remiseRate / 100);
+            const montantTTCLigne = qty * priceTTC;
+
+            return sum + montantTTCLigne;
           }, 0);
-          return `${total.toFixed(2)} DT`;
+          return `${total.toFixed(3)} DT`;
         },
       },
       {
-        header: "Total TTC Après Remise",
+        header: "Total Après Remise",
         accessorKey: "articles",
         enableColumnFilter: false,
         cell: (cell: any) => {
           const total = cell.getValue().reduce((sum: number, item: any) => {
-            const itemTotal =
-              Number(item.quantite) * Number(item.prix_unitaire);
-            const itemDiscount = item.remise
-              ? itemTotal * (Number(item.remise) / 100)
-              : 0;
-            const taxableAmount = itemTotal - itemDiscount;
-            const itemTax = item.tva
-              ? taxableAmount * (Number(item.tva) / 100)
-              : 0;
-            return sum + taxableAmount + itemTax;
+            const qty = Number(item.quantite) || 1;
+            // USE prix_ttc FROM DATABASE OR CALCULATE (SAME AS TOTAL TTC)
+            const priceTTC =
+              Number(item.prix_ttc) ||
+              Number(item.prixUnitaire) * (1 + (item.tva || 0) / 100);
+            const remiseRate = Number(item.remise || 0);
+
+            // Use prix_ttc for calculation (consistent with Total TTC)
+            const montantTTCLigne = qty * priceTTC;
+
+            return sum + montantTTCLigne;
           }, 0);
 
           const globalDiscount = Number(cell.row.original.remise) || 0;
           const discountType = cell.row.original.remiseType || "percentage";
 
-          let netAPayer: number = total;
+          let netAPayer = total;
           if (globalDiscount > 0) {
             if (discountType === "percentage") {
               netAPayer = total * (1 - globalDiscount / 100);
@@ -1280,7 +1749,7 @@ const BonLivraisonList = () => {
             }
           }
 
-          return `${netAPayer.toFixed(2)} DT`;
+          return `${netAPayer.toFixed(3)} DT`;
         },
       },
 
@@ -1388,7 +1857,7 @@ const BonLivraisonList = () => {
         onCloseClick={() => setDeleteModal(false)}
       />
 
-      <Container fluid>
+      <Container fluid style={{ maxWidth: "100%" }}>
         <BreadCrumb title="Bons de Livraison" pageTitle="Livraisons" />
 
         <Row>
@@ -1403,6 +1872,19 @@ const BonLivraisonList = () => {
                   </div>
                   <div className="col-sm-auto">
                     <div className="d-flex gap-1 flex-wrap">
+  
+    <Button
+                        color="info"
+                        onClick={() => {
+                          setStartDate(null);
+                          setEndDate(null);
+                          setSearchText("");
+                          setPhoneSearch("");
+                        }}
+                      >
+                        <i className="ri-close-line align-bottom me-1"></i>{" "}
+                        Réinitialiser tous les filtres
+                      </Button>
                       <Button
                         color="primary"
                         onClick={() => {
@@ -1471,64 +1953,78 @@ const BonLivraisonList = () => {
                 </NavItem>
               </Nav>
               <CardBody className="pt-3">
-                <Row className="mb-3">
-                  <Col md={4}>
-                    <div className="search-box">
-                      <Input
-                        type="text"
-                        className="form-control"
-                        placeholder="Rechercher..."
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                      />
-                      <i className="ri-search-line search-icon"></i>
-                    </div>
-                  </Col>
-                  <Col md={3}>
-                    <InputGroup>
-                      <InputGroupText>De</InputGroupText>
-                      <Flatpickr
-                        className="form-control"
-                        options={{
-                          dateFormat: "d M, Y",
-                          altInput: true,
-                          altFormat: "F j, Y",
-                        }}
-                        placeholder="Date de début"
-                        onChange={(dates) => setStartDate(dates[0])}
-                      />
-                    </InputGroup>
-                  </Col>
-                  <Col md={3}>
-                    <InputGroup>
-                      <InputGroupText>À</InputGroupText>
-                      <Flatpickr
-                        className="form-control"
-                        options={{
-                          dateFormat: "d M, Y",
-                          altInput: true,
-                          altFormat: "F j, Y",
-                        }}
-                        placeholder="Date de fin"
-                        onChange={(dates) => setEndDate(dates[0])}
-                      />
-                    </InputGroup>
-                  </Col>
-                  <Col md={2}>
-                    <Button
-                      color="light"
-                      className="w-100"
-                      onClick={() => {
-                        setStartDate(null);
-                        setEndDate(null);
-                        setSearchText("");
-                      }}
-                    >
-                      <i className="ri-close-line align-bottom me-1"></i>{" "}
-                      Réinitialiser
-                    </Button>
-                  </Col>
-                </Row>
+              <Row className="mb-3">
+  <Col md={3}>
+    <div className="search-box">
+      <Input
+        type="text"
+        className="form-control"
+        placeholder="Rechercher par numéro, client..."
+        value={searchText}
+        onChange={(e) => {
+          setSearchText(e.target.value);
+        }}
+      />
+      <i className="ri-search-line search-icon"></i>
+    </div>
+  </Col>
+  
+  {/* Add this phone search input */}
+  <Col md={3}>
+    <div className="search-box">
+      <Input
+        type="text"
+        className="form-control"
+        placeholder="Rechercher par téléphone..."
+        value={phoneSearch}
+        onChange={(e) => {
+          const value = e.target.value;
+
+          // Apply auto-space formatting for phone numbers
+          if (value) {
+            const formatted = formatPhoneInput(value);
+            setPhoneSearch(formatted);
+          } else {
+            setPhoneSearch("");
+          }
+        }}
+      />
+      <i className="ri-phone-line search-icon"></i>
+    </div>
+  </Col>
+  
+  <Col md={3}>
+    <InputGroup>
+      <InputGroupText>De</InputGroupText>
+      <Flatpickr
+        className="form-control"
+        options={{
+          dateFormat: "d M, Y",
+          altInput: true,
+          altFormat: "F j, Y",
+        }}
+        placeholder="Date de début"
+        onChange={(dates) => setStartDate(dates[0])}
+      />
+    </InputGroup>
+  </Col>
+  <Col md={3}>
+    <InputGroup>
+      <InputGroupText>À</InputGroupText>
+      <Flatpickr
+        className="form-control"
+        options={{
+          dateFormat: "d M, Y",
+          altInput: true,
+          altFormat: "F j, Y",
+        }}
+        placeholder="Date de fin"
+        onChange={(dates) => setEndDate(dates[0])}
+      />
+    </InputGroup>
+  </Col>
+
+</Row>
 
                 {loading ? (
                   <Loader />
@@ -1548,521 +2044,768 @@ const BonLivraisonList = () => {
 
                 {/* Quick Client Creation Modal */}
                 {/* Quick Client Creation Modal */}
-<Modal
-  isOpen={clientModal}
-  toggle={() => setClientModal(false)}
-  centered
-  size="lg"
->
-  <ModalHeader toggle={() => setClientModal(false)}>
-    <div className="d-flex align-items-center">
-      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-        <i className="ri-user-add-line text-primary fs-4"></i>
-      </div>
-      <div>
-        <h4 className="mb-0 fw-bold text-dark">Nouveau Client</h4>
-        <small className="text-muted">Créer un nouveau client rapidement</small>
-      </div>
-    </div>
-  </ModalHeader>
-  <ModalBody>
-    <Row>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Raison Sociale*</Label>
-          <Input
-            value={newClient.raison_sociale}
-            onChange={(e) =>
-              setNewClient({
-                ...newClient,
-                raison_sociale: e.target.value,
-              })
-            }
-            placeholder="Raison sociale"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Désignation*</Label>
-          <Input
-            value={newClient.designation}
-            onChange={(e) =>
-              setNewClient({
-                ...newClient,
-                designation: e.target.value,
-              })
-            }
-            placeholder="Désignation"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-    </Row>
-
-    <Row>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Téléphone 1*</Label>
-          <Input
-            value={newClient.telephone1}
-            onChange={(e) => {
-              const formatted = formatPhoneInput(e.target.value);
-              setNewClient({
-                ...newClient,
-                telephone1: formatted,
-              });
-            }}
-            placeholder="XX XXX XXX"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Téléphone 2</Label>
-          <Input
-            value={newClient.telephone2}
-            onChange={(e) => {
-              const formatted = formatPhoneInput(e.target.value);
-              setNewClient({
-                ...newClient,
-                telephone2: formatted,
-              });
-            }}
-            placeholder="XX XXX XXX"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-    </Row>
-
-    <div className="mb-3">
-      <Label className="form-label">Adresse</Label>
-      <Input
-        value={newClient.adresse}
-        onChange={(e) =>
-          setNewClient({
-            ...newClient,
-            adresse: e.target.value,
-          })
-        }
-        placeholder="Adresse complète"
-        className="form-control-lg"
-      />
-    </div>
-
-    <Row>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Ville</Label>
-          <Input
-            value={newClient.ville}
-            onChange={(e) =>
-              setNewClient({
-                ...newClient,
-                ville: e.target.value,
-              })
-            }
-            placeholder="Ville"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-      <Col md={6}>
-        <div className="mb-3">
-          <Label className="form-label">Code Postal</Label>
-          <Input
-            value={newClient.code_postal}
-            onChange={(e) =>
-              setNewClient({
-                ...newClient,
-                code_postal: e.target.value,
-              })
-            }
-            placeholder="Code postal"
-            className="form-control-lg"
-          />
-        </div>
-      </Col>
-    </Row>
-
-    <div className="mb-3">
-      <Label className="form-label">Email</Label>
-      <Input
-        type="email"
-        value={newClient.email}
-        onChange={(e) =>
-          setNewClient({ ...newClient, email: e.target.value })
-        }
-        placeholder="email@exemple.com"
-        className="form-control-lg"
-      />
-    </div>
-  </ModalBody>
-  <ModalFooter>
-    <Button color="light" onClick={() => setClientModal(false)}>
-      <i className="ri-close-line me-2"></i> Annuler
-    </Button>
-    <Button color="primary" onClick={handleCreateClient}>
-      <i className="ri-add-line me-2"></i> Créer Client
-    </Button>
-  </ModalFooter>
-</Modal>
-
-                {/* Quick Article Creation Modal */}
                 <Modal
-                  isOpen={articleModal}
-                  toggle={() => setArticleModal(false)}
+                  isOpen={clientModal}
+                  toggle={() => setClientModal(false)}
                   centered
-                  size="xl"
+                  size="lg"
                 >
-                  <ModalHeader toggle={() => setArticleModal(false)}>
+                  <ModalHeader toggle={() => setClientModal(false)}>
                     <div className="d-flex align-items-center">
                       <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-add-box-line text-primary fs-4"></i>
+                        <i className="ri-user-add-line text-primary fs-4"></i>
                       </div>
                       <div>
                         <h4 className="mb-0 fw-bold text-dark">
-                          Nouvel Article Rapide
+                          Nouveau Client
                         </h4>
                         <small className="text-muted">
-                          Créer un nouvel article rapidement
+                          Créer un nouveau client rapidement
                         </small>
                       </div>
                     </div>
                   </ModalHeader>
+
                   <ModalBody>
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label className="form-label">Référence</Label>
+                          <Label className="form-label fw-semibold">
+                            Raison Sociale*
+                          </Label>
                           <Input
-                            value={newArticle.reference}
+                            value={newClient.raison_sociale}
                             onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                reference: e.target.value,
+                              setNewClient({
+                                ...newClient,
+                                raison_sociale: e.target.value,
                               })
                             }
-                            placeholder="Référence article"
+                            placeholder="Raison sociale"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label className="form-label">Nom</Label>
+                          <Label className="form-label fw-semibold">
+                            Désignation
+                          </Label>
                           <Input
-                            value={newArticle.nom}
+                            value={newClient.designation}
                             onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                nom: e.target.value,
+                              setNewClient({
+                                ...newClient,
+                                designation: e.target.value,
                               })
                             }
-                            placeholder="Nom de l'article"
+                            placeholder="Désignation"
+                            className="form-control-lg"
+                          />
+                        </div>
+                      </Col>
+                    </Row>
+
+                    <Row>
+                      <Col md={6}>
+                        <div className="mb-3">
+                          <Label className="form-label fw-semibold">
+                            Matricule Fiscal
+                          </Label>
+                          <Input
+                            value={newClient.matricule_fiscal}
+                            onChange={(e) =>
+                              setNewClient({
+                                ...newClient,
+                                matricule_fiscal: e.target.value,
+                              })
+                            }
+                            placeholder="Matricule fiscal"
+                            className="form-control-lg"
+                          />
+                        </div>
+                      </Col>
+                      <Col md={6}>
+                        <div className="mb-3">
+                          <Label className="form-label fw-semibold">
+                            Registre Commerce
+                          </Label>
+                          <Input
+                            value={newClient.register_commerce}
+                            onChange={(e) =>
+                              setNewClient({
+                                ...newClient,
+                                register_commerce: e.target.value,
+                              })
+                            }
+                            placeholder="Registre de commerce"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
                     <div className="mb-3">
-                      <Label className="form-label">Désignation</Label>
+                      <Label className="form-label fw-semibold">Adresse</Label>
                       <Input
-                        value={newArticle.designation}
+                        value={newClient.adresse}
                         onChange={(e) =>
-                          setNewArticle({
-                            ...newArticle,
-                            designation: e.target.value,
+                          setNewClient({
+                            ...newClient,
+                            adresse: e.target.value,
                           })
                         }
-                        placeholder="Désignation complète"
+                        placeholder="Adresse complète"
+                        className="form-control-lg"
                       />
                     </div>
 
-                    {/* Categories */}
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label className="form-label">
-                            Famille Principale
+                          <Label className="form-label fw-semibold">
+                            Ville
                           </Label>
                           <Input
-                            type="select"
-                            value={newArticle.categorie_id}
+                            value={newClient.ville}
                             onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                categorie_id: e.target.value,
+                              setNewClient({
+                                ...newClient,
+                                ville: e.target.value,
                               })
                             }
-                          >
-                            <option value="">Sélectionner une famille</option>
-                            {categories
-                              .filter((cat) => !cat.parent_id)
-                              .map((categorie) => (
-                                <option key={categorie.id} value={categorie.id}>
-                                  {categorie.nom}
-                                </option>
-                              ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Sous-Famille</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.sous_categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                sous_categorie_id: e.target.value,
-                              })
-                            }
-                            disabled={!newArticle.categorie_id}
-                          >
-                            <option value="">
-                              Sélectionner une sous-famille
-                            </option>
-                            {subcategories.map((subcategorie) => (
-                              <option
-                                key={subcategorie.id}
-                                value={subcategorie.id}
-                              >
-                                {subcategorie.nom}
-                              </option>
-                            ))}
-                          </Input>
-                          {!newArticle.categorie_id && (
-                            <small className="text-muted">
-                              Sélectionnez d'abord une famille principale
-                            </small>
-                          )}
-                        </div>
-                      </Col>
-                    </Row>
-
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Fournisseur</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.fournisseur_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                fournisseur_id: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">
-                              Sélectionner un fournisseur
-                            </option>
-                            {fournisseurs.map((fournisseur) => (
-                              <option
-                                key={fournisseur.id}
-                                value={fournisseur.id}
-                              >
-                                {fournisseur.raison_sociale}
-                              </option>
-                            ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Type</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.type}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                type: e.target.value as
-                                  | "Consigné"
-                                  | "Non Consigné",
-                              })
-                            }
-                          >
-                            <option value="Non Consigné">Non Consigné</option>
-                            <option value="Consigné">Consigné</option>
-                          </Input>
-                        </div>
-                      </Col>
-                    </Row>
-
-                    {/* Pricing Section */}
-                    <h6 className="fw-semibold mb-3 text-primary">
-                      Prix et Taxes
-                    </h6>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                pua_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
+                            placeholder="Ville"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label className="form-label">Prix d'achat TTC</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
-
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix de vente HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                puv_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Prix de vente TTC
+                          <Label className="form-label fw-semibold">
+                            Code Postal
                           </Label>
                           <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
+                            value={newClient.code_postal}
+                            onChange={(e) =>
+                              setNewClient({
+                                ...newClient,
+                                code_postal: e.target.value,
+                              })
+                            }
+                            placeholder="Code postal"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
+                    {/* Phone Fields with Auto-Space */}
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label className="form-label">
-                            Quantité en stock
+                          <Label className="form-label fw-semibold">
+                            Téléphone 1*
                           </Label>
-                          <Input
-                            type="number"
-                            value={newArticle.qte}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                qte: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">TVA (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.tva}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                tva: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
-
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Remise (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.remise}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                remise: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3 d-flex align-items-end">
-                          <div className="form-check form-switch">
+                          <div className="position-relative">
                             <Input
-                              type="checkbox"
-                              checked={newArticle.taux_fodec}
-                              onChange={(e) =>
-                                setNewArticle({
-                                  ...newArticle,
-                                  taux_fodec: e.target.checked,
-                                })
-                              }
-                              className="form-check-input"
+                              value={newClient.telephone1}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                // Auto-format phone number
+                                if (value) {
+                                  const formatted = formatPhoneInput(value);
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone1: formatted,
+                                  });
+                                } else {
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone1: value,
+                                  });
+                                }
+                              }}
+                              placeholder="22 222 222"
+                              className="form-control-lg pe-5"
                             />
-                            <Label
-                              check
-                              className="form-check-label fw-semibold"
-                            >
-                              Taux FODEC (1%)
-                            </Label>
+                            {newClient.telephone1 && (
+                              <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                                <i className="ri-phone-line text-muted"></i>
+                              </div>
+                            )}
                           </div>
+                          <small className="text-muted">
+                            Format automatique: XX XXX XXX
+                          </small>
+                        </div>
+                      </Col>
+                      <Col md={6}>
+                        <div className="mb-3">
+                          <Label className="form-label fw-semibold">
+                            Téléphone 2
+                          </Label>
+                          <div className="position-relative">
+                            <Input
+                              value={newClient.telephone2}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                // Auto-format phone number
+                                if (value) {
+                                  const formatted = formatPhoneInput(value);
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone2: formatted,
+                                  });
+                                } else {
+                                  setNewClient({
+                                    ...newClient,
+                                    telephone2: value,
+                                  });
+                                }
+                              }}
+                              placeholder="22 222 222"
+                              className="form-control-lg pe-5"
+                            />
+                            {newClient.telephone2 && (
+                              <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                                <i className="ri-phone-line text-muted"></i>
+                              </div>
+                            )}
+                          </div>
+                          <small className="text-muted">
+                            Format automatique: XX XXX XXX
+                          </small>
                         </div>
                       </Col>
                     </Row>
+
+                    <div className="mb-3">
+                      <Label className="form-label fw-semibold">Email</Label>
+                      <Input
+                        type="email"
+                        value={newClient.email}
+                        onChange={(e) =>
+                          setNewClient({ ...newClient, email: e.target.value })
+                        }
+                        placeholder="email@example.com"
+                        className="form-control-lg"
+                      />
+                    </div>
+
+                    <div className="mb-3">
+                      <Label className="form-label fw-semibold">Statut</Label>
+                      <Input
+                        type="select"
+                        value={newClient.status}
+                        onChange={(e) =>
+                          setNewClient({
+                            ...newClient,
+                            status: e.target.value as "Actif" | "Inactif",
+                          })
+                        }
+                        className="form-control-lg"
+                      >
+                        <option value="Actif">Actif</option>
+                        <option value="Inactif">Inactif</option>
+                      </Input>
+                    </div>
                   </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
-                      onClick={() => setArticleModal(false)}
+
+                  <ModalFooter className="border-0">
+                    <Button
+                      color="light"
+                      onClick={() => setClientModal(false)}
+                      className="btn-invoice fs-6 px-4"
                     >
+                      <i className="ri-close-line me-2"></i>
                       Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleCreateArticle}
+                    </Button>
+                    <Button
+                      color="primary"
+                      onClick={handleCreateClient}
+                      disabled={
+                        !newClient.raison_sociale || !newClient.telephone1
+                      }
+                      className="btn-invoice-primary fs-6 px-4"
                     >
-                      <i className="ri-add-line me-2"></i>
-                      Créer Article
-                    </button>
-                  </div>
+                      <i className="ri-user-add-line me-2"></i>
+                      Créer Client
+                    </Button>
+                  </ModalFooter>
                 </Modal>
+
+                {/* Quick Article Creation Modal */}
+            {/* Quick Article Creation Modal */}
+<Modal
+  isOpen={articleModal}
+  toggle={() => setArticleModal(false)}
+  centered
+  size="lg"
+>
+  <ModalHeader toggle={() => setArticleModal(false)}>
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-success bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-add-box-line text-success fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">Nouvel Article</h4>
+        <small className="text-muted">
+          Ajouter un nouveau produit
+        </small>
+      </div>
+    </div>
+  </ModalHeader>
+
+  <Form
+    onSubmit={(e) => {
+      e.preventDefault();
+      handleCreateArticle();
+    }}
+  >
+    <ModalBody>
+      {/* ================= BASIC INFORMATION ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-information-line me-2"></i>
+            Informations de Base
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Référence
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.reference}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      reference: e.target.value,
+                    })
+                  }
+                  placeholder="REF"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Identifiant unique de l'article
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Désignation
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.designation}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      designation: e.target.value,
+                    })
+                  }
+                  placeholder="Nom de l'article"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Nom complet du produit
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= CATEGORIES ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-folder-line me-2"></i>
+            Catégorisation
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Famille Principale
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      categorie_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">
+                    Sélectionner une famille principale
+                  </option>
+                  {categories
+                    .filter((c) => !c.parent_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nom}
+                      </option>
+                    ))}
+                </Input>
+                <small className="text-muted">
+                  Catégorie principale
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Sous-Famille
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.sous_categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      sous_categorie_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">
+                    Sélectionner une sous-famille
+                  </option>
+                  {subcategories.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.nom}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">
+                  Sous-catégorie
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= SUPPLIER / TYPE ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-truck-line me-2"></i>
+            Fournisseur & Type
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Fournisseur
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.fournisseur_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      fournisseur_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">
+                    Sélectionner un fournisseur
+                  </option>
+                  {fournisseurs.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.raison_sociale}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">
+                  Fournisseur principal
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Type
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.type}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      type: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="Non Consigné">
+                    Non Consigné
+                  </option>
+                  <option value="Consigné">Consigné</option>
+                </Input>
+                <small className="text-muted">
+                  Type d'article
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= PRICING SECTION ================= */}
+      <Row className="mb-4">
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-shopping-bag-line me-2"></i>
+                Prix d'Achat
+              </h6>
+
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Prix d'achat HT (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ht}
+                  onChange={(e) =>
+                    handlePriceChange("pua_ht", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  Prix hors taxes avant marge
+                </small>
+              </div>
+
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">
+                  Prix d'achat TTC (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ttc}
+                  onChange={(e) =>
+                    handlePriceChange("pua_ttc", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                  {1 + parseNumber(newArticle.tva) / 100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
+
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-price-tag-3-line me-2"></i>
+                Prix de Vente
+              </h6>
+
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Prix de vente HT (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ht}
+                  onChange={(e) =>
+                    handlePriceChange("puv_ht", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  Prix de vente hors taxes
+                </small>
+              </div>
+
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">
+                  Prix de vente TTC (DT)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ttc}
+                  onChange={(e) =>
+                    handlePriceChange("puv_ttc", e.target.value)
+                  }
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                  {1 + parseNumber(newArticle.tva) / 100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* ================= TAX SETTINGS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-percent-line me-2"></i>
+            Paramètres Fiscaux
+          </h5>
+
+          <Row>
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">
+                  Taux de TVA (%)
+                </Label>
+                <Input
+                  type="select"
+                  value={newArticle.tva}
+                  onChange={(e) =>
+                    handleTVAChange(e.target.value)
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="0">0% (Exonéré)</option>
+                  <option value="7">7%</option>
+                  <option value="10">10%</option>
+                  <option value="13">13%</option>
+                  <option value="19">19% (Taux normal)</option>
+                  <option value="21">21%</option>
+                </Input>
+                <small className="text-muted">
+                  Taux de TVA applicable
+                </small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold d-block">
+                  FODEC
+                </Label>
+                <div className="form-check form-switch form-switch-lg">
+                  <Input
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={!!newArticle.taux_fodec}
+                    onChange={(e) =>
+                      handleFodecChange(e.target.checked)
+                    }
+                    id="fodecSwitch"
+                  />
+                  <Label
+                    className="form-check-label fw-semibold"
+                    for="fodecSwitch"
+                  >
+                    Appliquer FODEC (1%)
+                  </Label>
+                </div>
+                <small className="text-muted">
+                  Taxe FODEC de 1% sur le HT
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= INVENTORY & DETAILS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-store-line me-2"></i>
+            Stock & Détails
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Quantité en stock
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.qte}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      qte: e.target.value,
+                    })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Stock initial disponible
+                </small>
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">
+                  Remise (%)
+                </Label>
+                <Input
+                  type="text"
+                  value={newArticle.remise}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      remise: e.target.value,
+                    })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">
+                  Pourcentage de remise par défaut
+                </small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+    </ModalBody>
+
+    <ModalFooter className="border-0 pt-4">
+      <Button
+        color="light"
+        onClick={() => setArticleModal(false)}
+        className="btn-invoice fs-6 px-4"
+      >
+        <i className="ri-close-line me-2"></i>
+        Annuler
+      </Button>
+      <Button
+        color="success"
+        type="submit"
+        className="btn-invoice btn-invoice-success fs-6 px-4"
+      >
+        <i className="ri-add-line me-2"></i>
+        Créer Article
+      </Button>
+    </ModalFooter>
+  </Form>
+</Modal>
 
                 <Modal
                   isOpen={detailModal}
@@ -2159,16 +2902,7 @@ const BonLivraisonList = () => {
                                       </strong>
                                     </p>
                                   </div>
-                                  <div className="col-6">
-                                    <p className="mb-2">
-                                      <span className="text-muted d-block">
-                                        Statut:
-                                      </span>
-                                      <StatusBadge
-                                        status={selectedBonLivraison.status}
-                                      />
-                                    </p>
-                                  </div>
+                               
                                 </div>
                               </CardBody>
                             </Card>
@@ -2346,227 +3080,250 @@ const BonLivraisonList = () => {
                               </Table>
                             </div>
 
+
                             <div className="border-top p-4">
-                              <Row className="justify-content-end">
-                                <Col xs={8} sm={6} md={5} lg={4}>
-                                  {(() => {
-                                    let sousTotalHTValue = 0;
-                                    let netHTValue = 0;
-                                    let totalTaxValue = 0;
-                                    let grandTotalValue = 0;
-
-                                    selectedBonLivraison.articles.forEach(
-                                      (article) => {
-                                        const qty =
-                                          Number(article.quantite) || 0;
-                                        const tvaRate =
-                                          Number(article.tva) || 0;
-                                        const remiseRate =
-                                          Number(article.remise) || 0;
-
-                                        const priceHT =
-                                          Number(article.prix_unitaire) || 0;
-                                        const priceTTC =
-                                          Number(article.prix_ttc) ||
-                                          priceHT * (1 + tvaRate / 100);
-                                        const montantSousTotalHT =
-                                          Math.round(qty * priceHT * 1000) /
-                                          1000;
-                                        const montantNetHT =
-                                          Math.round(
-                                            qty *
-                                              priceHT *
-                                              (1 - remiseRate / 100) *
-                                              1000
-                                          ) / 1000;
-                                        const montantTTCLigne =
-                                          Math.round(qty * priceTTC * 1000) /
-                                          1000;
-                                        const montantTVA =
-                                          Math.round(
-                                            (montantTTCLigne - montantNetHT) *
-                                              1000
-                                          ) / 1000;
-
-                                        sousTotalHTValue += montantSousTotalHT;
-                                        netHTValue += montantNetHT;
-                                        totalTaxValue += montantTVA;
-                                        grandTotalValue += montantTTCLigne;
-                                      }
-                                    );
-
-                                    sousTotalHTValue =
-                                      Math.round(sousTotalHTValue * 1000) /
-                                      1000;
-                                    netHTValue =
-                                      Math.round(netHTValue * 1000) / 1000;
-                                    totalTaxValue =
-                                      Math.round(totalTaxValue * 1000) / 1000;
-                                    grandTotalValue =
-                                      Math.round(grandTotalValue * 1000) / 1000;
-
-                                    const remiseValue =
-                                      Number(selectedBonLivraison.remise) || 0;
-                                    const remiseTypeValue =
-                                      selectedBonLivraison.remiseType ||
-                                      "percentage";
-
-                                    let finalTotalValue = grandTotalValue;
-                                    let discountAmountValue = 0;
-                                    let netHTAfterDiscount = netHTValue;
-                                    let totalTaxAfterDiscount = totalTaxValue;
-                                    let discountPercentage = 0;
-
-                                    if (remiseValue > 0) {
-                                      if (remiseTypeValue === "percentage") {
-                                        discountAmountValue =
-                                          Math.round(
-                                            netHTValue *
-                                              (remiseValue / 100) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount =
-                                          Math.round(
-                                            (netHTValue - discountAmountValue) *
-                                              1000
-                                          ) / 1000;
-
-                                        const discountRatio =
-                                          netHTAfterDiscount / netHTValue;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            totalTaxValue * discountRatio * 1000
-                                          ) / 1000;
-
-                                        finalTotalValue =
-                                          Math.round(
-                                            (netHTAfterDiscount +
-                                              totalTaxAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                      } else if (remiseTypeValue === "fixed") {
-                                        finalTotalValue =
-                                          Math.round(
-                                            Number(remiseValue) * 1000
-                                          ) / 1000;
-
-                                        const tvaToHtRatio =
-                                          totalTaxValue / netHTValue;
-                                        const htAfterDiscount =
-                                          Math.round(
-                                            (finalTotalValue /
-                                              (1 + tvaToHtRatio)) *
-                                              1000
-                                          ) / 1000;
-
-                                        discountAmountValue =
-                                          Math.round(
-                                            (netHTValue - htAfterDiscount) *
-                                              1000
-                                          ) / 1000;
-                                        netHTAfterDiscount = htAfterDiscount;
-                                        totalTaxAfterDiscount =
-                                          Math.round(
-                                            netHTAfterDiscount *
-                                              tvaToHtRatio *
-                                              1000
-                                          ) / 1000;
-
-                                        discountPercentage =
-                                          Math.round(
-                                            (discountAmountValue / netHTValue) *
-                                              100 *
-                                              100
-                                          ) / 100;
-                                      }
-                                    }
-
-                                    const displayNetHT =
-                                      remiseValue > 0
-                                        ? netHTAfterDiscount
-                                        : netHTValue;
-                                    const displayTotalTax =
-                                      remiseValue > 0
-                                        ? totalTaxAfterDiscount
-                                        : totalTaxValue;
-
-                                    return (
-                                      <Table className="table-sm table-borderless mb-0">
-                                        <tbody>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Sous-total H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {sousTotalHTValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Net H.T.:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayNetHT.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              TVA:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6">
-                                              {displayTotalTax.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              Total TTC:
-                                            </th>
-                                            <td className="text-end fw-semibold fs-6 text-dark">
-                                              {grandTotalValue.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                          {remiseValue > 0 && (
-                                            <tr className="real-time-update">
-                                              <th className="text-end text-muted fs-6">
-                                                {remiseTypeValue ===
-                                                "percentage"
-                                                  ? `Remise (${remiseValue}%)`
-                                                  : `Remise (Montant fixe) ${discountPercentage}%`}
-                                              </th>
-                                              <td className="text-end text-danger fw-bold fs-6">
-                                                -{" "}
-                                                {discountAmountValue.toFixed(3)}{" "}
-                                                DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {remiseValue > 0 && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {finalTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {!remiseValue && (
-                                            <tr className="final-total real-time-update border-top">
-                                              <th className="text-end fs-5">
-                                                NET À PAYER:
-                                              </th>
-                                              <td className="text-end fw-bold fs-5 text-primary">
-                                                {grandTotalValue.toFixed(3)} DT
-                                              </td>
-                                            </tr>
-                                          )}
-                                        </tbody>
-                                      </Table>
-                                    );
-                                  })()}
-                                </Col>
-                              </Row>
-                            </div>
+  <Row className="justify-content-end">
+    <Col xs={8} sm={6} md={5} lg={4}>
+      {(() => {
+        if (!selectedBonLivraison) return null;
+        
+        // EXACT SAME CALCULATION LOGIC AS IN useMemo
+        const articles = selectedBonLivraison.articles;
+        const remiseValue = Number(selectedBonLivraison.remise) || 0;
+        const remiseTypeValue = selectedBonLivraison.remiseType || "percentage";
+        
+        if (articles.length === 0) {
+          return (
+            <Table className="table-sm table-borderless mb-0">
+              <tbody>
+                <tr>
+                  <th className="text-end text-muted fs-6">Sous-total H.T.:</th>
+                  <td className="text-end fw-semibold fs-6">0,000 DT</td>
+                </tr>
+              </tbody>
+            </Table>
+          );
+        }
+        
+        let sousTotalHTValue = 0;
+        let netHTBeforeGlobalRemise = 0;
+        let totalTaxValue = 0;
+        let grandTotalValue = 0;
+        
+        // STEP 1: Calculate totals WITHOUT considering global remise
+        articles.forEach((article) => {
+          const qty = Number(article.quantite) || 0;
+          const articleRemise = Number(article.remise) || 0;
+          
+          // Get unit prices
+          let unitHT = Number(article.prix_unitaire) || 0;
+          let unitTTC = Number(article.prix_ttc) || 0;
+          
+          // Handle if prix_ttc is not in database
+          if (unitTTC === 0) {
+            const tvaRate = Number(article.tva) || 0;
+            unitTTC = unitHT * (1 + tvaRate / 100);
+          }
+          
+          // Apply proper rounding
+          unitHT = Math.round(unitHT * 1000) / 1000;
+          unitTTC = Math.round(unitTTC * 1000) / 1000;
+          
+          // Calculate line amounts
+          const lineHT = Math.round(unitHT * 1000) / 1000;
+          const lineTTC = Math.round(unitTTC * 1000) / 1000;
+          
+          const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+          const montantNetHTLigne = Math.round(
+            qty * lineHT * (1 - articleRemise / 100) * 1000
+          ) / 1000;
+          const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+          const montantTVALigne = Math.round(
+            (montantTTCLigne - montantNetHTLigne) * 1000
+          ) / 1000;
+          
+          sousTotalHTValue = Math.round(
+            (sousTotalHTValue + montantSousTotalHT) * 1000
+          ) / 1000;
+          netHTBeforeGlobalRemise = Math.round(
+            (netHTBeforeGlobalRemise + montantNetHTLigne) * 1000
+          ) / 1000;
+          totalTaxValue = Math.round((totalTaxValue + montantTVALigne) * 1000) / 1000;
+          grandTotalValue = Math.round(
+            (grandTotalValue + montantTTCLigne) * 1000
+          ) / 1000;
+        });
+        
+        // STEP 2: Apply global remise according to principle (EXACT SAME AS useMemo)
+        let netHTAfterGlobalRemise = netHTBeforeGlobalRemise;
+        let totalTaxAfterGlobalRemise = totalTaxValue;
+        let finalTotalValue = grandTotalValue;
+        let discountAmountValue = 0;
+        let discountPercentageValue = 0;
+        
+        if (remiseValue > 0) {
+          if (remiseTypeValue === "percentage") {
+            // ✅ Percentage remise: Apply on HT base
+            discountAmountValue = Math.round(
+              netHTBeforeGlobalRemise * (remiseValue / 100) * 1000
+            ) / 1000;
+            netHTAfterGlobalRemise = Math.round(
+              (netHTBeforeGlobalRemise - discountAmountValue) * 1000
+            ) / 1000;
+            
+            // ✅ Recalculate TVA proportionally
+            if (netHTBeforeGlobalRemise > 0) {
+              const tvaToHtRatio = Math.round(
+                (totalTaxValue / netHTBeforeGlobalRemise) * 1000
+              ) / 1000;
+              totalTaxAfterGlobalRemise = Math.round(
+                netHTAfterGlobalRemise * tvaToHtRatio * 1000
+              ) / 1000;
+            } else {
+              totalTaxAfterGlobalRemise = 0;
+            }
+            
+            finalTotalValue = Math.round(
+              (netHTAfterGlobalRemise + totalTaxAfterGlobalRemise) * 1000
+            ) / 1000;
+          } else if (remiseTypeValue === "fixed") {
+            // ✅ Fixed remise: User enters the final TTC amount
+            finalTotalValue = Math.round(remiseValue * 1000) / 1000;
+            
+            // ✅ CHECK IF SINGLE OR MULTIPLE TVA RATES
+            const uniqueTvaRates = Array.from(
+              new Set(articles.map((a) => Number(a.tva) || 0))
+            );
+            
+            if (uniqueTvaRates.length === 1 && uniqueTvaRates[0] > 0) {
+              // ✅ SINGLE TVA RATE FORMULA: Net HT = TTC / (1 + TVA rate)
+              const tvaRate = uniqueTvaRates[0] / 100;
+              netHTAfterGlobalRemise = Math.round((finalTotalValue / (1 + tvaRate)) * 1000) / 1000;
+              totalTaxAfterGlobalRemise = Math.round((finalTotalValue - netHTAfterGlobalRemise) * 1000) / 1000;
+            } else {
+              // ✅ MULTIPLE TVA RATES: EXACT SAME CALCULATION
+              const discountCoefficient = finalTotalValue / grandTotalValue;
+              
+              let newTotalHT = 0;
+              let newTotalTVA = 0;
+              
+              articles.forEach((article) => {
+                const qty = Number(article.quantite) || 0;
+                const articleRemise = Number(article.remise) || 0;
+                
+                // Get unit prices
+                let unitHT = Number(article.prix_unitaire) || 0;
+                let unitTTC = Number(article.prix_ttc) || 0;
+                
+                // Handle if prix_ttc is not in database
+                if (unitTTC === 0) {
+                  const tvaRate = Number(article.tva) || 0;
+                  unitTTC = unitHT * (1 + tvaRate / 100);
+                }
+                
+                unitHT = Math.round(unitHT * 1000) / 1000;
+                unitTTC = Math.round(unitTTC * 1000) / 1000;
+                
+                const lineHTAfterDiscount = qty * unitHT * (1 - articleRemise / 100);
+                const newLineHT = lineHTAfterDiscount * discountCoefficient;
+                const newLineTVA = newLineHT * (Number(article.tva) || 0) / 100;
+                
+                newTotalHT += newLineHT;
+                newTotalTVA += newLineTVA;
+              });
+              
+              netHTAfterGlobalRemise = Math.round(newTotalHT * 1000) / 1000;
+              totalTaxAfterGlobalRemise = Math.round(newTotalTVA * 1000) / 1000;
+            }
+            
+            discountAmountValue = Math.round(
+              (netHTBeforeGlobalRemise - netHTAfterGlobalRemise) * 1000
+            ) / 1000;
+            
+            // Calculate discount percentage for display
+            if (netHTBeforeGlobalRemise > 0) {
+              discountPercentageValue = Math.round(
+                (discountAmountValue / netHTBeforeGlobalRemise) * 100 * 1000
+              ) / 1000;
+            }
+          }
+        }
+        
+        // ✅ FINAL VALUES
+        const displayNetHT = remiseValue > 0 
+          ? netHTAfterGlobalRemise 
+          : netHTBeforeGlobalRemise;
+        
+        const displayTotalTax = remiseValue > 0 
+          ? totalTaxAfterGlobalRemise 
+          : totalTaxValue;
+        
+        const displayFinalTotal = remiseValue > 0 
+          ? finalTotalValue 
+          : grandTotalValue;
+        
+        return (
+          <Table className="table-sm table-borderless mb-0">
+            <tbody>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Sous-total H.T.:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {sousTotalHTValue.toFixed(3)} DT
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Net H.T.:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {displayNetHT.toFixed(3)} DT
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  TVA:
+                </th>
+                <td className="text-end fw-semibold fs-6">
+                  {displayTotalTax.toFixed(3)} DT
+                </td>
+              </tr>
+              <tr className="real-time-update">
+                <th className="text-end text-muted fs-6">
+                  Total TTC:
+                </th>
+                <td className="text-end fw-semibold fs-6 text-dark">
+                  {grandTotalValue.toFixed(3)} DT
+                </td>
+              </tr>
+              {remiseValue > 0 && (
+                <tr className="real-time-update">
+                  <th className="text-end text-muted fs-6">
+                    {remiseTypeValue === "percentage"
+                      ? `Remise (${remiseValue}%)`
+                      : `Remise (Montant fixe) ${discountPercentageValue.toFixed(2)}%`}
+                  </th>
+                  <td className="text-end text-danger fw-bold fs-6">
+                    - {discountAmountValue.toFixed(3)} DT
+                  </td>
+                </tr>
+              )}
+              <tr className="final-total real-time-update border-top">
+                <th className="text-end fs-5">
+                  NET À PAYER:
+                </th>
+                <td className="text-end fw-bold fs-5 text-primary">
+                  {displayFinalTotal.toFixed(3)} DT
+                </td>
+              </tr>
+            </tbody>
+          </Table>
+        );
+      })()}
+    </Col>
+  </Row>
+</div>
                           </CardBody>
                         </Card>
                       </div>
@@ -2889,177 +3646,163 @@ const BonLivraisonList = () => {
                               </h6>
 
                               {/* Enhanced Client Search Section */}
-                              <div className="mb-3">
-                                <Label className="form-label-lg fw-semibold">
-                                  Client*
-                                </Label>
+                             {/* Client Search Section */}
+<div className="mb-3 position-relative"> {/* Add position-relative wrapper */}
+  <Label className="form-label-lg fw-semibold">
+    Client*
+  </Label>
 
-                                <div className="position-relative">
-                                  <Input
-                                    type="text"
-                                    placeholder="Rechercher par nom, raison sociale ou téléphone..."
-                                    value={
-                                      selectedClient
-                                        ? selectedClient.raison_sociale
-                                        : clientSearch
-                                    }
-                                    onChange={(e) => {
-                                      const value = e.target.value;
+  <div className="position-relative">
+    <Input
+      type="text"
+      placeholder="Rechercher par nom, raison sociale ou téléphone..."
+      value={
+        selectedClient
+          ? selectedClient.raison_sociale
+          : clientSearch
+      }
+      onChange={(e) => {
+        const value = e.target.value;
 
-                                      if (!value) {
-                                        setSelectedClient(null);
-                                        validation.setFieldValue(
-                                          "client_id",
-                                          ""
-                                        );
-                                        setClientSearch("");
-                                      } else {
-                                        // Auto-format if it looks like a phone number (mostly digits)
-                                        const digitCount = (
-                                          value.match(/\d/g) || []
-                                        ).length;
-                                        const totalLength = value.length;
+        if (!value) {
+          setSelectedClient(null);
+          validation.setFieldValue("client_id", "");
+          setClientSearch("");
+        } else {
+          const digitCount = (value.match(/\d/g) || []).length;
+          const totalLength = value.length;
 
-                                        if (digitCount >= totalLength * 0.7) {
-                                          // If 70% or more are digits
-                                          const formatted =
-                                            formatPhoneInput(value);
-                                          setClientSearch(formatted);
-                                        } else {
-                                          setClientSearch(value);
-                                        }
-                                      }
-                                    }}
-                                    onFocus={() => {
-                                      if (clientSearch.length >= 1) {
-                                        setFilteredClients(clients);
-                                      }
-                                    }}
-                                    readOnly={
-                                      !!selectedClient || isCreatingFacture
-                                    }
-                                    className="form-control-lg pe-10"
-                                  />
+          if (digitCount >= totalLength * 0.7) {
+            const formatted = formatPhoneInput(value);
+            setClientSearch(formatted);
+          } else {
+            setClientSearch(value);
+          }
+        }
+      }}
+      onFocus={() => {
+        if (clientSearch.length >= 1) {
+          setFilteredClients(clients);
+        }
+      }}
+      readOnly={!!selectedClient || isCreatingFacture}
+      className="form-control-lg pe-10"
+    />
 
-                                  {/* Clear button when client is selected */}
-                                  {selectedClient && !isCreatingFacture && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                      onClick={() => {
-                                        setSelectedClient(null);
-                                        validation.setFieldValue(
-                                          "client_id",
-                                          ""
-                                        );
-                                        setClientSearch("");
-                                      }}
-                                      title="Changer de client"
-                                    >
-                                      <i className="ri-close-line fs-5"></i>
-                                    </button>
-                                  )}
+    {/* Clear button when client is selected */}
+    {selectedClient && !isCreatingFacture && (
+      <button
+        type="button"
+        className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+        onClick={() => {
+          setSelectedClient(null);
+          validation.setFieldValue("client_id", "");
+          setClientSearch("");
+        }}
+        title="Changer de client"
+      >
+        <i className="ri-close-line fs-5"></i>
+      </button>
+    )}
 
-                                  {/* Add button when no client is selected */}
-                                  {!selectedClient && !isCreatingFacture && (
-                                    <button
-                                      type="button"
-                                      className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-                                      onClick={() => setClientModal(true)}
-                                      title="Ajouter un nouveau client"
-                                    >
-                                      <i className="ri-add-line fs-5"></i>
-                                    </button>
-                                  )}
-                                </div>
+    {/* Add button when no client is selected */}
+    {!selectedClient && !isCreatingFacture && (
+      <button
+        type="button"
+        className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+        onClick={() => setClientModal(true)}
+        title="Ajouter un nouveau client"
+      >
+        <i className="ri-add-line fs-5"></i>
+      </button>
+    )}
+  </div>
 
-                                {/* Enhanced Client Dropdown Results */}
-                                {!isCreatingFacture &&
-                                  !selectedClient &&
-                                  clientSearch.length >= 1 && (
-                                    <div
-                                      className="search-results mt-2 border rounded shadow-sm"
-                                      style={{
-                                        maxHeight: "200px",
-                                        overflowY: "auto",
-                                        position: "absolute",
-                                        width: "100%",
-                                        zIndex: 1000,
-                                        backgroundColor: "white",
-                                      }}
-                                    >
-                                      {filteredClients.length > 0 ? (
-                                        <ul className="list-group list-group-flush">
-                                          {filteredClients.map((c) => (
-                                            <li
-                                              key={c.id}
-                                              className="list-group-item list-group-item-action"
-                                              onClick={() => {
-                                                setSelectedClient(c);
-                                                validation.setFieldValue(
-                                                  "client_id",
-                                                  c.id
-                                                );
-                                                setClientSearch("");
-                                                setFilteredClients([]);
-                                              }}
-                                              style={{
-                                                cursor: "pointer",
-                                                padding: "10px 15px",
-                                              }}
-                                            >
-                                              <div className="d-flex justify-content-between align-items-center">
-                                                <span className="fw-medium">
-                                                  {c.raison_sociale}
-                                                </span>
-                                                <small className="text-muted">
-                                                  {formatPhoneDisplay(
-                                                    c.telephone1
-                                                  )}
-                                                </small>
-                                              </div>
-                                              <div className="d-flex justify-content-between align-items-center mt-1">
-                                                <small className="text-muted">
-                                                  {c.designation && (
-                                                    <span className="me-2">
-                                                      {c.designation}
-                                                    </span>
-                                                  )}
-                                                </small>
-                                                {c.telephone2 && (
-                                                  <small className="text-muted">
-                                                    {formatPhoneDisplay(
-                                                      c.telephone2
-                                                    )}
-                                                  </small>
-                                                )}
-                                              </div>
-                                              {c.adresse && (
-                                                <small className="text-muted d-block mt-1">
-                                                  <i className="ri-map-pin-line me-1"></i>
-                                                  {c.adresse}
-                                                </small>
-                                              )}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      ) : (
-                                        <div className="text-muted p-3 text-center">
-                                          <i className="ri-search-line me-1"></i>
-                                          Aucun résultat trouvé
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
+  {/* Enhanced Client Dropdown Results - ABSOLUTELY POSITIONED */}
+  {!isCreatingFacture &&
+    !selectedClient &&
+    clientSearch.length >= 3 && (
+      <div
+        className="search-results client-results mt-1"
+        style={{
+          position: "absolute",
+          top: "100%", // Position below the input
+          left: 0,
+          right: 0,
+          zIndex: 1050,
+          backgroundColor: "white",
+          border: "1px solid #dee2e6",
+          borderRadius: "0.375rem",
+          boxShadow: "0 0.5rem 1rem rgba(0, 0, 0, 0.15)",
+          maxHeight: "400px",
+          overflowY: "auto"
+        }}
+      >
+        {filteredClients.length > 0 ? (
+          <ul className="list-group list-group-flush">
+            {filteredClients.map((c) => (
+              <li
+                key={c.id}
+                className="list-group-item list-group-item-action"
+                onClick={() => {
+                  setSelectedClient(c);
+                  validation.setFieldValue("client_id", c.id);
+                  setClientSearch("");
+                  setFilteredClients([]);
+                }}
+                style={{
+                  cursor: "pointer",
+                  padding: "10px 15px",
+                }}
+              >
+                <div className="d-flex justify-content-between align-items-center">
+                  <span className="fw-medium">
+                    {c.raison_sociale}
+                  </span>
+                  <small className="text-muted">
+                    {formatPhoneDisplay(c.telephone1)}
+                  </small>
+                </div>
+                <div className="d-flex justify-content-between align-items-center mt-1">
+                  <small className="text-muted">
+                    {c.designation && (
+                      <span className="me-2">
+                        {c.designation}
+                      </span>
+                    )}
+                  </small>
+                  {c.telephone2 && (
+                    <small className="text-muted">
+                      {formatPhoneDisplay(c.telephone2)}
+                    </small>
+                  )}
+                </div>
+                {c.adresse && (
+                  <small className="text-muted d-block mt-1">
+                    <i className="ri-map-pin-line me-1"></i>
+                    {c.adresse}
+                  </small>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="text-muted p-3 text-center">
+            <i className="ri-search-line me-1"></i>
+            Aucun résultat trouvé
+          </div>
+        )}
+      </div>
+    )}
 
-                                {validation.touched.client_id &&
-                                  validation.errors.client_id && (
-                                    <div className="text-danger mt-1 fs-6">
-                                      <i className="ri-error-warning-line me-1"></i>
-                                      {validation.errors.client_id}
-                                    </div>
-                                  )}
-                              </div>
+  {validation.touched.client_id &&
+    validation.errors.client_id && (
+      <div className="text-danger mt-1 fs-6">
+        <i className="ri-error-warning-line me-1"></i>
+        {validation.errors.client_id}
+      </div>
+    )}
+</div>
                             </CardBody>
                           </Card>
                         </Col>
@@ -3216,6 +3959,7 @@ const BonLivraisonList = () => {
                                 type="text"
                                 placeholder="Rechercher article..."
                                 value={articleSearch}
+                                innerRef={articleSearchRef}
                                 onChange={(e) => {
                                   setArticleSearch(e.target.value);
                                   setFocusedIndex(-1); // Reset focus when typing
@@ -3956,20 +4700,19 @@ const BonLivraisonList = () => {
                                           </td>
                                         </tr>
                                         {showRemise && globalRemise > 0 && (
-                                          <tr className="real-time-update">
-                                            <th className="text-end text-muted fs-6">
-                                              {remiseType === "percentage"
-                                                ? `Remise (${globalRemise}%)`
-                                                : `Remise (Montant fixe) ${(
-                                                    (discountAmount / netHT) *
-                                                    100
-                                                  ).toFixed(1)}%`}
-                                            </th>
-                                            <td className="text-end text-danger fw-bold fs-6">
-                                              - {discountAmount.toFixed(3)} DT
-                                            </td>
-                                          </tr>
-                                        )}
+  <tr className="real-time-update">
+    <th className="text-end text-muted fs-6">
+      {remiseType === "percentage"
+        ? `Remise (${globalRemise}%)`
+        : `Remise (Montant fixe) ${(
+            (discountAmount / grandTotal) * 100
+          ).toFixed(2)}%`}
+    </th>
+    <td className="text-end text-danger fw-bold fs-6">
+      - {discountAmount.toFixed(3)} DT
+    </td>
+  </tr>
+)}
 
                                         {/* Timbre Fiscal for Factures */}
                                         {isCreatingFacture && timbreFiscal && (

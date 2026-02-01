@@ -488,3 +488,220 @@
   background-color: #c82333;
   border-color: #c82333;
 }
+
+
+
+/* Add to your InvoiceModal.css or existing CSS */
+.btn-invoice {
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-invoice-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}
+
+.btn-invoice-primary:hover {
+  background-color: #0b5ed7;
+  border-color: #0a58ca;
+}
+
+.btn-invoice-success {
+  background-color: #198754;
+  border-color: #198754;
+}
+
+.btn-invoice-success:hover {
+  background-color: #157347;
+  border-color: #146c43;
+}
+
+.btn-invoice-danger {
+  background-color: #dc3545;
+  border-color: #dc3545;
+}
+
+.btn-invoice-danger:hover {
+  background-color: #bb2d3b;
+  border-color: #b02a37;
+}
+
+.btn-invoice-warning {
+  background-color: #ffc107;
+  border-color: #ffc107;
+  color: #000;
+}
+
+.btn-invoice-warning:hover {
+  background-color: #ffca2c;
+  border-color: #ffc720;
+  color: #000;
+}
+
+.btn-invoice-secondary {
+  background-color: #6c757d;
+  border-color: #6c757d;
+}
+
+.btn-invoice-secondary:hover {
+  background-color: #5c636a;
+  border-color: #565e64;
+}
+
+.btn-details {
+  background-color: #0dcaf0;
+  border-color: #0dcaf0;
+  color: white;
+}
+
+.btn-details:hover {
+  background-color: #0baccc;
+  border-color: #0aa2c0;
+}
+
+
+
+
+
+
+
+
+/* Editable designation input */
+.designation-input-editable {
+  font-size: 0.75rem !important;
+  padding: 4px 8px !important;
+  height: 32px !important;
+  border: 1px solid #dee2e6 !important;
+  border-radius: 4px !important;
+  width: 100% !important;
+  background-color: #f8f9fa !important;
+  transition: all 0.2s ease !important;
+}
+
+.designation-input-editable:hover {
+  background-color: white !important;
+  border-color: #86b7fe !important;
+}
+
+.designation-input-editable:focus {
+  background-color: white !important;
+  border-color: #0d6efd !important;
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15) !important;
+  outline: none !important;
+}
+
+
+
+/* Client Dropdown - Light Grey Background */
+.search-results.client-results {
+  background-color: #fafafa !important; /* Very light grey */
+  border: 1px solid #e9ecef !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* List items with subtle hover effect */
+.client-results .list-group-item {
+  background-color: transparent !important;
+  border-bottom: 1px solid #f1f3f5 !important;
+  padding: 12px 16px !important;
+  transition: all 0.15s ease !important;
+}
+
+/* Last item should not have bottom border */
+.client-results .list-group-item:last-child {
+  border-bottom: none !important;
+}
+
+/* Hover state - slightly darker grey */
+.client-results .list-group-item:hover {
+  background-color: #f5f5f5 !important; /* Slightly darker grey on hover */
+  border-left: 3px solid #0d6efd !important;
+}
+
+/* Active state for keyboard navigation */
+.client-results .list-group-item.active {
+  background-color: #f0f7ff !important; /* Light blue-grey */
+  border-left: 3px solid #0d6efd !important;
+}
+
+/* Client info text colors */
+.client-info-name {
+  color: #212529 !important; /* Darker text for better contrast */
+  font-weight: 600 !important;
+}
+
+.client-info-phone {
+  color: #6c757d !important; /* Medium grey for phone */
+  font-size: 0.85rem !important;
+}
+
+.client-info-designation {
+  color: #495057 !important; /* Slightly darker grey for designation */
+  font-size: 0.82rem !important;
+}
+
+.client-info-address {
+  color: #868e96 !important; /* Light grey for address */
+  font-size: 0.8rem !important;
+}
+
+/* Optional: Add a subtle gradient to the container */
+.client-results::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #e9ecef, transparent);
+}
+
+
+
+/* Styles pour le champ de désignation */
+.designation-input {
+  transition: all 0.2s ease;
+  border: 1px solid #dee2e6;
+}
+
+.designation-input:focus {
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Scrollbar pour les désignations longues */
+.designation-input::-webkit-scrollbar {
+  width: 6px;
+}
+
+.designation-input::-webkit-scrollbar-track {
+  background: #f8f9fa;
+  border-radius: 3px;
+}
+
+.designation-input::-webkit-scrollbar-thumb {
+  background: #adb5bd;
+  border-radius: 3px;
+}
+
+/* Style pour l'affichage en mode lecture seule */
+.designation-content {
+  scrollbar-width: thin;
+  scrollbar-color: #adb5bd #f8f9fa;
+}
+
+/* Ajustement de hauteur automatique */
+.designation-input {
+  min-height: 60px !important;
+  max-height: 150px !important;
+  resize: vertical;
+  overflow-y: auto !important;
+}
+
+/* Style pour les désignations modifiées */
+.designation-modified {
+  border-left: 3px solid #ffc107 !important;
+  background-color: #fff8e1 !important;
+}

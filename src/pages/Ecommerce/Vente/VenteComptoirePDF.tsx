@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   },
   colN: { width: '5%' },
   colArticle: { width: '15%', textAlign: 'left' },
-  colDesignation: { width: '22%', textAlign: 'left' },
+  colDesignation: { width: '29%', textAlign: 'left' },
   colQuantite: { width: '8%' },
   colPUHT: { width: '10%', textAlign: 'right' },
   colTVA: { width: '8%' },
@@ -306,107 +306,269 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
       };
     }
 
+    // Step 1: Calculate original totals (without document-level discount)
     let sousTotalHTValue = 0;
-    let netHTValue = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
-    const tvaBreakdown: { [key: number]: { base: number; montant: number } } = {};
+    
+    // Store line details for proportional calculation
+    const lineDetails: Array<{
+      ht: number;
+      tvaRate: number;
+      tvaAmount: number;
+      ttc: number;
+      qty: number;
+    }> = [];
+    
+    // Store TVA breakdown for original amounts
+    const tvaBreakdownOriginal: { [key: number]: { base: number; montant: number } } = {};
 
+    // Calculate original line amounts (with line-level discounts only)
     bonCommande.articles.forEach((article) => {
       const qty = Number(article.quantite) || 0;
+      const articleRemise = Number(article.remise) || 0;
       const tvaRate = Number(article.tva) || 0;
-      const remiseRate = Number(article.remise) || 0;
       
-      const priceHT = Number(article.prixUnitaire) || 0;
-      const priceTTC = priceHT * (1 + tvaRate / 100);
+      let unitHT = Number(article.prixUnitaire) || 0;
+      let unitTTC = Number(article.prix_ttc) || unitHT * (1 + tvaRate / 100);
 
-      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-      const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-      const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
+      // Calculate line amounts
+      const lineHT = Math.round(unitHT * 1000) / 1000;
+      const lineTTC = Math.round(unitTTC * 1000) / 1000;
+
+      const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+      const montantNetHTLigne = Math.round(
+        qty * lineHT * (1 - articleRemise / 100) * 1000
+      ) / 1000;
+      const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+      const montantTVALigne = Math.round(
+        (montantTTCLigne - montantNetHTLigne) * 1000
+      ) / 1000;
 
       sousTotalHTValue += montantSousTotalHT;
-      netHTValue += montantNetHT;
-      totalTaxValue += montantTVA;
+      totalTaxValue += montantTVALigne;
       grandTotalValue += montantTTCLigne;
 
+      // Store line details
+      lineDetails.push({
+        ht: montantNetHTLigne,
+        tvaRate: tvaRate,
+        tvaAmount: montantTVALigne,
+        ttc: montantTTCLigne,
+        qty: qty
+      });
+
+      // Store original TVA breakdown
       if (tvaRate > 0) {
-        if (!tvaBreakdown[tvaRate]) {
-          tvaBreakdown[tvaRate] = { base: 0, montant: 0 };
+        if (!tvaBreakdownOriginal[tvaRate]) {
+          tvaBreakdownOriginal[tvaRate] = { base: 0, montant: 0 };
         }
-        tvaBreakdown[tvaRate].base += montantNetHT;
-        tvaBreakdown[tvaRate].montant += montantTVA;
+        tvaBreakdownOriginal[tvaRate].base += montantNetHTLigne;
+        tvaBreakdownOriginal[tvaRate].montant += montantTVALigne;
       }
     });
 
+    // Round original totals
     sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-    netHTValue = Math.round(netHTValue * 1000) / 1000;
     totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
     grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
 
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
-    let netHTAfterDiscount = netHTValue;
-    let totalTaxAfterDiscount = totalTaxValue;
+    let netHTValue = sousTotalHTValue;
+    
+    // Initialize final TVA breakdown - use let instead of const
+    let tvaBreakdownFinal: { [key: number]: { base: number; montant: number } } = {};
 
+    // Apply document-level remise if exists
     const remiseValue = Number(bonCommande.remise) || 0;
     const remiseTypeValue = bonCommande.remiseType || "percentage";
 
     if (remiseValue > 0) {
       if (remiseTypeValue === "percentage") {
-        discountAmountValue = Math.round(netHTValue * (remiseValue / 100) * 1000) / 1000;
-        netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
+        // ✅ SIMPLE FORMULA: Apply percentage discount on HT
+        discountAmountValue = Math.round((sousTotalHTValue * remiseValue / 100) * 1000) / 1000;
+        netHTValue = sousTotalHTValue - discountAmountValue;
         
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
+        // Calculate new TVA proportionally
+        const tvaToHtRatio = sousTotalHTValue > 0 ? totalTaxValue / sousTotalHTValue : 0;
+        const newTVA = Math.round((netHTValue * tvaToHtRatio) * 1000) / 1000;
         
-        Object.keys(tvaBreakdown).forEach(rate => {
+        totalTaxValue = newTVA;
+        finalTotalValue = Math.round((netHTValue + newTVA) * 1000) / 1000;
+        
+        // Calculate TVA breakdown proportionally
+        const discountRatio = netHTValue / sousTotalHTValue;
+        
+        Object.keys(tvaBreakdownOriginal).forEach(rate => {
           const tvaRate = parseFloat(rate);
-          tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
-          tvaBreakdown[tvaRate].montant = Math.round(tvaBreakdown[tvaRate].montant * discountRatio * 1000) / 1000;
+          tvaBreakdownFinal[tvaRate] = {
+            base: Math.round((tvaBreakdownOriginal[tvaRate].base * discountRatio) * 1000) / 1000,
+            montant: Math.round((tvaBreakdownOriginal[tvaRate].montant * discountRatio) * 1000) / 1000
+          };
         });
-        
-        finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
         
       } else if (remiseTypeValue === "fixed") {
+        // ✅ FIXED DISCOUNT FORMULA: TTC is given, calculate HT
         finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
         
-        const tvaToHtRatio = totalTaxValue / netHTValue;
-        const htAfterDiscount = Math.round(finalTotalValue / (1 + tvaToHtRatio) * 1000) / 1000;
+        // Find all unique TVA rates
+        const tvaRates = Array.from(new Set(bonCommande.articles.map(a => Number(a.tva) || 0)));
         
-        discountAmountValue = Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-        netHTAfterDiscount = htAfterDiscount;
-        totalTaxAfterDiscount = Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+        if (tvaRates.length === 1 && tvaRates[0] > 0) {
+          // ✅ SINGLE TVA RATE: HT = TTC / (1 + TVA rate)
+          const tvaRate = tvaRates[0];
+          netHTValue = Math.round((finalTotalValue / (1 + tvaRate / 100)) * 1000) / 1000;
+          totalTaxValue = Math.round((finalTotalValue - netHTValue) * 1000) / 1000;
+          
+          // For single rate, TVA breakdown is simple
+          tvaBreakdownFinal[tvaRate] = {
+            base: netHTValue,
+            montant: totalTaxValue
+          };
+          
+        } else {
+          // ✅ MULTIPLE TVA RATES: Use proportional method
+          const discountCoefficient = grandTotalValue > 0 ? finalTotalValue / grandTotalValue : 0;
+          
+          // Reset values
+          netHTValue = 0;
+          totalTaxValue = 0;
+          
+          // Recalculate each line proportionally
+          bonCommande.articles.forEach((article) => {
+            const qty = Number(article.quantite) || 0;
+            const articleRemise = Number(article.remise) || 0;
+            const tvaRate = Number(article.tva) || 0;
+            let unitHT = Number(article.prixUnitaire) || 0;
+            
+            // Calculate original line amounts
+            const montantNetHTLigne = Math.round(
+              qty * unitHT * (1 - articleRemise / 100) * 1000
+            ) / 1000;
+            
+            // Apply coefficient to get new amounts
+            const newLineHT = Math.round((montantNetHTLigne * discountCoefficient) * 1000) / 1000;
+            const newLineTVA = Math.round((newLineHT * (tvaRate / 100)) * 1000) / 1000;
+            
+            netHTValue += newLineHT;
+            totalTaxValue += newLineTVA;
+            
+            // Update TVA breakdown
+            if (tvaRate > 0) {
+              if (!tvaBreakdownFinal[tvaRate]) {
+                tvaBreakdownFinal[tvaRate] = { base: 0, montant: 0 };
+              }
+              tvaBreakdownFinal[tvaRate].base += newLineHT;
+              tvaBreakdownFinal[tvaRate].montant += newLineTVA;
+            }
+          });
+          
+          // Round final values
+          netHTValue = Math.round(netHTValue * 1000) / 1000;
+          totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+        }
         
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        
-        Object.keys(tvaBreakdown).forEach(rate => {
-          const tvaRate = parseFloat(rate);
-          tvaBreakdown[tvaRate].base = Math.round(tvaBreakdown[tvaRate].base * discountRatio * 1000) / 1000;
-          tvaBreakdown[tvaRate].montant = Math.round(tvaBreakdown[tvaRate].montant * discountRatio * 1000) / 1000;
-        });
+        discountAmountValue = Math.round((sousTotalHTValue - netHTValue) * 1000) / 1000;
       }
+      
+      // Final rounding
+      netHTValue = Math.round(netHTValue * 1000) / 1000;
+      totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+      finalTotalValue = Math.round(finalTotalValue * 1000) / 1000;
+      discountAmountValue = Math.round(discountAmountValue * 1000) / 1000;
+      
+    } else {
+      // No document-level discount - use original values
+      netHTValue = sousTotalHTValue;
+      tvaBreakdownFinal = { ...tvaBreakdownOriginal };
     }
-
-    const displayNetHT = remiseValue > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax = remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
 
     return {
       sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-      netHT: Math.round(displayNetHT * 1000) / 1000,
-      totalTax: Math.round(displayTotalTax * 1000) / 1000,
+      netHT: Math.round(netHTValue * 1000) / 1000,
+      totalTax: Math.round(totalTaxValue * 1000) / 1000,
       grandTotal: Math.round(grandTotalValue * 1000) / 1000,
       finalTotal: Math.round(finalTotalValue * 1000) / 1000,
       discountAmount: Math.round(discountAmountValue * 1000) / 1000,
-      tvaBreakdown,
+      tvaBreakdown: tvaBreakdownFinal,
     };
   };
 
   const { sousTotalHT, netHT, totalTax, grandTotal, finalTotal, discountAmount, tvaBreakdown } = calculateTotals();
 
+  // Format currency function
   const formatCurrency = (amount: number) => {
     return amount.toFixed(3);
   };
+
+  // Calculate TVA table totals for verification
+  const calculateTVATableTotals = () => {
+    let totalBase = 0;
+    let totalMontant = 0;
+    
+    Object.keys(tvaBreakdown).forEach(rate => {
+      const tvaRate = parseFloat(rate);
+      totalBase += tvaBreakdown[tvaRate].base;
+      totalMontant += tvaBreakdown[tvaRate].montant;
+    });
+    
+    return {
+      totalBase: Math.round(totalBase * 1000) / 1000,
+      totalMontant: Math.round(totalMontant * 1000) / 1000,
+      netHT: Math.round(netHT * 1000) / 1000,
+      totalTax: Math.round(totalTax * 1000) / 1000
+    };
+  };
+
+  // Render TVA breakdown table
+  const renderTVABreakdown = () => {
+    const tvaRates = Object.keys(tvaBreakdown).map(rate => parseFloat(rate)).sort((a, b) => a - b);
+  
+    if (tvaRates.length === 0) {
+      return (
+        <View style={styles.tvaTable}>
+          <View style={styles.tvaHeader}>
+            <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
+            <Text style={styles.tvaHeaderBase}>Base HT</Text>
+            <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
+          </View>
+          <View style={styles.tvaRow}>
+            <Text style={styles.tvaColTaux}>-</Text>
+            <Text style={styles.tvaColBase}>0.000 DT</Text>
+            <Text style={styles.tvaColMontant}>0.000 DT</Text>
+          </View>
+        </View>
+      );
+    }
+    
+    return (
+      <View style={styles.tvaTable}>
+        <View style={styles.tvaHeader}>
+          <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
+          <Text style={styles.tvaHeaderBase}>Base HT</Text>
+          <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
+        </View>
+        
+        {tvaRates.map(rate => (
+          <View style={styles.tvaRow} key={rate}>
+            <Text style={styles.tvaColTaux}>{rate}%</Text>
+            <Text style={styles.tvaColBase}>
+              {formatCurrency(Math.round(tvaBreakdown[rate].base * 1000) / 1000)} DT
+            </Text>
+            <Text style={styles.tvaColMontant}>
+              {formatCurrency(Math.round(tvaBreakdown[rate].montant * 1000) / 1000)} DT
+            </Text>
+          </View>
+        ))}
+        
+
+      </View>
+    );
+  };
+
+  const tvaTableTotals = calculateTVATableTotals();
+
 
   const numberToWords = (num: number): string => {
     const units = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf'];
@@ -540,10 +702,11 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         const tvaRate = Number(item.tva) || 0;
         const remiseRate = Number(item.remise) || 0;
         
-        const prixTTC = priceHT * (1 + tvaRate / 100);
+        const prixTTC = Number(item.prix_ttc) || priceHT * (1 + tvaRate / 100);
         const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
         const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
         const montantTTCLigne = Math.round(qty * prixTTC * 1000) / 1000;
+        
 
         return (
           <View style={styles.tableRow} key={index}>
@@ -575,49 +738,15 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
     </View>
   );
 
-  const renderTVABreakdown = () => {
-    const tvaRates = Object.keys(tvaBreakdown).map(rate => parseFloat(rate)).sort((a, b) => a - b);
-  
-    if (tvaRates.length === 0) {
-      return (
-        <View style={styles.tvaTable}>
-          <View style={styles.tvaHeader}>
-            <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-            <Text style={styles.tvaHeaderBase}>Base HT</Text>
-            <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-          </View>
-          <View style={styles.tvaRow}>
-            <Text style={styles.tvaColTaux}>-</Text>
-            <Text style={styles.tvaColBase}>0,000 DT</Text>
-            <Text style={styles.tvaColMontant}>0,000 DT</Text>
-          </View>
-        </View>
-      );
-    }
-    
-    return (
-      <View style={styles.tvaTable}>
-        <View style={styles.tvaHeader}>
-          <Text style={styles.tvaHeaderTaux}>Taux TVA</Text>
-          <Text style={styles.tvaHeaderBase}>Base HT</Text>
-          <Text style={styles.tvaHeaderMontant}>Montant TVA</Text>
-        </View>
-         
-        {tvaRates.map(rate => (
-          <View style={styles.tvaRow} key={rate}>
-            <Text style={styles.tvaColTaux}>{rate}%</Text>
-            <Text style={styles.tvaColBase}>{formatCurrency(tvaBreakdown[rate].base)} DT</Text>
-            <Text style={styles.tvaColMontant}>
-              {formatCurrency(tvaBreakdown[rate].montant)} DT
-            </Text>
-          </View>
-        ))}
-      </View>
-    );
-  };
 
+ 
   const renderSummarySection = () => {
     const bottomPos = 160;
+    const hasRemise = Number(bonCommande.remise) > 0;
+    
+    // Verify that totals match
+    const shouldMatchNetHT = tvaTableTotals.totalBase;
+    const shouldMatchTotalTax = tvaTableTotals.totalMontant;
     
     return (
       <View style={[styles.summaryArea, { bottom: bottomPos }]}>
@@ -630,12 +759,10 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
               <Text style={styles.summaryLabel}>Total H.T.:</Text>
               <Text style={styles.summaryValue}>{formatCurrency(sousTotalHT)} DT</Text>
             </View>
-
-            {Number(bonCommande.remise) > 0 && (
+  
+            {hasRemise && (
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {bonCommande.remiseType === "percentage" ? `Remise (${bonCommande.remise}%)` : "Remise"}:
-                </Text>
+                <Text style={styles.summaryLabel}>Remise:</Text>
                 <Text style={styles.summaryValue}>- {formatCurrency(discountAmount)} DT</Text>
               </View>
             )}
@@ -652,9 +779,9 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
             
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Total TTC:</Text>
-              <Text style={styles.summaryValue}>{formatCurrency(grandTotal)} DT</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(finalTotal)} DT</Text>
             </View>
-
+  
             {/* NET À PAYER as table - Same design as BC */}
             <View style={styles.netAPayerContainer}>
               <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
@@ -664,8 +791,7 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         </View>
       </View>
     );
-  };
-
+  }
   const safeBonCommande = bonCommande || {};
   const safeCompanyInfo = companyInfo || {};
 
@@ -684,7 +810,7 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
               <View>
                 <View style={styles.commandeDetailItem}>
                   <Text style={styles.N}>
-                    N°: <Text style={styles.commandeNumberValue}>{safeBonCommande.numeroCommande || 'N/A'}</Text>
+                    <Text style={styles.commandeNumberValue}>{safeBonCommande.numeroCommande || 'N/A'}</Text>
                   </Text>
                 </View>
                 <View style={styles.commandeDetailItem}>
@@ -729,6 +855,9 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
                     }
                     {safeBonCommande.client.telephone1 && (
                       <Text style={styles.clientLine}>Tél: {safeBonCommande.client.telephone1}</Text>
+                    )}
+                     {safeBonCommande.client.telephone2 && (
+                      <Text style={styles.clientLine}>Tél: {safeBonCommande.client.telephone2}</Text>
                     )}
                   </>
                 ) : null}
@@ -781,7 +910,7 @@ const FactureVentePDF: React.FC<FactureVentePDFProps> = ({ bonCommande, companyI
         {renderSummarySection()}
         <View style={[styles.amountInWords, { bottom: amountBottom }]}>
           <Text style={styles.amountText}>
-            Arrêtée la présente facture à la somme de : {amountInWords}
+            Arrêtée la présente vente à la somme de : {amountInWords}
           </Text>
         </View>
         <View style={styles.cachetSignatureSection}>

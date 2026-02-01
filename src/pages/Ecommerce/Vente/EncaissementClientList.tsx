@@ -18,7 +18,10 @@ import {
   fetchEncaissementsClient, createEncaissementClient, updateEncaissementClient, deleteEncaissementClient,
   fetchFacturesClient, fetchNextEncaissementNumberFromAPI
 } from "./FactureClientServices";
-import { fetchClients } from "../../../Components/Article/ArticleServices";
+import { 
+  searchClients,  // Changed from fetchClients to searchClients
+  createClient  // Add this import
+} from "../../../Components/Article/ArticleServices";
 import { Client, FactureClient, EncaissementClient } from "../../../Components/Article/Interfaces";
 
 const EncaissementClientList = () => {
@@ -48,17 +51,123 @@ const EncaissementClientList = () => {
   const [banque, setBanque] = useState("");
   const [numeroTraite, setNumeroTraite] = useState("");
   const [dateEcheance, setDateEcheance] = useState("");
-  // Helper function to calculate final total for a facture (same logic as in facture client)
-  const getFactureFinalTotal = useCallback((facture: FactureClient): number => {
-    // Use totalTTCAfterRemise if available (from your facture calculation)
+  
+  // Add new client modal state
+  const [clientModal, setClientModal] = useState(false);
+  const [newClient, setNewClient] = useState({
+    raison_sociale: "",
+    designation: "",
+    matricule_fiscal: "",
+    register_commerce: "",
+    adresse: "",
+    ville: "",
+    code_postal: "",
+    telephone1: "",
+    telephone2: "",
+    email: "",
+    status: "Actif" as "Actif" | "Inactif",
+  });
 
+  // Format phone input
+  const formatPhoneInput = (value: string): string => {
+    const cleaned = value.replace(/\D/g, "");
+    const limited = cleaned.slice(0, 8);
     
-    // Otherwise calculate it using the same logic
+    if (limited.length <= 2) {
+      return limited;
+    } else if (limited.length <= 5) {
+      return `${limited.substring(0, 2)} ${limited.substring(2)}`;
+    } else {
+      return `${limited.substring(0, 2)} ${limited.substring(
+        2,
+        5
+      )} ${limited.substring(5, 8)}`;
+    }
+  };
+
+  // Format phone display
+  const formatPhoneDisplay = (phone: string | null | undefined): string => {
+    if (!phone) return "N/A";
+    
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length === 8) {
+      return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(
+        2,
+        5
+      )} ${cleanPhone.substring(5, 8)}`;
+    }
+    return phone;
+  };
+
+  // Client search effect
+  useEffect(() => {
+    const searchClientsDebounced = async () => {
+      if (clientSearch.length >= 1) {
+        try {
+          const result = await searchClients({ query: clientSearch, page: 1, limit: 15 });
+          setFilteredClients(result.clients || []);
+        } catch (err) {
+          console.error("Failed to load clients:", err);
+          setFilteredClients([]);
+        }
+      } else {
+        setFilteredClients([]);
+      }
+    };
+
+    const timer = setTimeout(searchClientsDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [clientSearch]);
+
+  // Create new client handler
+  const handleCreateClient = async () => {
+    try {
+      // Format phone numbers before sending
+      const formattedClient = {
+        ...newClient,
+        telephone1: newClient.telephone1 ? newClient.telephone1.replace(/\s/g, "") : "",
+        telephone2: newClient.telephone2 ? newClient.telephone2.replace(/\s/g, "") : "",
+      };
+
+      // Create the client
+      const createdClient = await createClient(formattedClient);
+      toast.success("Client créé avec succès");
+
+      // Auto-select the new client
+      setSelectedClient(createdClient);
+      validation.setFieldValue("client_id", createdClient.id);
+
+      // Also add to filtered clients for immediate visibility
+      setFilteredClients(prev => [createdClient, ...prev]);
+
+      // Close client modal and reset form
+      setClientModal(false);
+      setNewClient({
+        raison_sociale: "",
+        designation: "",
+        matricule_fiscal: "",
+        register_commerce: "",
+        adresse: "",
+        ville: "",
+        code_postal: "",
+        telephone1: "",
+        telephone2: "",
+        email: "",
+        status: "Actif",
+      });
+
+    } catch (err) {
+      console.error("Error creating client:", err);
+      toast.error("Erreur lors de la création du client");
+    }
+  };
+
+  // Helper function to calculate final total for a facture
+  const getFactureFinalTotal = useCallback((facture: FactureClient): number => {
     let grandTotal = Number(facture.totalTTC) || 0;
     const hasDiscount = facture.remise && Number(facture.remise) > 0;
     let finalTotal = grandTotal;
     
-    // Apply discount
     if (hasDiscount) {
       if (facture.remiseType === "percentage") {
         finalTotal = grandTotal * (1 - Number(facture.remise) / 100);
@@ -67,51 +176,35 @@ const EncaissementClientList = () => {
       }
     }
     
-    // Apply timbre fiscal
     if (facture.timbreFiscal) {
       if (hasDiscount) {
-        // If there's a discount, add timbre to final total (after discount)
         finalTotal += 1;
       } else {
-        // If no discount, add timbre to grand total
         finalTotal = grandTotal + 1;
       }
     }
     
-    // Fix floating point precision
     return Math.round(finalTotal * 1000) / 1000;
   }, []);
-
-  useEffect(() => {
-    if (clientSearch.length >= 3) {
-      const filtered = clients.filter(client =>
-        client.raison_sociale.toLowerCase().includes(clientSearch.toLowerCase())
-      );
-      setFilteredClients(filtered);
-    } else {
-      setFilteredClients([]);
-    }
-  }, [clientSearch, clients]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const [encaissementsData, clientsData, facturesData] = await Promise.all([
+      const [encaissementsData, facturesData] = await Promise.all([
         fetchEncaissementsClient(),
-        fetchClients(),
         fetchFacturesClient(),
       ]);
 
       setEncaissements(encaissementsData);
       setFilteredEncaissements(encaissementsData);
-      setClients(clientsData);
       setFactures(facturesData);
 
       if (factureIdFromUrl) {
         const facture = facturesData.find(f => f.id === Number(factureIdFromUrl));
         if (facture) {
           setSelectedFactureId(facture.id);
-          const client = clientsData.find(c => c.id === facture.client_id);
+          // For pre-selected facture, find and set the client
+          const client = encaissementsData.find(e => e.facture_id === facture.id)?.client;
           if (client) {
             setSelectedClient(client);
           }
@@ -161,8 +254,7 @@ const EncaissementClientList = () => {
       return encaissement.client.raison_sociale;
     }
     if (encaissement.factureClient?.client) {
-      const client = clients.find(c => c.id === encaissement.factureClient.client.id);
-      return client ? client.raison_sociale : 'N/A';
+      return encaissement.factureClient.client.raison_sociale;
     }
     return 'N/A';
   };
@@ -206,11 +298,8 @@ const EncaissementClientList = () => {
     if (!isEdit || !encaissement?.factureClient) return { amount: 0, factureNumber: '', finalTotal: 0 };
 
     const facture = encaissement.factureClient;
-    
-    // Use the final total after discount and timbre fiscal
     const finalTotal = getFactureFinalTotal(facture);
 
-    // Calculate total payments excluding the current encaissement being edited
     const otherPayments = encaissements
       .filter(e => e.facture_id === facture.id && e.id !== encaissement.id)
       .reduce((sum, e) => sum + Number(e.montant), 0);
@@ -233,22 +322,14 @@ const EncaissementClientList = () => {
 
   const handleSubmit = async (values: any) => {
     try {
-      // CRITICAL FIX: Get client_id from the facture if not directly available
-      let clientId = null;
+      // CRITICAL FIX: Get client_id from selected client
+      let clientId: number | null = selectedClient?.id || null;
       
-      if (isEdit) {
+      if (isEdit && !clientId) {
         // For edits: Use existing client_id OR get from facture
-        clientId = encaissement?.client_id;
+        clientId = encaissement?.client_id || null; // Changed this line
         if (!clientId && encaissement?.factureClient?.client) {
           clientId = encaissement.factureClient.client.id;
-        }
-      } else {
-        // For creates: Use selected client OR get from selected facture
-        if (selectedClient) {
-          clientId = selectedClient.id;
-        } else if (selectedFactureId) {
-          const selectedFacture = factures.find(f => f.id === selectedFactureId);
-          clientId = selectedFacture?.client_id;
         }
       }
   
@@ -260,7 +341,7 @@ const EncaissementClientList = () => {
         numeroEncaissement: values.numeroEncaissement,
         date: values.date,
         facture_id: isEdit ? encaissement?.facture_id : (selectedFactureId || 0),
-        client_id: clientId || 0,
+        client_id: clientId || 0, // This will convert null to 0
         // Add new fields for cheque
         ...(values.modePaiement === "Cheque" && {
           numeroCheque: numeroCheque,
@@ -285,7 +366,9 @@ const EncaissementClientList = () => {
   
       setCreateEditModal(false);
       setSelectedFactureId(factureIdFromUrl ? Number(factureIdFromUrl) : null);
-      // Reset cheque and traite fields after successful submission
+      // Reset client and fields after successful submission
+      setSelectedClient(null);
+      setClientSearch("");
       setNumeroCheque("");
       setBanque("");
       setNumeroTraite("");
@@ -351,6 +434,7 @@ const EncaissementClientList = () => {
       "Virement": { bgClass: "bg-primary", textClass: "text-primary", icon: "ri-exchange-funds-line" },
       "Traite": { bgClass: "bg-warning", textClass: "text-warning", icon: "ri-file-text-line" },
       "Autre": { bgClass: "bg-secondary", textClass: "text-secondary", icon: "ri-more-line" },
+      "tpe": { bgClass: "bg-dark", textClass: "text-dark", icon: "ri-bank-card-2-line" },
     };
 
     if (!mode) return null;
@@ -413,20 +497,23 @@ const EncaissementClientList = () => {
                 <Link
                   to="#"
                   className="text-primary d-inline-block edit-item-btn"
-              // In the columns action cell, update the edit click handler:
-onClick={() => {
-  setEncaissement(encaissement);
-  // Populate cheque and traite fields for edit mode
-  setNumeroCheque(encaissement.numeroCheque || "");
-  setBanque(encaissement.banque || "");
-  setNumeroTraite(encaissement.numeroTraite || "");
-  setDateEcheance(encaissement.dateEcheance || "");
-  // Don't set selectedClient for edit mode - we'll use the existing client_id
-  setSelectedFactureId(encaissement.facture_id || null);
-  validation.setFieldValue("client_id", encaissement.client_id || 0);
-  setIsEdit(true);
-  setCreateEditModal(true);
-}}
+                  onClick={() => {
+                    setEncaissement(encaissement);
+                    // Set client if exists
+                    if (encaissement.client) {
+                      setSelectedClient(encaissement.client);
+                      setClientSearch(encaissement.client.raison_sociale);
+                    }
+                    // Populate cheque and traite fields for edit mode
+                    setNumeroCheque(encaissement.numeroCheque || "");
+                    setBanque(encaissement.banque || "");
+                    setNumeroTraite(encaissement.numeroTraite || "");
+                    setDateEcheance(encaissement.dateEcheance || "");
+                    setSelectedFactureId(encaissement.facture_id || null);
+                    validation.setFieldValue("client_id", encaissement.client_id || 0);
+                    setIsEdit(true);
+                    setCreateEditModal(true);
+                  }}
                 >
                   <i className="ri-pencil-fill fs-16"></i>
                 </Link>
@@ -448,7 +535,7 @@ onClick={() => {
         },
       },
     ],
-    [clients]
+    []
   );
 
   return (
@@ -458,6 +545,277 @@ onClick={() => {
         onDeleteClick={handleDelete}
         onCloseClick={() => setDeleteModal(false)}
       />
+
+      {/* Client Creation Modal */}
+      <Modal
+        isOpen={clientModal}
+        toggle={() => setClientModal(false)}
+        centered
+        size="lg"
+      >
+        <ModalHeader toggle={() => setClientModal(false)}>
+          <div className="d-flex align-items-center">
+            <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+              <i className="ri-user-add-line text-primary fs-4"></i>
+            </div>
+            <div>
+              <h4 className="mb-0 fw-bold text-dark">
+                Nouveau Client
+              </h4>
+              <small className="text-muted">
+                Créer un nouveau client rapidement
+              </small>
+            </div>
+          </div>
+        </ModalHeader>
+        
+        <ModalBody>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Raison Sociale*</Label>
+                <Input
+                  value={newClient.raison_sociale}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      raison_sociale: e.target.value,
+                    })
+                  }
+                  placeholder="Raison sociale"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Désignation</Label>
+                <Input
+                  value={newClient.designation}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      designation: e.target.value,
+                    })
+                  }
+                  placeholder="Désignation"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+          </Row>
+
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Matricule Fiscal</Label>
+                <Input
+                  value={newClient.matricule_fiscal}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      matricule_fiscal: e.target.value,
+                    })
+                  }
+                  placeholder="Matricule fiscal"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Registre Commerce</Label>
+                <Input
+                  value={newClient.register_commerce}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      register_commerce: e.target.value,
+                    })
+                  }
+                  placeholder="Registre de commerce"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+          </Row>
+
+          <div className="mb-3">
+            <Label className="form-label fw-semibold">Adresse</Label>
+            <Input
+              value={newClient.adresse}
+              onChange={(e) =>
+                setNewClient({
+                  ...newClient,
+                  adresse: e.target.value,
+                })
+              }
+              placeholder="Adresse complète"
+              className="form-control-lg"
+            />
+          </div>
+
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Ville</Label>
+                <Input
+                  value={newClient.ville}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      ville: e.target.value,
+                    })
+                  }
+                  placeholder="Ville"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Code Postal</Label>
+                <Input
+                  value={newClient.code_postal}
+                  onChange={(e) =>
+                    setNewClient({
+                      ...newClient,
+                      code_postal: e.target.value,
+                    })
+                  }
+                  placeholder="Code postal"
+                  className="form-control-lg"
+                />
+              </div>
+            </Col>
+          </Row>
+
+          {/* Phone Fields with Auto-Space */}
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Téléphone 1*</Label>
+                <div className="position-relative">
+                  <Input
+                    value={newClient.telephone1}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value) {
+                        const formatted = formatPhoneInput(value);
+                        setNewClient({
+                          ...newClient,
+                          telephone1: formatted,
+                        });
+                      } else {
+                        setNewClient({
+                          ...newClient,
+                          telephone1: value,
+                        });
+                      }
+                    }}
+                    placeholder="22 222 222"
+                    className="form-control-lg pe-5"
+                  />
+                  {newClient.telephone1 && (
+                    <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                      <i className="ri-phone-line text-muted"></i>
+                    </div>
+                  )}
+                </div>
+                <small className="text-muted">
+                  Format automatique: XX XXX XXX
+                </small>
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label fw-semibold">Téléphone 2</Label>
+                <div className="position-relative">
+                  <Input
+                    value={newClient.telephone2}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value) {
+                        const formatted = formatPhoneInput(value);
+                        setNewClient({
+                          ...newClient,
+                          telephone2: formatted,
+                        });
+                      } else {
+                        setNewClient({
+                          ...newClient,
+                          telephone2: value,
+                        });
+                      }
+                    }}
+                    placeholder="22 222 222"
+                    className="form-control-lg pe-5"
+                  />
+                  {newClient.telephone2 && (
+                    <div className="position-absolute end-0 top-50 translate-middle-y me-3">
+                      <i className="ri-phone-line text-muted"></i>
+                    </div>
+                  )}
+                </div>
+                <small className="text-muted">
+                  Format automatique: XX XXX XXX
+                </small>
+              </div>
+            </Col>
+          </Row>
+
+          <div className="mb-3">
+            <Label className="form-label fw-semibold">Email</Label>
+            <Input
+              type="email"
+              value={newClient.email}
+              onChange={(e) =>
+                setNewClient({ ...newClient, email: e.target.value })
+              }
+              placeholder="email@example.com"
+              className="form-control-lg"
+            />
+          </div>
+
+          <div className="mb-3">
+            <Label className="form-label fw-semibold">Statut</Label>
+            <Input
+              type="select"
+              value={newClient.status}
+              onChange={(e) =>
+                setNewClient({
+                  ...newClient,
+                  status: e.target.value as "Actif" | "Inactif",
+                })
+              }
+              className="form-control-lg"
+            >
+              <option value="Actif">Actif</option>
+              <option value="Inactif">Inactif</option>
+            </Input>
+          </div>
+        </ModalBody>
+        
+        <ModalFooter className="border-0">
+          <Button
+            color="light"
+            onClick={() => setClientModal(false)}
+            className="btn-invoice fs-6 px-4"
+          >
+            <i className="ri-close-line me-2"></i>
+            Annuler
+          </Button>
+          <Button
+            color="primary"
+            onClick={handleCreateClient}
+            disabled={!newClient.raison_sociale || !newClient.telephone1}
+            className="btn-invoice-primary fs-6 px-4"
+          >
+            <i className="ri-user-add-line me-2"></i>
+            Créer Client
+          </Button>
+        </ModalFooter>
+      </Modal>
 
       <Container fluid>
         <BreadCrumb title="Encaissements Clients" pageTitle="Encaissements" />
@@ -563,156 +921,340 @@ onClick={() => {
                   </ModalHeader>
                   <Form onSubmit={validation.handleSubmit}>
                     <ModalBody style={{ padding: '20px' }}>
-                    <Row>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Montant*</Label>
-            <Input
-              type="number"
-              name="montant"
-              value={validation.values.montant}
-              onChange={validation.handleChange}
-              onBlur={validation.handleBlur}
-              invalid={validation.touched.montant && !!validation.errors.montant}
-              step="0.001"
-              min="0.001"
-              max={isEdit && encaissement?.factureClient ? calculateMaxAllowedAmount().amount : undefined}
-            />
-            {validation.touched.montant && validation.errors.montant && (
-              <div className="text-danger">{validation.errors.montant as string}</div>
-            )}
-            {isEdit && encaissement?.factureClient && (
-              <small className="text-muted">
-                Maximum autorisé: {calculateMaxAllowedAmount().amount.toFixed(3)} DT
-                (reste à payer pour la facture {calculateMaxAllowedAmount().factureNumber})
-                {Number(validation.values.montant) > calculateMaxAllowedAmount().amount && (
-                  <span className="text-danger ms-2">
-                    <i className="ri-alert-line me-1"></i>
-                    Le montant dépasse la limite autorisée
-                  </span>
-                )}
-              </small>
-            )}
-          </div>
-        </Col>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Mode de paiement*</Label>
-            <Input
-              type="select"
-              name="modePaiement"
-              value={validation.values.modePaiement}
-              onChange={validation.handleChange}
-              onBlur={validation.handleBlur}
-              invalid={validation.touched.modePaiement && !!validation.errors.modePaiement}
-            >
-              <option value="Espece">En espèces</option>
-              <option value="Cheque">Chèque</option>
-              <option value="Virement">Virement</option>
-              <option value="Traite">Traite</option>
-              <option value="Autre">Autre</option>
-            </Input>
-            {validation.touched.modePaiement && validation.errors.modePaiement && (
-              <div className="text-danger">{validation.errors.modePaiement as string}</div>
-            )}
-          </div>
-        </Col>
-      </Row>
+                      {/* Client Search Section */}
+                      <div className="mb-4">
+                        <Label className="form-label-lg fw-semibold">
+                          Client <span className="text-danger"> *</span>
+                          {!selectedClient && (
+                            <button
+                              type="button"
+                              className="btn btn-link text-primary p-0 ms-2"
+                              onClick={() => setClientModal(true)}
+                              title="Ajouter un nouveau client"
+                              style={{ fontSize: "0.8rem" }}
+                            >
+                              <i className="ri-add-line me-1"></i>
+                              Nouveau client
+                            </button>
+                          )}
+                        </Label>
 
-      {/* Cheque Fields - Conditionally displayed */}
-      {validation.values.modePaiement === "Cheque" && (
-        <Row>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Numéro du chèque*</Label>
-              <Input
-                type="text"
-                value={numeroCheque}
-                onChange={(e) => setNumeroCheque(e.target.value)}
-                placeholder="Saisir le numéro du chèque"
-                required={validation.values.modePaiement === "Cheque"}
-              />
-            </div>
-          </Col>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Banque*</Label>
-              <Input
-                type="text"
-                value={banque}
-                onChange={(e) => setBanque(e.target.value)}
-                placeholder="Nom de la banque"
-                required={validation.values.modePaiement === "Cheque"}
-              />
-            </div>
-          </Col>
-        </Row>
-      )}
+                        <div className="position-relative">
+                          <Input
+                            type="text"
+                            placeholder="Rechercher par nom, raison sociale ou téléphone..."
+                            value={
+                              selectedClient
+                                ? selectedClient.raison_sociale
+                                : clientSearch
+                            }
+                            onChange={(e) => {
+                              const value = e.target.value;
 
-      {/* Traite Fields - Conditionally displayed */}
-      {validation.values.modePaiement === "Traite" && (
-        <Row>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Numéro de traite*</Label>
-              <Input
-                type="text"
-                value={numeroTraite}
-                onChange={(e) => setNumeroTraite(e.target.value)}
-                placeholder="Saisir le numéro de traite"
-                required={validation.values.modePaiement === "Traite"}
-              />
-            </div>
-          </Col>
-          <Col md={6}>
-            <div className="mb-3">
-              <Label>Date d'échéance*</Label>
-              <Input
-                type="date"
-                value={dateEcheance}
-                onChange={(e) => setDateEcheance(e.target.value)}
-                min={validation.values.date} // Can't be before encaissement date
-                required={validation.values.modePaiement === "Traite"}
-              />
-            </div>
-          </Col>
-        </Row>
-      )}
+                              if (!value) {
+                                setSelectedClient(null);
+                                validation.setFieldValue(
+                                  "client_id",
+                                  ""
+                                );
+                                setClientSearch("");
+                              } else {
+                                // Auto-format if it looks like a phone number (mostly digits)
+                                const digitCount = (
+                                  value.match(/\d/g) || []
+                                ).length;
+                                const totalLength = value.length;
 
-      <Row>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Numéro d'encaissement*</Label>
-            <Input
-              type="text"
-              name="numeroEncaissement"
-              value={validation.values.numeroEncaissement}
-              onChange={validation.handleChange}
-              onBlur={validation.handleBlur}
-              invalid={validation.touched.numeroEncaissement && !!validation.errors.numeroEncaissement}
-            />
-            {validation.touched.numeroEncaissement && validation.errors.numeroEncaissement && (
-              <div className="text-danger">{validation.errors.numeroEncaissement as string}</div>
-            )}
-          </div>
-        </Col>
-        <Col md={6}>
-          <div className="mb-3">
-            <Label>Date*</Label>
-            <Input
-              type="date"
-              name="date"
-              value={validation.values.date}
-              onChange={validation.handleChange}
-              onBlur={validation.handleBlur}
-              invalid={validation.touched.date && !!validation.errors.date}
-            />
-            {validation.touched.date && validation.errors.date && (
-              <div className="text-danger">{validation.errors.date as string}</div>
-            )}
-          </div>
-        </Col>
-      </Row>
+                                if (digitCount >= totalLength * 0.7) {
+                                  // If 70% or more are digits
+                                  const formatted =
+                                    formatPhoneInput(value);
+                                  setClientSearch(formatted);
+                                } else {
+                                  setClientSearch(value);
+                                }
+                              }
+                            }}
+                            onFocus={() => {
+                              if (clientSearch.length >= 1) {
+                                // Optionally load initial clients
+                              }
+                            }}
+                            readOnly={!!selectedClient}
+                            className="form-control-lg pe-10"
+                          />
+
+                          {/* Clear button when client is selected */}
+                          {selectedClient && (
+                            <button
+                              type="button"
+                              className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                              onClick={() => {
+                                setSelectedClient(null);
+                                validation.setFieldValue(
+                                  "client_id",
+                                  ""
+                                );
+                                setClientSearch("");
+                              }}
+                              title="Changer de client"
+                            >
+                              <i className="ri-close-line fs-5"></i>
+                            </button>
+                          )}
+
+                          {/* Add button when no client is selected */}
+                          {!selectedClient && (
+                            <button
+                              type="button"
+                              className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                              onClick={() => setClientModal(true)}
+                              title="Ajouter un nouveau client"
+                            >
+                              <i className="ri-add-line fs-5"></i>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Enhanced Client Dropdown Results */}
+                        {!selectedClient &&
+                          clientSearch.length >= 1 && (
+                            <div
+                              className="search-results mt-2 border rounded shadow-sm"
+                              style={{
+                                maxHeight: "200px",
+                                overflowY: "auto",
+                                position: "absolute",
+                                width: "100%",
+                                zIndex: 1000,
+                                backgroundColor: "white",
+                              }}
+                            >
+                              {filteredClients.length > 0 ? (
+                                <ul className="list-group list-group-flush">
+                                  {filteredClients.map((c) => (
+                                    <li
+                                      key={c.id}
+                                      className="list-group-item list-group-item-action"
+                                      onClick={() => {
+                                        setSelectedClient(c);
+                                        validation.setFieldValue(
+                                          "client_id",
+                                          c.id
+                                        );
+                                        setClientSearch("");
+                                        setFilteredClients([]);
+                                      }}
+                                      style={{
+                                        cursor: "pointer",
+                                        padding: "10px 15px",
+                                      }}
+                                    >
+                                      <div className="d-flex justify-content-between align-items-center">
+                                        <span className="fw-medium">
+                                          {c.raison_sociale}
+                                        </span>
+                                        <small className="text-muted">
+                                          {formatPhoneDisplay(
+                                            c.telephone1
+                                          )}
+                                        </small>
+                                      </div>
+                                      <div className="d-flex justify-content-between align-items-center mt-1">
+                                        <small className="text-muted">
+                                          {c.designation && (
+                                            <span className="me-2">
+                                              {c.designation}
+                                            </span>
+                                          )}
+                                        </small>
+                                        {c.telephone2 && (
+                                          <small className="text-muted">
+                                            {formatPhoneDisplay(
+                                              c.telephone2
+                                            )}
+                                          </small>
+                                        )}
+                                      </div>
+                                      {c.adresse && (
+                                        <small className="text-muted d-block mt-1">
+                                          <i className="ri-map-pin-line me-1"></i>
+                                          {c.adresse}
+                                        </small>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="text-muted p-3 text-center">
+                                  <i className="ri-search-line me-1"></i>
+                                  Aucun résultat trouvé
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                        {validation.touched.client_id &&
+                          validation.errors.client_id && (
+                            <div className="text-danger mt-1 fs-6">
+                              <i className="ri-error-warning-line me-1"></i>
+                              {validation.errors.client_id}
+                            </div>
+                          )}
+                      </div>
+
+                      {/* Rest of the form fields remain the same */}
+                      <Row>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Montant*</Label>
+                            <Input
+                              type="number"
+                              name="montant"
+                              value={validation.values.montant}
+                              onChange={validation.handleChange}
+                              onBlur={validation.handleBlur}
+                              invalid={validation.touched.montant && !!validation.errors.montant}
+                              step="0.001"
+                              min="0.001"
+                              max={isEdit && encaissement?.factureClient ? calculateMaxAllowedAmount().amount : undefined}
+                            />
+                            {validation.touched.montant && validation.errors.montant && (
+                              <div className="text-danger">{validation.errors.montant as string}</div>
+                            )}
+                            {isEdit && encaissement?.factureClient && (
+                              <small className="text-muted">
+                                Maximum autorisé: {calculateMaxAllowedAmount().amount.toFixed(3)} DT
+                                (reste à payer pour la facture {calculateMaxAllowedAmount().factureNumber})
+                                {Number(validation.values.montant) > calculateMaxAllowedAmount().amount && (
+                                  <span className="text-danger ms-2">
+                                    <i className="ri-alert-line me-1"></i>
+                                    Le montant dépasse la limite autorisée
+                                  </span>
+                                )}
+                              </small>
+                            )}
+                          </div>
+                        </Col>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Mode de paiement*</Label>
+                            <Input
+                              type="select"
+                              name="modePaiement"
+                              value={validation.values.modePaiement}
+                              onChange={validation.handleChange}
+                              onBlur={validation.handleBlur}
+                              invalid={validation.touched.modePaiement && !!validation.errors.modePaiement}
+                            >
+                              <option value="Espece">En espèces</option>
+                              <option value="Cheque">Chèque</option>
+                              <option value="Virement">Virement</option>
+                              <option value="Traite">Traite</option>
+                              <option value="tpe">Carte Bancaire "TPE"</option>
+                              <option value="Autre">Autre</option>
+                            </Input>
+                            {validation.touched.modePaiement && validation.errors.modePaiement && (
+                              <div className="text-danger">{validation.errors.modePaiement as string}</div>
+                            )}
+                          </div>
+                        </Col>
+                      </Row>
+
+                      {/* Cheque Fields - Conditionally displayed */}
+                      {validation.values.modePaiement === "Cheque" && (
+                        <Row>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Numéro du chèque*</Label>
+                              <Input
+                                type="text"
+                                value={numeroCheque}
+                                onChange={(e) => setNumeroCheque(e.target.value)}
+                                placeholder="Saisir le numéro du chèque"
+                                required={validation.values.modePaiement === "Cheque"}
+                              />
+                            </div>
+                          </Col>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Banque*</Label>
+                              <Input
+                                type="text"
+                                value={banque}
+                                onChange={(e) => setBanque(e.target.value)}
+                                placeholder="Nom de la banque"
+                                required={validation.values.modePaiement === "Cheque"}
+                              />
+                            </div>
+                          </Col>
+                        </Row>
+                      )}
+
+                      {/* Traite Fields - Conditionally displayed */}
+                      {validation.values.modePaiement === "Traite" && (
+                        <Row>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Numéro de traite*</Label>
+                              <Input
+                                type="text"
+                                value={numeroTraite}
+                                onChange={(e) => setNumeroTraite(e.target.value)}
+                                placeholder="Saisir le numéro de traite"
+                                required={validation.values.modePaiement === "Traite"}
+                              />
+                            </div>
+                          </Col>
+                          <Col md={6}>
+                            <div className="mb-3">
+                              <Label>Date d'échéance*</Label>
+                              <Input
+                                type="date"
+                                value={dateEcheance}
+                                onChange={(e) => setDateEcheance(e.target.value)}
+                                min={validation.values.date} // Can't be before encaissement date
+                                required={validation.values.modePaiement === "Traite"}
+                              />
+                            </div>
+                          </Col>
+                        </Row>
+                      )}
+
+                      <Row>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Numéro d'encaissement*</Label>
+                            <Input
+                              type="text"
+                              name="numeroEncaissement"
+                              value={validation.values.numeroEncaissement}
+                              onChange={validation.handleChange}
+                              onBlur={validation.handleBlur}
+                              invalid={validation.touched.numeroEncaissement && !!validation.errors.numeroEncaissement}
+                            />
+                            {validation.touched.numeroEncaissement && validation.errors.numeroEncaissement && (
+                              <div className="text-danger">{validation.errors.numeroEncaissement as string}</div>
+                            )}
+                          </div>
+                        </Col>
+                        <Col md={6}>
+                          <div className="mb-3">
+                            <Label>Date*</Label>
+                            <Input
+                              type="date"
+                              name="date"
+                              value={validation.values.date}
+                              onChange={validation.handleChange}
+                              onBlur={validation.handleBlur}
+                              invalid={validation.touched.date && !!validation.errors.date}
+                            />
+                            {validation.touched.date && validation.errors.date && (
+                              <div className="text-danger">{validation.errors.date as string}</div>
+                            )}
+                          </div>
+                        </Col>
+                      </Row>
                     </ModalBody>
                     <ModalFooter>
                       <Button color="light" onClick={toggleCreateEditModal}>

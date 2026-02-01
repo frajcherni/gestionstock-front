@@ -3,6 +3,7 @@
   useEffect,
   useState,
   useMemo,
+  useRef,
   useCallback,
 } from "react";
 import {
@@ -41,6 +42,11 @@ import * as Yup from "yup";
 import { useFormik } from "formik";
 import moment from "moment";
 import Flatpickr from "react-flatpickr";
+import { fetchDepots, Depot } from "../Stock/DepotServices";
+import {
+  createFacture,
+  fetchNextFactureNumberFromAPI,
+} from "./FactureClientServices";
 import {
   fetchVenteComptoire,
   CreateVenteComptoire,
@@ -49,11 +55,12 @@ import {
   fetchNextVenteComptoireNumber,
 } from "../../../Components/CommandeClient/CommandeClientServices";
 import {
-  fetchArticles,
-  fetchClients,
   fetchVendeurs,
   fetchFournisseurs,
   fetchCategories,
+  searchArticles,
+  searchClients,
+  // Add this import
 } from "../../../Components/Article/ArticleServices";
 import {
   Article,
@@ -106,9 +113,7 @@ const VenteComptoire = () => {
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [showRemise, setShowRemise] = useState(false);
   const [nextNumeroCommande, setNextNumeroCommande] = useState("");
-  const [remiseType, setRemiseType] = useState<"percentage" | "fixed">(
-    "percentage"
-  );
+  const [remiseType, setRemiseType] = useState<"percentage" | "fixed">("fixed");
   const [globalRemise, setGlobalRemise] = useState<number>(0);
   const [selectedArticles, setSelectedArticles] = useState<
     {
@@ -128,12 +133,179 @@ const VenteComptoire = () => {
   const [pdfType, setPdfType] = useState<"facture" | "receipt">("facture");
   const [editingTTC, setEditingTTC] = useState<{ [key: number]: string }>({});
   const [editingHT, setEditingHT] = useState<{ [key: number]: string }>({});
+  const [phoneSearch, setPhoneSearch] = useState("");
+  const [depots, setDepots] = useState<Depot[]>([]);
+  const [selectedDepot, setSelectedDepot] = useState<Depot | null>(null);
+  const [isCreatingFacture, setIsCreatingFacture] = useState(false);
+  const [nextFactureNumber, setNextFactureNumber] = useState("");
+  const [timbreFiscal, setTimbreFiscal] = useState<boolean>(true);
+
+  const [exoneration, setExoneration] = useState<string>("");
+  const [conditionPaiement, setConditionPaiement] =
+    useState<string>("30 jours");
+
+  // === FONCTIONS DE CALCUL TVA/FODEC TUNISIEN ===
+  const parseNumber = (value: string | number): number => {
+    if (value === null || value === undefined || value === "") return 0;
+    const strValue = String(value)
+      .replace(/[^\d.,]/g, "")
+      .replace(",", ".");
+    const num = parseFloat(strValue);
+    return isNaN(num) ? 0 : Math.round(num * 100000) / 100000;
+  };
+
+  // Formatage avec 3 décimales
+  const formatNumber = (value: number): string => {
+    if (value === 0) return "";
+    return (Math.round(value * 1000) / 1000).toFixed(3).replace(".", ",");
+  };
+
+  // === CALCUL TTC AVEC FODEC (Norme tunisienne) ===
+  // Formule : TTC = HT × 1.01 × (1 + TVA/100)
+  const calculateTTCFromHT = (
+    ht: number,
+    tva: number,
+    hasFodec: boolean
+  ): number => {
+    const htValue = parseNumber(ht);
+    const tvaRate = parseNumber(tva);
+
+    if (tvaRate === 0 && !hasFodec) return htValue;
+
+    let baseTTC = htValue;
+
+    if (hasFodec) {
+      baseTTC = htValue * 1.01;
+    }
+
+    if (tvaRate > 0) {
+      baseTTC = baseTTC * (1 + tvaRate / 100);
+    }
+
+    return Math.round(baseTTC * 1000) / 1000;
+  };
+
+  // === CALCUL HT À PARTIR DE TTC (Norme tunisienne) ===
+  // Formule inverse : HT = TTC / (1.01 × (1 + TVA/100))
+  const calculateHTFromTTC = (
+    ttc: number,
+    tva: number,
+    hasFodec: boolean
+  ): number => {
+    const ttcValue = parseNumber(ttc);
+    const tvaRate = parseNumber(tva);
+
+    if (tvaRate === 0 && !hasFodec) return ttcValue;
+
+    let factor = 1;
+
+    if (hasFodec) {
+      factor *= 1.01;
+    }
+
+    if (tvaRate > 0) {
+      factor *= 1 + tvaRate / 100;
+    }
+
+    const ht = ttcValue / factor;
+    return Math.round(ht * 1000) / 1000;
+  };
+
+  // Gestionnaire unifié pour les changements de prix
+  const handlePriceChange = (field: keyof typeof newArticle, value: string) => {
+    const newValue = value.replace(",", ".");
+    const tva = parseNumber(newArticle.tva);
+    const hasFodec = newArticle.taux_fodec;
+
+    setNewArticle((prev) => ({ ...prev, [field]: newValue }));
+
+    switch (field) {
+      case "pua_ht": {
+        const ht = parseNumber(newValue);
+        const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+        break;
+      }
+      case "pua_ttc": {
+        const ttc = parseNumber(newValue);
+        const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, pua_ht: formatNumber(ht) }));
+        break;
+      }
+      case "puv_ht": {
+        const ht = parseNumber(newValue);
+        const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+        break;
+      }
+      case "puv_ttc": {
+        const ttc = parseNumber(newValue);
+        const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, puv_ht: formatNumber(ht) }));
+        break;
+      }
+    }
+  };
+
+  // Gestionnaire pour TVA
+  const handleTVAChange = (value: string) => {
+    const oldTva = parseNumber(newArticle.tva);
+    const newTva = parseNumber(value);
+    const hasFodec = newArticle.taux_fodec;
+
+    setNewArticle((prev) => ({ ...prev, tva: value }));
+
+    setTimeout(() => {
+      if (newArticle.pua_ht) {
+        const ht = parseNumber(newArticle.pua_ht);
+        const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      }
+
+      if (newArticle.puv_ht) {
+        const ht = parseNumber(newArticle.puv_ht);
+        const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+        setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      }
+    }, 10);
+  };
+
+  // Gestionnaire pour FODEC
+  const handleFodecChange = (checked: boolean) => {
+    const tva = parseNumber(newArticle.tva);
+
+    setNewArticle((prev) => ({ ...prev, taux_fodec: checked }));
+
+    setTimeout(() => {
+      if (newArticle.pua_ht) {
+        const ht = parseNumber(newArticle.pua_ht);
+        const ttc = calculateTTCFromHT(ht, tva, checked);
+        setNewArticle((prev) => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      }
+
+      if (newArticle.puv_ht) {
+        const ht = parseNumber(newArticle.puv_ht);
+        const ttc = calculateTTCFromHT(ht, tva, checked);
+        setNewArticle((prev) => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      }
+    }, 10);
+  };
+  // Add ref for article search input
+  const articleSearchRef = useRef<HTMLInputElement>(null);
 
   // Replace your current payment states with this:
   const [paymentMethods, setPaymentMethods] = useState<
     Array<{
       id: string;
-      method: "especes" | "cheque" | "virement" | "traite" ; // Add "tpe"
+      method:
+        | "especes"
+        | "cheque"
+        | "virement"
+        | "traite"
+        | "carte"
+        | "Carte Bancaire TPE"
+        | "retenue"
+        | "autre"; // Add "tpe"
       amount: number;
       numero?: string;
       banque?: string;
@@ -148,7 +320,13 @@ const VenteComptoire = () => {
   ]);
 
   const [modeReglement, setModeReglement] = useState<
-  "especes" | "cheque" | "virement" | "carte" | "traite" | "autre" | "tpe" // Add "tpe"
+    | "especes"
+    | "cheque"
+    | "virement"
+    | "carte"
+    | "traite"
+    | "autre"
+    | "Carte Bancaire TPE" // Add "tpe"
   >("especes");
   const [numeroReglement, setNumeroReglement] = useState("");
   const [dateEcheance, setDateEcheance] = useState(
@@ -158,13 +336,21 @@ const VenteComptoire = () => {
   const [espaceNotes, setEspaceNotes] = useState("");
   const [montantVirement, setMontantVirement] = useState<number>(0);
 
+  // Add near your other state declarations
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(
+    null
+  );
+
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
   const [subcategories, setSubcategories] = useState<Categorie[]>([]);
-// Add near your other state declarations
-const [focusedIndex, setFocusedIndex] = useState(-1);
-const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
-const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
+  // Add near your other state declarations
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+  const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>(
+    []
+  );
   const [clientModal, setClientModal] = useState(false);
   const [newClient, setNewClient] = useState({
     raison_sociale: "",
@@ -184,17 +370,18 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
   const [articleModal, setArticleModal] = useState(false);
   const [newArticle, setNewArticle] = useState({
     reference: "",
+    code_barre: "",
     nom: "",
     designation: "",
-    puv_ht: 0,
-    puv_ttc: 0,
-    pua_ht: 0,
-    pua_ttc: 0,
-    qte: 0,
-    tva: 0,
-    remise: 0,
+    puv_ht: "",
+    puv_ttc: "",
+    pua_ht: "",
+    pua_ttc: "",
+    qte: "",
+    tva: "19",
+    remise: "0",
     taux_fodec: false,
-    type: "Non Consigné" as "Consigné" | "Non Consigné",
+    type: "Non Consigné",
     image: "",
     on_website: false,
     is_offre: false,
@@ -208,11 +395,35 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
     fournisseur_id: "",
   });
 
+  const [secondaryLoading, setSecondaryLoading] = useState(false);
+  const [articlesLoading, setArticlesLoading] = useState(false);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
+
   // Add these functions
   const handleCreateClient = async () => {
     try {
-      await createClient(newClient);
+      // Create the client
+      const createdClient = await createClient(newClient);
       toast.success("Client créé avec succès");
+
+      // Refresh clients list using search with empty query (limited results)
+      const clientsSearchResult = await searchClients({
+        query: "",
+        page: 1,
+        limit: 50, // Limit to reasonable number
+      });
+
+      // Use the searched clients instead of all clients
+      const newClientData = createdClient; // The API returns the created client
+
+      if (newClientData) {
+        // Auto-select the new client
+        setSelectedClient(newClientData);
+        validation.setFieldValue("client_id", newClientData.id);
+      }
+
+      // Close modal and reset form
       setClientModal(false);
       setNewClient({
         raison_sociale: "",
@@ -227,62 +438,69 @@ const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>([]);
         email: "",
         status: "Actif" as "Actif" | "Inactif",
       });
-      // Refresh clients list
-      const clientsData = await fetchClients();
-      setClients(clientsData);
+
+      // Also add to filtered clients for immediate visibility
+      setFilteredClients((prev) => [newClientData, ...prev]);
     } catch (err) {
-      toast.error("Erreur création client");
+      console.error("Error creating client:", err);
+      toast.error("Erreur lors de la création du client");
     }
   };
 
-// Enhanced phone formatting function
-const formatPhoneInput = (value: string): string => {
-  // Remove all non-digit characters
-  const cleaned = value.replace(/\D/g, '');
-  
-  // Limit to 8 digits (Tunisian phone number length)
-  const limited = cleaned.slice(0, 8);
-  
-  // Format as XX XXX XXX
-  if (limited.length <= 2) {
-    return limited;
-  } else if (limited.length <= 5) {
-    return `${limited.substring(0, 2)} ${limited.substring(2)}`;
-  } else {
-    return `${limited.substring(0, 2)} ${limited.substring(2, 5)} ${limited.substring(5, 8)}`;
-  }
-};
+  // Enhanced phone formatting function
+  const formatPhoneInput = (value: string): string => {
+    // Remove all non-digit characters
+    const cleaned = value.replace(/\D/g, "");
 
-// Enhanced phone detection function
-const isPhoneNumberInput = (value: string): boolean => {
-  // Remove spaces for counting
-  const cleanValue = value.replace(/\s/g, '');
-  
-  // If empty, not a phone number
-  if (!cleanValue) return false;
-  
-  // Count digits
-  const digitCount = (cleanValue.match(/\d/g) || []).length;
-  const totalLength = cleanValue.length;
-  
-  // More lenient detection: if mostly digits OR if it's exactly 8 digits with spaces
-  const isMostlyDigits = digitCount >= totalLength * 0.7;
-  const isEightDigitsWithSpaces = cleanValue.length === 8 && digitCount === 8;
-  const hasEightDigitsTotal = digitCount === 8;
-  
-  return isMostlyDigits || isEightDigitsWithSpaces || hasEightDigitsTotal;
-};
+    // Limit to 8 digits (Tunisian phone number length)
+    const limited = cleaned.slice(0, 8);
 
-// Display formatting function
-const formatPhoneDisplay = (phone: string | null | undefined): string => {
-  if (!phone) return 'N/A';
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  if (cleanPhone.length === 8) {
-    return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(2, 5)} ${cleanPhone.substring(5, 8)}`;
-  }
-  return phone;
-};
+    // Format as XX XXX XXX
+    if (limited.length <= 2) {
+      return limited;
+    } else if (limited.length <= 5) {
+      return `${limited.substring(0, 2)} ${limited.substring(2)}`;
+    } else {
+      return `${limited.substring(0, 2)} ${limited.substring(
+        2,
+        5
+      )} ${limited.substring(5, 8)}`;
+    }
+  };
+
+  // Enhanced phone detection function
+  const isPhoneNumberInput = (value: string): boolean => {
+    // Remove spaces for counting
+    const cleanValue = value.replace(/\s/g, "");
+
+    // If empty, not a phone number
+    if (!cleanValue) return false;
+
+    // Count digits
+    const digitCount = (cleanValue.match(/\d/g) || []).length;
+    const totalLength = cleanValue.length;
+
+    // More lenient detection: if mostly digits OR if it's exactly 8 digits with spaces
+    const isMostlyDigits = digitCount >= totalLength * 0.7;
+    const isEightDigitsWithSpaces = cleanValue.length === 8 && digitCount === 8;
+    const hasEightDigitsTotal = digitCount === 8;
+
+    return isMostlyDigits || isEightDigitsWithSpaces || hasEightDigitsTotal;
+  };
+
+  // Display formatting function
+  const formatPhoneDisplay = (phone: string | null | undefined): string => {
+    if (!phone) return "N/A";
+
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length === 8) {
+      return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(
+        2,
+        5
+      )} ${cleanPhone.substring(5, 8)}`;
+    }
+    return phone;
+  };
   // Function to normalize name for searching (remove accents, etc.)
   const normalizeName = (name: string): string => {
     return name
@@ -333,23 +551,15 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
 
   const handleCreateArticle = async () => {
     try {
-      // Calculate TTC values before sending
       const articleToCreate = {
         ...newArticle,
-        pua_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.pua_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
-        puv_ttc: Number(
-          calculateTTCForQuickCreate(
-            newArticle.puv_ht,
-            newArticle.tva,
-            newArticle.taux_fodec
-          )
-        ),
+        pua_ht: parseNumber(newArticle.pua_ht),
+        pua_ttc: parseNumber(newArticle.pua_ttc),
+        puv_ht: parseNumber(newArticle.puv_ht),
+        puv_ttc: parseNumber(newArticle.puv_ttc),
+        qte: parseNumber(newArticle.qte),
+        tva: parseNumber(newArticle.tva),
+        remise: parseNumber(newArticle.remise),
         categorie_id: newArticle.categorie_id
           ? Number(newArticle.categorie_id)
           : null,
@@ -361,22 +571,35 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
           : null,
       };
 
+      console.log("Creating article:", articleToCreate);
+
       await createArticle(articleToCreate);
       toast.success("Article créé avec succès");
+
+      // Refresh articles list
+      const articlesResult = await searchArticles({
+        query: "",
+        page: 1,
+        limit: 25,
+      });
+      setArticles(articlesResult.articles || []);
+
+      // Reset form
       setArticleModal(false);
       setNewArticle({
         reference: "",
+        code_barre: "", // Toujours vide par défaut
         nom: "",
         designation: "",
-        puv_ht: 0,
-        puv_ttc: 0,
-        pua_ht: 0,
-        pua_ttc: 0,
-        qte: 0,
-        tva: 0,
-        remise: 0,
+        puv_ht: "",
+        puv_ttc: "",
+        pua_ht: "",
+        pua_ttc: "",
+        qte: "",
+        tva: "",
+        remise: "",
         taux_fodec: false,
-        type: "Non Consigné" as "Consigné" | "Non Consigné",
+        type: "Non Consigné",
         image: "",
         on_website: false,
         is_offre: false,
@@ -389,39 +612,12 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
         sous_categorie_id: "",
         fournisseur_id: "",
       });
-      fetchData(); // Refresh articles list
     } catch (err) {
-      toast.error("Erreur création article");
+      console.error("Error creating article:", err);
+      toast.error("Erreur lors de la création de l'article");
     }
   };
-
   // Add this effect for auto-calculation
-  useEffect(() => {
-    if (articleModal) {
-      const puaTtc = calculateTTCForQuickCreate(
-        newArticle.pua_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-      const puvTtc = calculateTTCForQuickCreate(
-        newArticle.puv_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-
-      setNewArticle((prev) => ({
-        ...prev,
-        pua_ttc: Number(puaTtc),
-        puv_ttc: Number(puvTtc),
-      }));
-    }
-  }, [
-    newArticle.pua_ht,
-    newArticle.puv_ht,
-    newArticle.tva,
-    newArticle.taux_fodec,
-    articleModal,
-  ]);
 
   // Add this effect for subcategories
   useEffect(() => {
@@ -510,21 +706,23 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
       setNextNumeroCommande(numero);
     } catch (err) {
       toast.error("Échec de la récupération du numéro de vente");
-  
+
       const year = moment().format("YYYY");
-  
+
       // always start from 925
       const DEFAULT_START = 925;
-  
+
       // if bonsCommande exist, continue from max(bonsCommande.length + 1, 925)
       const safeSequence = Math.max(bonsCommande.length + 1, DEFAULT_START);
-  
-      const defaultNumber = `VENTE-${String(safeSequence).padStart(4, "0")}/${year}`;
-  
+
+      const defaultNumber = `VENTE-${String(safeSequence).padStart(
+        4,
+        "0"
+      )}/${year}`;
+
       setNextNumeroCommande(defaultNumber);
     }
   }, [bonsCommande.length]);
-  
 
   useEffect(() => {
     if (modal && !isEdit) {
@@ -532,86 +730,169 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     }
   }, [modal, isEdit, fetchNextNumber]);
 
-  useEffect(() => {
-    if (articleSearch.length >= 3) {
-      const filtered = articles.filter(
-        (article) =>
-          article.designation
-            .toLowerCase()
-            .includes(articleSearch.toLowerCase()) ||
-          article.reference.toLowerCase().includes(articleSearch.toLowerCase())
-      );
-      setFilteredArticles(filtered);
-    } else {
-      setFilteredArticles([]);
-    }
-  }, [articleSearch, articles]);
-
   // Enhanced client search functionality
   // Client search functionality - same as Devis
-  useEffect(() => {
-    if (clientSearch.length >= 3) {
-      const searchTerm = clientSearch.toLowerCase().trim();
+  // Enhanced client search functionality
+  // Enhanced client search functionality
 
-      const filtered = clients.filter((client) => {
-        // Search by name (partial match anywhere in the name)
-        const nameMatch =
-          client.raison_sociale?.toLowerCase().includes(searchTerm) ||
-          client.designation?.toLowerCase().includes(searchTerm);
-
-        // Search by phone - remove spaces for comparison
-        const cleanSearchTerm = searchTerm.replace(/\s/g, "");
-        const phoneMatch =
-          client.telephone1?.replace(/\s/g, "").includes(cleanSearchTerm) ||
-          client.telephone2?.replace(/\s/g, "").includes(cleanSearchTerm);
-
-        return nameMatch || phoneMatch;
-      });
-
-      setFilteredClients(filtered);
-    } else {
-      setFilteredClients([]);
-    }
-  }, [clientSearch, clients]);
-
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (skipSecondary = false) => {
     try {
       setLoading(true);
-      const [
-        bonsData,
-        clientsData,
-        vendeursData,
-        articlesData,
-        categoriesData,
-        fournisseursData,
-      ] = await Promise.all([
+
+      // PHASE 1: Load critical data only
+      const [bonsData, vendeursData] = await Promise.all([
         fetchVenteComptoire(),
-        fetchClients(),
         fetchVendeurs(),
-        fetchArticles(),
-        fetchCategories(), // Add this
-        fetchFournisseurs(), // Add this
       ]);
 
       setBonsCommande(bonsData);
       setFilteredBonsCommande(bonsData);
-      setClients(clientsData);
       setVendeurs(vendeursData);
-      setArticles(articlesData);
-      setCategories(categoriesData); // Add this
-      setFournisseurs(fournisseursData);
+
+      // PHASE 2: Load secondary data only if not skipped
+      if (!skipSecondary) {
+        setSecondaryLoading(true);
+
+        try {
+          // Load depot and categories first (needed for forms)
+          const [depotsData, categoriesData] = await Promise.all([
+            fetchDepots(),
+            fetchCategories(),
+          ]);
+
+          setDepots(depotsData);
+          setCategories(categoriesData);
+
+          // Then load articles and clients in parallel
+          const [articlesResult, clientsResult, fournisseursData] =
+            await Promise.all([
+              searchArticles({ query: "", page: 1, limit: 25 }), // Reduced from 50
+              searchClients({ query: "", page: 1, limit: 25 }), // Reduced from 50
+              fetchFournisseurs(),
+            ]);
+
+          setArticles(articlesResult.articles || []);
+          setFilteredClients(clientsResult.clients || []);
+          setFournisseurs(fournisseursData);
+        } catch (secondaryErr) {
+          console.error("Secondary data loading failed:", secondaryErr);
+          // Continue without secondary data
+        } finally {
+          setSecondaryLoading(false);
+        }
+      }
+
       setLoading(false);
+      setError(null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Échec du chargement des données"
       );
       setLoading(false);
+      setSecondaryLoading(false);
     }
   }, []);
 
+  // Load articles only when needed (modal opens or search)
+  const loadArticles = async (query = "", page = 1, limit = 15) => {
+    if (modal || articleSearch) {
+      setArticlesLoading(true);
+      try {
+        const result = await searchArticles({ query, page, limit });
+        if (query === "" && page === 1) {
+          setArticles(result.articles || []);
+        }
+        setFilteredArticles(result.articles || []);
+      } catch (err) {
+        console.error("Failed to load articles:", err);
+      } finally {
+        setArticlesLoading(false);
+      }
+    }
+  };
+
+  // Load clients only when needed
+  const loadClients = async (query = "", page = 1, limit = 15) => {
+    if (modal || clientSearch) {
+      setClientsLoading(true);
+      try {
+        const result = await searchClients({ query, page, limit });
+        if (query === "" && page === 1) {
+          setFilteredClients(result.clients || []);
+        } else {
+          setFilteredClients(result.clients || []);
+        }
+      } catch (err) {
+        console.error("Failed to load clients:", err);
+      } finally {
+        setClientsLoading(false);
+      }
+    }
+  };
+
+  // Load modal data only when modal opens
+  const loadModalData = async () => {
+    if (modal) {
+      setModalLoading(true);
+      try {
+        // Load only what's needed for the modal
+        const [depotsResult, categoriesResult] = await Promise.all([
+          fetchDepots(),
+          fetchCategories(),
+        ]);
+
+        setDepots(depotsResult);
+        setCategories(categoriesResult);
+
+        // Load initial articles and clients for modal
+        await Promise.all([loadArticles("", 1, 15), loadClients("", 1, 15)]);
+      } catch (err) {
+        console.error("Modal data loading failed:", err);
+      } finally {
+        setModalLoading(false);
+      }
+    }
+  };
+
+  // Initial load - only critical data
   useEffect(() => {
-    fetchData();
+    fetchData(true); // true means skip secondary data initially
   }, [fetchData]);
+
+  // Load modal data when modal opens
+  useEffect(() => {
+    if (modal) {
+      loadModalData();
+    }
+  }, [modal]);
+
+  // Update article search to use the new function
+  useEffect(() => {
+    const searchArticlesDebounced = async () => {
+      if (articleSearch.length >= 3 || modal) {
+        await loadArticles(articleSearch, 1, 20);
+      } else {
+        setFilteredArticles([]);
+      }
+    };
+
+    const timer = setTimeout(searchArticlesDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [articleSearch, modal]);
+
+  // Update client search to use the new function
+  useEffect(() => {
+    const searchClientsDebounced = async () => {
+      if (clientSearch.length >= 1 || modal) {
+        await loadClients(clientSearch, 1, 20);
+      } else {
+        setFilteredClients([]);
+      }
+    };
+
+    const timer = setTimeout(searchClientsDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [clientSearch, modal]);
 
   useEffect(() => {
     let result = [...bonsCommande];
@@ -625,21 +906,41 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
       });
     }
 
+    // Apply regular text search
     if (searchText) {
-      const searchLower = searchText.toLowerCase();
-      result = result.filter(
-        (bon) =>
-          bon.numeroCommande.toLowerCase().includes(searchLower) ||
-          (bon.client?.raison_sociale &&
-            bon.client.raison_sociale.toLowerCase().includes(searchLower)) ||
-          (bon.client?.telephone1 &&
-            bon.client.telephone1.includes(searchText)) ||
-          (bon.client?.telephone2 && bon.client.telephone2.includes(searchText))
-      );
+      const searchLower = searchText.toLowerCase().trim();
+
+      result = result.filter((bon) => {
+        const bonNumero = bon.numeroCommande?.toLowerCase() || "";
+        const clientName = bon.client?.raison_sociale?.toLowerCase() || "";
+        const clientDesignation = bon.client?.designation?.toLowerCase() || "";
+
+        return (
+          bonNumero.includes(searchLower) ||
+          clientName.includes(searchLower) ||
+          clientDesignation.includes(searchLower)
+        );
+      });
+    }
+
+    // Apply phone number search separately
+    if (phoneSearch) {
+      const cleanPhoneSearch = phoneSearch.replace(/\s/g, "").trim();
+
+      result = result.filter((bon) => {
+        if (!bon.client) return false;
+
+        const phone1 = bon.client.telephone1?.replace(/\s/g, "") || "";
+        const phone2 = bon.client.telephone2?.replace(/\s/g, "") || "";
+
+        return (
+          phone1.includes(cleanPhoneSearch) || phone2.includes(cleanPhoneSearch)
+        );
+      });
     }
 
     setFilteredBonsCommande(result);
-  }, [startDate, endDate, searchText, bonsCommande]);
+  }, [startDate, endDate, searchText, phoneSearch, bonsCommande]);
 
   const openDetailModal = (bonCommande: BonCommandeClient) => {
     setSelectedBonCommande(bonCommande);
@@ -663,6 +964,7 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     return numericValue.toFixed(3).replace(".", ",");
   };
 
+  // Add this near your other helper functions
   const {
     sousTotalHT,
     netHT,
@@ -681,117 +983,159 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
         discountAmount: 0,
       };
     }
-
+  
     let sousTotalHTValue = 0;
-    let netHTValue = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
-
-    // Calculate initial totals with proper rounding
+  
+    // -----------------------------
+    // ORIGINAL TOTALS
+    // -----------------------------
     selectedArticles.forEach((article) => {
       const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
-      const tvaRate = Number(article.tva) || 0;
-      const remiseRate = Number(article.remise) || 0;
-
-      let priceHT = Number(article.prixUnitaire) || 0;
-      let priceTTC = Number(article.prixTTC) || 0;
-
-      // Check for manual editing states
+      const articleRemise = Number(article.remise) || 0;
+  
+      let unitHT = Number(article.prixUnitaire) || 0;
+      let unitTTC = Number(article.prixTTC) || 0;
+  
+      // HT editing
       if (editingHT[article.article_id] !== undefined) {
-        const editingValue = parseNumericInput(editingHT[article.article_id]);
-        if (!isNaN(editingValue) && editingValue >= 0) {
-          priceHT = parseFloat(editingValue.toFixed(3));
-          const tvaAmount =
-            tvaRate > 0
-              ? parseFloat(((priceHT * tvaRate) / 100).toFixed(3))
-              : 0;
-          priceTTC = parseFloat((priceHT + tvaAmount).toFixed(3));
+        const v = parseNumericInput(editingHT[article.article_id]);
+        if (!isNaN(v) && v >= 0) {
+          unitHT = v;
+          const tvaRate = Number(article.tva) || 0;
+          unitTTC = unitHT * (1 + tvaRate / 100);
         }
-      } else if (editingTTC[article.article_id] !== undefined) {
-        const editingValue = parseNumericInput(editingTTC[article.article_id]);
-        if (!isNaN(editingValue) && editingValue >= 0) {
-          priceTTC = parseFloat(editingValue.toFixed(3));
-          if (tvaRate > 0) {
-            const coefficient = 1 + tvaRate / 100;
-            priceHT = parseFloat((priceTTC / coefficient).toFixed(3));
-          } else {
-            priceHT = priceTTC;
+      }
+      // TTC editing
+      else if (editingTTC[article.article_id] !== undefined) {
+        const v = parseNumericInput(editingTTC[article.article_id]);
+        if (!isNaN(v) && v >= 0) {
+          unitTTC = v;
+          const tvaRate = Number(article.tva) || 0;
+          unitHT = tvaRate > 0 ? unitTTC / (1 + tvaRate / 100) : unitTTC;
+        }
+      }
+  
+      const lineHT = Math.round(unitHT * 1000) / 1000;
+      const lineTTC = Math.round(unitTTC * 1000) / 1000;
+  
+      const montantSousTotalHT =
+        Math.round(qty * lineHT * 1000) / 1000;
+  
+      const montantNetHTLigne =
+        Math.round(qty * lineHT * (1 - articleRemise / 100) * 1000) / 1000;
+  
+      const montantTTCLigne =
+        Math.round(qty * lineTTC * 1000) / 1000;
+  
+      const montantTVALigne =
+        Math.round((montantTTCLigne - montantNetHTLigne) * 1000) / 1000;
+  
+      sousTotalHTValue += montantSousTotalHT;
+      totalTaxValue += montantTVALigne;
+      grandTotalValue += montantTTCLigne;
+    });
+  
+    // Base rounding
+    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
+    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
+  
+    let netHTValue = sousTotalHTValue;
+    let finalTotalValue = grandTotalValue;
+    let discountAmountValue = 0;
+  
+    // -----------------------------
+    // GLOBAL REMISE
+    // -----------------------------
+    if (showRemise && Number(globalRemise) > 0) {
+  
+      // ===== % REMISE =====
+      if (remiseType === "percentage") {
+        discountAmountValue =
+          (sousTotalHTValue * Number(globalRemise)) / 100;
+  
+        netHTValue = sousTotalHTValue - discountAmountValue;
+  
+        const ratio =
+          sousTotalHTValue > 0
+            ? totalTaxValue / sousTotalHTValue
+            : 0;
+  
+        totalTaxValue = netHTValue * ratio;
+        finalTotalValue = netHTValue + totalTaxValue;
+      }
+  
+      // ===== FIXED TTC =====
+      else if (remiseType === "fixed") {
+        finalTotalValue = Number(globalRemise);
+  
+        // 🛑 LOGICAL GUARD: TTC unchanged → NO REMISE
+        if (
+          Math.round(finalTotalValue * 1000) ===
+          Math.round(grandTotalValue * 1000)
+        ) {
+          netHTValue = sousTotalHTValue;
+          discountAmountValue = 0;
+        } else {
+          const tvaRates = Array.from(
+            new Set(selectedArticles.map(a => Number(a.tva) || 0))
+          );
+  
+          // Single TVA
+          if (tvaRates.length === 1 && tvaRates[0] > 0) {
+            const tvaRate = tvaRates[0];
+            netHTValue = finalTotalValue / (1 + tvaRate / 100);
+            totalTaxValue = finalTotalValue - netHTValue;
+          }
+          // Multiple TVA
+          else {
+            const coeff =
+              grandTotalValue > 0
+                ? finalTotalValue / grandTotalValue
+                : 1;
+  
+            let newHT = 0;
+            let newTVA = 0;
+  
+            selectedArticles.forEach((article) => {
+              const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
+              const unitHT = Number(article.prixUnitaire) || 0;
+              const tvaRate = Number(article.tva) || 0;
+  
+              const lineHT = qty * unitHT * coeff;
+              const lineTVA = lineHT * (tvaRate / 100);
+  
+              newHT += lineHT;
+              newTVA += lineTVA;
+            });
+  
+            netHTValue = newHT;
+            totalTaxValue = newTVA;
           }
         }
       }
-
-      // Calculate line amounts
-      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-      const montantNetHT =
-        Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-      const montantTVA =
-        Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-
-      sousTotalHTValue += montantSousTotalHT;
-      netHTValue += montantNetHT;
-      totalTaxValue += montantTVA;
-      grandTotalValue += montantTTCLigne;
-    });
-
-    // Round accumulated values
-    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-    netHTValue = Math.round(netHTValue * 1000) / 1000;
-    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
-    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-
-    let finalTotalValue = grandTotalValue;
-    let discountAmountValue = 0;
-    let netHTAfterDiscount = netHTValue;
-    let totalTaxAfterDiscount = totalTaxValue;
-
-    // Apply remise logic with proper rounding
-    if (showRemise && Number(globalRemise) > 0) {
-      if (remiseType === "percentage") {
-        discountAmountValue =
-          Math.round(netHTValue * (Number(globalRemise) / 100) * 1000) / 1000;
-        netHTAfterDiscount =
-          Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
-
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        totalTaxAfterDiscount =
-          Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-
-        finalTotalValue =
-          Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) /
-          1000;
-      } else if (remiseType === "fixed") {
-        finalTotalValue = Math.round(Number(globalRemise) * 1000) / 1000;
-
-        const tvaToHtRatio = totalTaxValue / netHTValue;
-        const htAfterDiscount =
-          Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) / 1000;
-
-        discountAmountValue =
-          Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-        netHTAfterDiscount = htAfterDiscount;
-        totalTaxAfterDiscount =
-          Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
-      }
+  
+      // Final rounding + SAFE remise derivation
+      netHTValue = Math.round(netHTValue * 1000) / 1000;
+      totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+      finalTotalValue = Math.round(finalTotalValue * 1000) / 1000;
+  
+      discountAmountValue =
+        Math.round((sousTotalHTValue - netHTValue) * 1000) / 1000;
     }
-
-    // Use discounted values for final display
-    const displayNetHT =
-      showRemise && Number(globalRemise) > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax =
-      showRemise && Number(globalRemise) > 0
-        ? totalTaxAfterDiscount
-        : totalTaxValue;
-
+  
     return {
-      sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-      netHT: Math.round(displayNetHT * 1000) / 1000,
-      totalTax: Math.round(displayTotalTax * 1000) / 1000,
-      grandTotal: Math.round(grandTotalValue * 1000) / 1000,
-      finalTotal: Math.round(finalTotalValue * 1000) / 1000,
-      discountAmount: Math.round(discountAmountValue * 1000) / 1000,
+      sousTotalHT: sousTotalHTValue,
+      netHT: netHTValue,
+      totalTax: totalTaxValue,
+      grandTotal: grandTotalValue,
+      finalTotal: finalTotalValue,
+      discountAmount: discountAmountValue,
     };
   }, [selectedArticles, showRemise, globalRemise, remiseType]);
+  
 
   const handleDelete = async () => {
     if (!bonCommande) return;
@@ -833,8 +1177,232 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     return Math.abs(totalPaymentAmount - finalTotal) < 0.001;
   }, [totalPaymentAmount, finalTotal, paymentMethods.length]);
 
+  // Fonction pour préparer la création de facture
+  // Fonction pour préparer la création de facture
+  const prepareFactureCreation = async (vente: BonCommandeClient) => {
+    try {
+      const nextNumero = await fetchNextFactureNumberFromAPI();
+      setNextFactureNumber(nextNumero);
+
+      setBonCommande(vente);
+      setSelectedClient(vente.client || null);
+      setSelectedArticles(
+        vente.articles.map((item: any) => ({
+          article_id: item.article?.id || 0,
+          quantite: item.quantite,
+          prixUnitaire:
+            typeof item.prixUnitaire === "string"
+              ? parseFloat(item.prixUnitaire)
+              : item.prixUnitaire,
+          prixTTC:
+            Number(item.prix_ttc) ||
+            Number(item.article?.puv_ttc) ||
+            (typeof item.prixUnitaire === "string"
+              ? parseFloat(item.prixUnitaire)
+              : item.prixUnitaire) *
+              (1 + (item.tva || 0) / 100),
+          tva:
+            item.tva != null
+              ? typeof item.tva === "string"
+                ? parseFloat(item.tva)
+                : item.tva
+              : null,
+          remise:
+            item.remise != null
+              ? typeof item.remise === "string"
+                ? parseFloat(item.remise)
+                : item.remise
+              : null,
+          articleDetails: item.article,
+        }))
+      );
+
+      // ✅ AJOUTER LA REMISE ICI
+      setGlobalRemise(Number(vente.remise) || 0);
+      setRemiseType(vente.remiseType || "percentage");
+      setShowRemise((vente.remise || 0) > 0); // Activer si > 0
+
+      // ✅ IMPORTANT: Copy payment methods from the vente
+      if (vente.paymentMethods && vente.paymentMethods.length > 0) {
+        setPaymentMethods(
+          vente.paymentMethods.map((pm: any, index: number) => ({
+            id: pm.id || `facture-${index}`,
+            method: pm.method,
+            amount: Number(pm.amount) || 0,
+            numero: pm.numero || "",
+            banque: pm.banque || "",
+            dateEcheance: pm.dateEcheance || "",
+          }))
+        );
+      } else {
+        // Fallback to the vente's payment information
+        setPaymentMethods([
+          {
+            id: "1",
+            method: vente.modeReglement || "especes",
+            amount: Number(vente.totalAfterRemise) || finalTotal,
+            numero: vente.numeroReglement || "",
+            banque: vente.banqueCheque || "",
+            dateEcheance: vente.dateEcheance || "",
+          },
+        ]);
+      }
+
+      setIsCreatingFacture(true);
+      setIsEdit(false);
+
+      // Set facture-specific fields
+      setTimbreFiscal(true);
+      setExoneration("");
+      setConditionPaiement("30 jours");
+
+      // Open the modal
+      setModal(true);
+    } catch (err) {
+      console.error("Error preparing facture:", err);
+      toast.error("Erreur lors de la préparation de la facture");
+    }
+  };
+
+  useEffect(() => {
+    if (modal && !isEdit && !isCreatingFacture) {
+      setRemiseType("fixed");
+      setGlobalRemise(0);
+    }
+  }, [modal, isEdit, isCreatingFacture]);
+  // Fonction pour soumettre la facture
+  const handleFactureSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); // PREVENT DEFAULT FORM SUBMISSION
+
+    try {
+      // Valider le dépôt
+      if (!selectedDepot) {
+        toast.error("Veuillez sélectionner un dépôt");
+        return;
+      }
+
+      // Validate required fields
+      if (!selectedClient) {
+        toast.error("Veuillez sélectionner un client");
+        return;
+      }
+
+      // Préparer les articles
+      const articlesForFacture = selectedArticles.map((item) => ({
+        article_id: item.article_id,
+        quantite: item.quantite === "" ? 0 : Number(item.quantite),
+        prix_unitaire: Number(item.prixUnitaire),
+        tva: item.tva,
+        remise: item.remise,
+        prix_ttc: Number(item.prixTTC),
+      }));
+
+      // ✅ IMPORTANT: Ne pas envoyer les paymentMethods dans la facture
+      // Les paiements restent avec la vente comptoire uniquement
+      // const processedPaymentMethods = []; // NE PAS envoyer
+
+      // Calculer les totaux
+      let sousTotalHTValue = 0;
+      let totalTaxValue = 0;
+      let grandTotalValue = 0;
+
+      selectedArticles.forEach((article) => {
+        const qty = article.quantite === "" ? 0 : Number(article.quantite) || 0;
+        const tvaRate = Number(article.tva) || 0;
+        const remiseRate = Number(article.remise) || 0;
+        const priceHT = Number(article.prixUnitaire) || 0;
+        const priceTTC = Number(article.prixTTC) || 0;
+
+        const montantHTLigne =
+          Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
+        const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
+        const taxAmount =
+          Math.round((montantTTCLigne - montantHTLigne) * 1000) / 1000;
+
+        sousTotalHTValue += montantHTLigne;
+        totalTaxValue += taxAmount;
+        grandTotalValue += montantTTCLigne;
+      });
+
+      // Appliquer remise globale
+      let finalTotalValue = grandTotalValue;
+      if (showRemise && Number(globalRemise) > 0) {
+        if (remiseType === "percentage") {
+          finalTotalValue = grandTotalValue * (1 - Number(globalRemise) / 100);
+        } else {
+          finalTotalValue = Number(globalRemise);
+        }
+      }
+
+      // Ajouter timbre fiscal
+      if (timbreFiscal) {
+        finalTotalValue += 1;
+      }
+
+      // Arrondir les totaux
+      sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
+      totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+      grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
+      finalTotalValue = Math.round(finalTotalValue * 1000) / 1000;
+
+      // Créer l'objet facture SANS paymentMethods
+      const factureData = {
+        numeroFacture: nextFactureNumber,
+        dateFacture: moment().format("YYYY-MM-DD"),
+        dateEcheance: moment().add(30, "days").format("YYYY-MM-DD"),
+        client_id: selectedClient.id,
+        vendeur_id: validation.values.vendeur_id,
+        depot_id: selectedDepot.id,
+        venteComptoire_id: bonCommande?.id, // ✅ C'est l'ID de la vente comptoire
+        status: "Brouillon",
+        conditions: "30 jours",
+        modeReglement: "Espece",
+        exoneration: "",
+        timbreFiscal: timbreFiscal,
+        articles: articlesForFacture,
+        notes: validation.values.notes,
+        remise: globalRemise,
+        remiseType: remiseType,
+        totalHT: sousTotalHTValue,
+        totalTVA: totalTaxValue,
+        totalTTC: grandTotalValue,
+        totalTTCAfterRemise: finalTotalValue,
+        // ❌ NE PAS inclure les paymentMethods ici
+        // paymentMethods: [], // Pas besoin d'envoyer
+        totalPaymentAmount: 0, // 0 car pas de paiements à la création
+        montantPaye: 0,
+        resteAPayer: finalTotalValue,
+        hasRetenue: false,
+        montantRetenue: 0,
+      };
+
+      console.log("Facture data being sent:", factureData);
+
+      // Appeler l'API
+      await createFacture(factureData);
+
+      toast.success("Facture créée avec succès");
+
+      // Fermer et réinitialiser
+      toggleModal();
+      setIsCreatingFacture(false);
+      fetchData();
+    } catch (err) {
+      console.error("Error creating facture:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Échec de création de la facture"
+      );
+    }
+  };
+
+  // Modifiez votre handleSubmit existant
+
   const handleSubmit = async (values: any) => {
     try {
+      if (isCreatingFacture) {
+        await handleFactureSubmit(values);
+        return;
+      }
       // For single payment method, auto-set amount to finalTotal
       const processedPaymentMethods = paymentMethods.map((pm) => {
         if (paymentMethods.length === 1) {
@@ -861,11 +1429,13 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
       const venteData = {
         ...values,
         taxMode,
+        depot_id: selectedDepot?.id, //
         client_id: selectedClient?.id,
         articles: selectedArticles.map((item) => ({
           article_id: item.article_id,
           quantite: item.quantite,
           prix_unitaire: item.prixUnitaire,
+          prix_ttc: item.prixTTC,
           tva: item.tva,
           remise: item.remise,
         })),
@@ -909,6 +1479,7 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
         : moment().format("YYYY-MM-DD"),
       client_id: bonCommande?.client?.id ?? "",
       vendeur_id: bonCommande?.vendeur?.id ?? "",
+      depot_id: bonCommande?.depot_id ?? "", // ADD THIS
       notes: bonCommande?.notes ?? "",
       // Add payment method fields
       modeReglement: bonCommande?.modeReglement || "especes",
@@ -924,6 +1495,8 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
       dateCommande: Yup.date().required("La date de commande est requise"),
       client_id: Yup.number().required("Le client est requis"),
       vendeur_id: Yup.number().required("Le vendeur est requis"),
+      // depot_id: Yup.number().required("Le dépôt est requis"), // ADD THIS
+
       // Payment validation - SIMPLIFIED
       numeroReglement: Yup.string(),
       banqueCheque: Yup.string(),
@@ -934,31 +1507,59 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
 
   const toggleModal = useCallback(() => {
     if (modal) {
+      // Clear all search results when closing modal
+      setFilteredArticles([]);
+      setFilteredClients([]);
+      setArticleSearch("");
+      setClientSearch("");
+      setFocusedIndex(-1);
+
       setModal(false);
       setBonCommande(null);
       setSelectedArticles([]);
       setSelectedClient(null);
+      setSelectedDepot(null);
       setGlobalRemise(0);
-      setRemiseType("percentage");
+      setRemiseType("fixed");
       setShowRemise(false);
+      setIsCreatingFacture(false);
+      setTimbreFiscal(true);
+      setPhoneSearch(""); // Add this line
+
+      setExoneration("");
+      setConditionPaiement("30 jours");
+
       // Reset payment states
-      setModeReglement("especes");
-      setNumeroReglement("");
-      setDateEcheance(moment().format("YYYY-MM-DD"));
-      setBanqueCheque("");
-      setEspaceNotes("");
-      setMontantVirement(0);
+      setPaymentMethods([
+        {
+          id: "1",
+          method: "especes",
+          amount: 0,
+        },
+      ]);
       validation.resetForm();
+
+      // Reset modal loading state
+      setModalLoading(false);
     } else {
       setModal(true);
+      // Don't load modal data here - useEffect will handle it
     }
   }, [modal]);
 
+  // Replace the current handleAddArticle function with this:
   const handleAddArticle = (articleId: string) => {
-    const article = articles.find((a) => a.id === parseInt(articleId));
+    // First, try to find the article in filteredArticles (from search results)
+    let article = filteredArticles.find((a) => a.id === parseInt(articleId));
+
+    // If not found in filteredArticles, try the main articles array
+    if (!article) {
+      article = articles.find((a) => a.id === parseInt(articleId));
+    }
+
     if (
       article &&
-      !selectedArticles.some((item) => item.article_id === article.id)
+      !selectedArticles.some((item) => item.article_id === article?.id)
     ) {
       const initialHT = article.puv_ht || 0;
       const initialTVA = article.tva || 0;
@@ -978,6 +1579,16 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
           articleDetails: article,
         },
       ]);
+
+      // Clear the search input and results after adding
+      setArticleSearch("");
+      setFilteredArticles([]);
+      setFocusedIndex(-1);
+
+      // Optionally, focus back on the search input
+      if (articleSearchRef.current) {
+        articleSearchRef.current.focus();
+      }
     }
   };
   const handleRemoveArticle = (articleId: number) => {
@@ -1071,66 +1682,177 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
     }
   };
 
+  // Barcode scanning handler
+  const handleBarcodeScan = useCallback(
+    (barcode: string) => {
+      if (!barcode.trim()) return;
 
+      console.log("Code-barres scanné:", barcode);
+
+      // Clean the barcode
+      const cleanBarcode = barcode.trim();
+
+      // Search for article by code_barre
+      const scannedArticle = articles.find(
+        (article) => article.code_barre === cleanBarcode
+      );
+
+      if (scannedArticle) {
+        const existingArticle = selectedArticles.find(
+          (item) => item.article_id === scannedArticle.id
+        );
+
+        if (existingArticle) {
+          // Increment quantity if article already exists
+          handleArticleChange(
+            scannedArticle.id,
+            "quantite",
+            (Number(existingArticle.quantite) || 0) + 1
+          );
+          toast.success(
+            `Quantité augmentée pour "${scannedArticle.designation}"`
+          );
+        } else {
+          // Add new article
+          const initialHT = scannedArticle.puv_ht || 0;
+          const initialTVA = scannedArticle.tva || 0;
+          const initialTTC =
+            scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+
+          setSelectedArticles((prev) => [
+            ...prev,
+            {
+              article_id: scannedArticle.id,
+              quantite: 1,
+              prixUnitaire: initialHT,
+              tva: initialTVA,
+              remise: 0,
+              prixTTC: Math.round(initialTTC * 1000) / 1000,
+              articleDetails: scannedArticle,
+            },
+          ]);
+          toast.success(`Article "${scannedArticle.designation}" ajouté`);
+        }
+
+        // Focus on article search input after scanning
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      } else {
+        toast.error(`Article avec code ${cleanBarcode} non trouvé`);
+      }
+    },
+    [articles, selectedArticles, handleArticleChange]
+  );
+
+  const handleKeyPress = useCallback(
+    (event: KeyboardEvent) => {
+      // Check if user is typing in an input field
+      const target = event.target as HTMLElement;
+      const isInputField =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      if (isInputField) {
+        // Allow normal typing in input fields
+        return;
+      }
+
+      // Barcode scanner handling
+      if (event.key === "Enter") {
+        if (barcodeInput.length > 0) {
+          handleBarcodeScan(barcodeInput);
+          setBarcodeInput("");
+        }
+      } else if (event.key.length === 1) {
+        // Accumulate characters
+        setBarcodeInput((prev) => prev + event.key);
+
+        // Reset timeout
+        if (scanningTimeout) {
+          clearTimeout(scanningTimeout);
+        }
+
+        const newTimeout = setTimeout(() => {
+          if (barcodeInput.length >= 3) {
+            handleBarcodeScan(barcodeInput);
+          }
+          setBarcodeInput("");
+        }, 150);
+
+        setScanningTimeout(newTimeout);
+      }
+    },
+    [barcodeInput, scanningTimeout, handleBarcodeScan]
+  );
+
+  // Set up keyboard listener for barcode scanning
+  useEffect(() => {
+    // Always listen for barcode scanning
+    document.addEventListener("keydown", handleKeyPress);
+    console.log("Scanner automatique activé - prêt à scanner...");
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyPress);
+      if (scanningTimeout) {
+        clearTimeout(scanningTimeout);
+      }
+    };
+  }, [handleKeyPress, scanningTimeout]);
+
+  // Focus management for modal
+  useEffect(() => {
+    if (modal && articleSearchRef.current) {
+      // Focus on article search input when modal opens
+      setTimeout(() => {
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      }, 100);
+    }
+  }, [modal]);
   // Add these effects after your other effects
-useEffect(() => {
-  // Scroll to focused item
-  if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
-    const item = itemRefs[focusedIndex].current;
-    const dropdown = dropdownRef;
-    
-    if (item && dropdown) {
-      const itemTop = item.offsetTop;
-      const itemBottom = itemTop + item.offsetHeight;
-      const dropdownTop = dropdown.scrollTop;
-      const dropdownBottom = dropdownTop + dropdown.clientHeight;
-      
-      if (itemTop < dropdownTop) {
-        dropdown.scrollTop = itemTop;
-      } else if (itemBottom > dropdownBottom) {
-        dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+  useEffect(() => {
+    // Scroll to focused item
+    if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+      const item = itemRefs[focusedIndex].current;
+      const dropdown = dropdownRef;
+
+      if (item && dropdown) {
+        const itemTop = item.offsetTop;
+        const itemBottom = itemTop + item.offsetHeight;
+        const dropdownTop = dropdown.scrollTop;
+        const dropdownBottom = dropdownTop + dropdown.clientHeight;
+
+        if (itemTop < dropdownTop) {
+          dropdown.scrollTop = itemTop;
+        } else if (itemBottom > dropdownBottom) {
+          dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+        }
       }
     }
-  }
-}, [focusedIndex, dropdownRef, itemRefs]);
+  }, [focusedIndex, dropdownRef, itemRefs]);
 
-useEffect(() => {
-  // Reset item refs when filtered articles change
-  setItemRefs(filteredArticles.map(() => React.createRef()));
-  setFocusedIndex(-1); // Reset focus
-}, [filteredArticles]);
+  useEffect(() => {
+    // Reset item refs when filtered articles change
+    setItemRefs(filteredArticles.map(() => React.createRef()));
+    setFocusedIndex(-1); // Reset focus
+  }, [filteredArticles]);
 
-useEffect(() => {
-  const handleClickOutside = (e: MouseEvent) => {
-    if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
-      setFilteredArticles([]);
-      setFocusedIndex(-1);
-    }
-  };
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+        setFilteredArticles([]);
+        setFocusedIndex(-1);
+      }
+    };
 
-  document.addEventListener('mousedown', handleClickOutside);
-  return () => {
-    document.removeEventListener('mousedown', handleClickOutside);
-  };
-}, [dropdownRef]);
-
-useEffect(() => {
-  if (articleSearch.length >= 3) {
-    const filtered = articles.filter(
-      (article) =>
-        article.designation
-          .toLowerCase()
-          .includes(articleSearch.toLowerCase()) ||
-        article.reference.toLowerCase().includes(articleSearch.toLowerCase())
-    );
-    setFilteredArticles(filtered);
-    setFocusedIndex(-1); // Reset focus on new search
-  } else {
-    setFilteredArticles([]);
-    setFocusedIndex(-1);
-  }
-}, [articleSearch, articles]);
-
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownRef]);
 
   const columns = useMemo(
     () => [
@@ -1256,6 +1978,12 @@ useEffect(() => {
                   onClick={() => {
                     setBonCommande(bonCommande);
                     setSelectedClient(bonCommande.client);
+                    // In your edit button click handler:
+                    setSelectedDepot(
+                      bonCommande.depot ||
+                        depots.find((d) => d.id === bonCommande.depot_id) ||
+                        null
+                    );
                     setSelectedArticles(
                       bonCommande.articles.map((item: any) => ({
                         article_id: item.article.id,
@@ -1357,7 +2085,7 @@ useEffect(() => {
         onCloseClick={() => setDeleteModal(false)}
       />
 
-      <Container fluid>
+      <Container fluid style={{ maxWidth: "100%" }}>
         <BreadCrumb title="Vente Comptoire" pageTitle="Commandes" />
 
         <Row>
@@ -1372,6 +2100,18 @@ useEffect(() => {
                   </div>
                   <div className="col-sm-auto">
                     <div className="d-flex gap-1 flex-wrap">
+                      <Button
+                        color="info"
+                        onClick={() => {
+                          setStartDate(null);
+                          setEndDate(null);
+                          setSearchText("");
+                          setPhoneSearch("");
+                        }}
+                      >
+                        <i className="ri-close-line align-bottom me-1"></i>{" "}
+                        Réinitialiser tous les filtres
+                      </Button>
                       <Button
                         color="secondary"
                         onClick={() => {
@@ -1396,16 +2136,40 @@ useEffect(() => {
 
               <CardBody className="pt-3">
                 <Row className="mb-3">
-                  <Col md={4}>
+                  <Col md={3}>
                     <div className="search-box">
                       <Input
                         type="text"
                         className="form-control"
-                        placeholder="Rechercher..."
+                        placeholder="Rechercher par numéro vente, client..."
                         value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
+                        onChange={(e) => {
+                          setSearchText(e.target.value);
+                        }}
                       />
                       <i className="ri-search-line search-icon"></i>
+                    </div>
+                  </Col>
+                  <Col md={3}>
+                    <div className="search-box">
+                      <Input
+                        type="text"
+                        className="form-control"
+                        placeholder="Rechercher par téléphone..."
+                        value={phoneSearch}
+                        onChange={(e) => {
+                          const value = e.target.value;
+
+                          // Apply auto-space formatting for phone numbers
+                          if (value) {
+                            const formatted = formatPhoneInput(value);
+                            setPhoneSearch(formatted);
+                          } else {
+                            setPhoneSearch("");
+                          }
+                        }}
+                      />
+                      <i className="ri-phone-line search-icon"></i>
                     </div>
                   </Col>
                   <Col md={3}>
@@ -1438,20 +2202,6 @@ useEffect(() => {
                       />
                     </InputGroup>
                   </Col>
-                  <Col md={2}>
-                    <Button
-                      color="light"
-                      className="w-100"
-                      onClick={() => {
-                        setStartDate(null);
-                        setEndDate(null);
-                        setSearchText("");
-                      }}
-                    >
-                      <i className="ri-close-line align-bottom me-1"></i>{" "}
-                      Réinitialiser
-                    </Button>
-                  </Col>
                 </Row>
 
                 {loading ? (
@@ -1470,566 +2220,760 @@ useEffect(() => {
                   />
                 )}
 
-<Modal
-  isOpen={detailModal}
-  toggle={() => setDetailModal(false)}
-  size="xl"
-  centered
-  className="invoice-modal"
->
-  <ModalHeader
-    toggle={() => setDetailModal(false)}
-    className="border-0 pb-3"
-  >
-    <div className="d-flex align-items-center">
-      <div className="modal-icon-wrapper bg-info bg-opacity-10 rounded-circle p-2 me-3">
-        <i className="ri-eye-line text-info fs-4"></i>
-      </div>
-      <div>
-        <h4 className="mb-0 fw-bold text-dark">
-          Vente Comptoire #{selectedBonCommande?.numeroCommande}
-        </h4>
-        <small className="text-muted">
-          {moment(selectedBonCommande?.dateCommande).format("DD MMM YYYY")}
-        </small>
-      </div>
-    </div>
-  </ModalHeader>
-
-  <ModalBody className="pt-0">
-    {selectedBonCommande && (
-      <div className="bon-livraison-details">
-        <Row className="g-3 mb-4">
-          <Col md={6}>
-            <Card className="border-0 shadow-sm h-100">
-              <CardBody className="p-4">
-                <h6 className="fw-semibold mb-3 text-primary">
-                  <i className="ri-user-line me-2"></i>
-                  Informations Client
-                </h6>
-
-                <div className="client-info">
-                  {selectedBonCommande.client ? (
-                    <>
-                      <div className="mb-2">
-                        <strong className="text-dark fs-6">
-                          {selectedBonCommande.client.raison_sociale}
-                        </strong>
+                <Modal
+                  isOpen={detailModal}
+                  toggle={() => setDetailModal(false)}
+                  size="xl"
+                  centered
+                  className="invoice-modal"
+                >
+                  <ModalHeader
+                    toggle={() => setDetailModal(false)}
+                    className="border-0 pb-3"
+                  >
+                    <div className="d-flex align-items-center">
+                      <div className="modal-icon-wrapper bg-info bg-opacity-10 rounded-circle p-2 me-3">
+                        <i className="ri-eye-line text-info fs-4"></i>
                       </div>
-                      {selectedBonCommande.client.designation && (
-                        <div className="mb-2">
-                          <small className="text-muted">
-                            {selectedBonCommande.client.designation}
-                          </small>
-                        </div>
-                      )}
-                      {selectedBonCommande.client.telephone1 && (
-                        <div className="mb-1">
-                          <i className="ri-phone-line me-2 text-muted"></i>
-                          <span className="text-dark">
-                            {formatPhoneDisplay(selectedBonCommande.client.telephone1)}
-                          </span>
-                        </div>
-                      )}
-                      {selectedBonCommande.client.telephone2 && (
-                        <div className="mb-1">
-                          <i className="ri-phone-line me-2 text-muted"></i>
-                          <span className="text-dark">
-                            {formatPhoneDisplay(selectedBonCommande.client.telephone2)}
-                          </span>
-                        </div>
-                      )}
-                      {selectedBonCommande.client.email && (
-                        <div className="mb-1">
-                          <i className="ri-mail-line me-2 text-muted"></i>
-                          <span className="text-dark">
-                            {selectedBonCommande.client.email}
-                          </span>
-                        </div>
-                      )}
-                      {selectedBonCommande.client.adresse && (
-                        <div className="mb-1">
-                          <i className="ri-map-pin-line me-2 text-muted"></i>
-                          <span className="text-dark">
-                            {selectedBonCommande.client.adresse}
-                            {selectedBonCommande.client.ville && `, ${selectedBonCommande.client.ville}`}
-                            {selectedBonCommande.client.code_postal && `, ${selectedBonCommande.client.code_postal}`}
-                          </span>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-muted">
-                      <i className="ri-user-unfollow-line me-2"></i>
-                      Aucun client associé
+                      <div>
+                        <h4 className="mb-0 fw-bold text-dark">
+                          Vente Comptoire #{selectedBonCommande?.numeroCommande}
+                        </h4>
+                        <small className="text-muted">
+                          {moment(selectedBonCommande?.dateCommande).format(
+                            "DD MMM YYYY"
+                          )}
+                        </small>
+                      </div>
                     </div>
-                  )}
-                </div>
-              </CardBody>
-            </Card>
-          </Col>
+                  </ModalHeader>
 
-          <Col md={6}>
-            <Card className="border-0 shadow-sm h-100">
-              <CardBody className="p-4">
-                <h6 className="fw-semibold mb-3 text-primary">
-                  <i className="ri-information-line me-2"></i>
-                  Informations Vente
-                </h6>
-                <div className="row g-2">
-                  <div className="col-6">
-                    <p className="mb-2">
-                      <span className="text-muted d-block">Vendeur:</span>
-                      <strong>
-                        {selectedBonCommande.vendeur
-                          ? `${selectedBonCommande.vendeur.nom} ${selectedBonCommande.vendeur.prenom}`
-                          : "N/A"}
-                      </strong>
-                    </p>
-                  </div>
-                  <div className="col-6">
-                    <p className="mb-2">
-                      <span className="text-muted d-block">Statut:</span>
-                      <Badge color="success" className="text-uppercase">
-                        Terminé
-                      </Badge>
-                    </p>
-                  </div>
-                  <div className="col-6">
-                    <p className="mb-2">
-                      <span className="text-muted d-block">Date:</span>
-                      <strong>
-                        {moment(selectedBonCommande.dateCommande).format("DD/MM/YYYY")}
-                      </strong>
-                    </p>
-                  </div>
-                  <div className="col-6">
-                    <p className="mb-2">
-                      <span className="text-muted d-block">Numéro:</span>
-                      <strong>{selectedBonCommande.numeroCommande}</strong>
-                    </p>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-          </Col>
-        </Row>
+                  <ModalBody className="pt-0">
+                    {selectedBonCommande && (
+                      <div className="bon-livraison-details">
+                        <Row className="g-3 mb-4">
+                          <Col md={6}>
+                            <Card className="border-0 shadow-sm h-100">
+                              <CardBody className="p-4">
+                                <h6 className="fw-semibold mb-3 text-primary">
+                                  <i className="ri-user-line me-2"></i>
+                                  Informations Client
+                                </h6>
 
-        {selectedBonCommande.notes && (
-          <Card className="border-0 shadow-sm mb-4">
-            <CardBody className="p-4">
-              <h6 className="fw-semibold mb-3 text-primary">
-                <i className="ri-sticky-note-line me-2"></i>
-                Notes
-              </h6>
-              <p className="mb-0 text-muted">{selectedBonCommande.notes}</p>
-            </CardBody>
-          </Card>
-        )}
+                                <div className="client-info">
+                                  {selectedBonCommande.client ? (
+                                    <>
+                                      <div className="mb-2">
+                                        <strong className="text-dark fs-6">
+                                          {
+                                            selectedBonCommande.client
+                                              .raison_sociale
+                                          }
+                                        </strong>
+                                      </div>
+                                      {selectedBonCommande.client
+                                        .designation && (
+                                        <div className="mb-2">
+                                          <small className="text-muted">
+                                            {
+                                              selectedBonCommande.client
+                                                .designation
+                                            }
+                                          </small>
+                                        </div>
+                                      )}
+                                      {selectedBonCommande.client
+                                        .telephone1 && (
+                                        <div className="mb-1">
+                                          <i className="ri-phone-line me-2 text-muted"></i>
+                                          <span className="text-dark">
+                                            {formatPhoneDisplay(
+                                              selectedBonCommande.client
+                                                .telephone1
+                                            )}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {selectedBonCommande.client
+                                        .telephone2 && (
+                                        <div className="mb-1">
+                                          <i className="ri-phone-line me-2 text-muted"></i>
+                                          <span className="text-dark">
+                                            {formatPhoneDisplay(
+                                              selectedBonCommande.client
+                                                .telephone2
+                                            )}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {selectedBonCommande.client.email && (
+                                        <div className="mb-1">
+                                          <i className="ri-mail-line me-2 text-muted"></i>
+                                          <span className="text-dark">
+                                            {selectedBonCommande.client.email}
+                                          </span>
+                                        </div>
+                                      )}
+                                      {selectedBonCommande.client.adresse && (
+                                        <div className="mb-1">
+                                          <i className="ri-map-pin-line me-2 text-muted"></i>
+                                          <span className="text-dark">
+                                            {selectedBonCommande.client.adresse}
+                                            {selectedBonCommande.client.ville &&
+                                              `, ${selectedBonCommande.client.ville}`}
+                                            {selectedBonCommande.client
+                                              .code_postal &&
+                                              `, ${selectedBonCommande.client.code_postal}`}
+                                          </span>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <div className="text-muted">
+                                      <i className="ri-user-unfollow-line me-2"></i>
+                                      Aucun client associé
+                                    </div>
+                                  )}
+                                </div>
+                              </CardBody>
+                            </Card>
+                          </Col>
 
-        <Card className="border-0 shadow-sm">
-          <CardBody className="p-0">
-            <div className="table-responsive">
-              <Table className="table table-hover mb-0">
-                <thead className="table-dark">
-                  <tr>
-                    <th className="ps-4">Article</th>
-                    <th>Référence</th>
-                    <th className="text-end">Quantité</th>
-                    <th className="text-end">Prix Unitaire HT</th>
-                    <th className="text-end">Prix Unitaire TTC</th>
-                    <th className="text-end">TVA (%)</th>
-                    <th className="text-end">Remise (%)</th>
-                    <th className="text-end">Total HT</th>
-                    <th className="text-end pe-4">Total TTC</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedBonCommande.articles.map((item, index) => {
-                    const quantite = Number(item.quantite) || 0;
-                    const priceHT = Number(item.prixUnitaire) || 0;
-                    const tvaRate = Number(item.tva ?? 0);
-                    const remiseRate = Number(item.remise || 0);
+                          <Col md={6}>
+                            <Card className="border-0 shadow-sm h-100">
+                              <CardBody className="p-4">
+                                <h6 className="fw-semibold mb-3 text-primary">
+                                  <i className="ri-information-line me-2"></i>
+                                  Informations Vente
+                                </h6>
+                                <div className="row g-2">
+                                  <div className="col-6">
+                                    <p className="mb-2">
+                                      <span className="text-muted d-block">
+                                        Vendeur:
+                                      </span>
+                                      <strong>
+                                        {selectedBonCommande.vendeur
+                                          ? `${selectedBonCommande.vendeur.nom} ${selectedBonCommande.vendeur.prenom}`
+                                          : "N/A"}
+                                      </strong>
+                                    </p>
+                                  </div>
+                                  <div className="col-6">
+                                    <p className="mb-2">
+                                      <span className="text-muted d-block">
+                                        Dépôt:
+                                      </span>
+                                   Magazin Royal lumiere
+                                    </p>
+                                  </div>
+                                  <div className="col-6">
+                                    <p className="mb-2">
+                                      <span className="text-muted d-block">
+                                        Date:
+                                      </span>
+                                      <strong>
+                                        {moment(
+                                          selectedBonCommande.dateCommande
+                                        ).format("DD/MM/YYYY")}
+                                      </strong>
+                                    </p>
+                                  </div>
+                                  <div className="col-6">
+                                    <p className="mb-2">
+                                      <span className="text-muted d-block">
+                                        Numéro:
+                                      </span>
+                                      <strong>
+                                        {selectedBonCommande.numeroCommande}
+                                      </strong>
+                                    </p>
+                                  </div>
+                                </div>
+                              </CardBody>
+                            </Card>
+                          </Col>
+                        </Row>
 
-                    const priceTTC =
-                      Number(item.prix_ttc) ||
-                      Number(item.article?.puv_ttc) ||
-                      priceHT * (1 + tvaRate / 100);
-
-                    const montantSousTotalHT =
-                      Math.round(quantite * priceHT * 1000) / 1000;
-                    const montantNetHT =
-                      Math.round(
-                        quantite * priceHT * (1 - remiseRate / 100) * 1000
-                      ) / 1000;
-                    const montantTTCLigne =
-                      Math.round(quantite * priceTTC * 1000) / 1000;
-
-                    return (
-                      <tr
-                        key={index}
-                        className={index % 2 === 0 ? "bg-light" : ""}
-                      >
-                        <td className="ps-4">
-                          <div className="d-flex align-items-center">
-                            <div className="flex-grow-1">
-                              <h6 className="mb-0 fw-semibold fs-6">
-                                {item.article?.designation}
+                        {selectedBonCommande.notes && (
+                          <Card className="border-0 shadow-sm mb-4">
+                            <CardBody className="p-4">
+                              <h6 className="fw-semibold mb-3 text-primary">
+                                <i className="ri-sticky-note-line me-2"></i>
+                                Notes
                               </h6>
+                              <p className="mb-0 text-muted">
+                                {selectedBonCommande.notes}
+                              </p>
+                            </CardBody>
+                          </Card>
+                        )}
+
+                        <Card className="border-0 shadow-sm">
+                          <CardBody className="p-0">
+                            <div className="table-responsive">
+                              <Table className="table table-hover mb-0">
+                                <thead className="table-dark">
+                                  <tr>
+                                    <th className="ps-4">Article</th>
+                                    <th>Référence</th>
+                                    <th className="text-end">Quantité</th>
+                                    <th className="text-end">
+                                      Prix Unitaire HT
+                                    </th>
+                                    <th className="text-end">
+                                      Prix Unitaire TTC
+                                    </th>
+                                    <th className="text-end">TVA (%)</th>
+                                    <th className="text-end">Remise (%)</th>
+                                    <th className="text-end">Total HT</th>
+                                    <th className="text-end pe-4">Total TTC</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedBonCommande.articles.map(
+                                    (item, index) => {
+                                      const quantite =
+                                        Number(item.quantite) || 0;
+                                      const priceHT =
+                                        Number(item.prixUnitaire) || 0;
+                                      const tvaRate = Number(item.tva ?? 0);
+                                      const remiseRate = Number(
+                                        item.remise || 0
+                                      );
+
+                                      const priceTTC =
+                                        Number(item.prix_ttc) ||
+                                        Number(item.article?.puv_ttc) ||
+                                        priceHT * (1 + tvaRate / 100);
+
+                                      const montantSousTotalHT =
+                                        Math.round(quantite * priceHT * 1000) /
+                                        1000;
+                                      const montantNetHT =
+                                        Math.round(
+                                          quantite *
+                                            priceHT *
+                                            (1 - remiseRate / 100) *
+                                            1000
+                                        ) / 1000;
+                                      const montantTTCLigne =
+                                        Math.round(quantite * priceTTC * 1000) /
+                                        1000;
+
+                                      return (
+                                        <tr
+                                          key={index}
+                                          className={
+                                            index % 2 === 0 ? "bg-light" : ""
+                                          }
+                                        >
+                                          <td className="ps-4">
+                                            <div className="d-flex align-items-center">
+                                              <div className="flex-grow-1">
+                                                <h6 className="mb-0 fw-semibold fs-6">
+                                                  {item.article?.designation}
+                                                </h6>
+                                              </div>
+                                            </div>
+                                          </td>
+                                          <td>
+                                            <Badge
+                                              color="light"
+                                              className="text-dark"
+                                            >
+                                              {item.article?.reference || "-"}
+                                            </Badge>
+                                          </td>
+                                          <td className="text-end fw-semibold">
+                                            {quantite}
+                                          </td>
+                                          <td className="text-end">
+                                            {priceHT.toFixed(3)} DT
+                                          </td>
+                                          <td className="text-end">
+                                            {priceTTC.toFixed(3)} DT
+                                          </td>
+                                          <td className="text-end">
+                                            {tvaRate}%
+                                          </td>
+                                          <td className="text-end">
+                                            {remiseRate}%
+                                          </td>
+                                          <td className="text-end fw-semibold">
+                                            {montantNetHT.toFixed(3)} DT
+                                          </td>
+                                          <td className="text-end pe-4 fw-semibold text-primary">
+                                            {montantTTCLigne.toFixed(3)} DT
+                                          </td>
+                                        </tr>
+                                      );
+                                    }
+                                  )}
+                                </tbody>
+                              </Table>
                             </div>
-                          </div>
-                        </td>
-                        <td>
-                          <Badge color="light" className="text-dark">
-                            {item.article?.reference || "-"}
-                          </Badge>
-                        </td>
-                        <td className="text-end fw-semibold">{quantite}</td>
-                        <td className="text-end">{priceHT.toFixed(3)} DT</td>
-                        <td className="text-end">{priceTTC.toFixed(3)} DT</td>
-                        <td className="text-end">{tvaRate}%</td>
-                        <td className="text-end">{remiseRate}%</td>
-                        <td className="text-end fw-semibold">
-                          {montantNetHT.toFixed(3)} DT
-                        </td>
-                        <td className="text-end pe-4 fw-semibold text-primary">
-                          {montantTTCLigne.toFixed(3)} DT
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </Table>
-            </div>
 
-            <div className="border-top p-4">
-              <Row className="justify-content-end">
-                <Col xs={8} sm={6} md={5} lg={4}>
-                  {(() => {
-                    let sousTotalHTValue = 0;
-                    let netHTValue = 0;
-                    let totalTaxValue = 0;
-                    let grandTotalValue = 0;
+                            <div className="border-top p-4">
+                              <Row className="justify-content-end">
+                                <Col xs={8} sm={6} md={5} lg={4}>
+                                  {(() => {
+                                    let sousTotalHTValue = 0;
+                                    let totalTaxValue = 0;
+                                    let grandTotalValue = 0;
 
-                    selectedBonCommande.articles.forEach((article) => {
-                      const qty = Number(article.quantite) || 0;
-                      const tvaRate = Number(article.tva ?? 0);
-                      const remiseRate = Number(article.remise || 0);
+                                    // Calculate original totals
+                                    selectedBonCommande.articles.forEach(
+                                      (article: any) => {
+                                        const qty =
+                                          Number(article.quantite) || 0;
+                                        const articleRemise =
+                                          Number(article.remise) || 0;
 
-                      const priceHT = Number(article.prixUnitaire) || 0;
-                      const priceTTC =
-                        Number(article.prix_ttc) ||
-                        Number(article.article?.puv_ttc) ||
-                        priceHT * (1 + tvaRate / 100);
+                                        const unitHT =
+                                          Number(article.prixUnitaire) || 0;
+                                        const tvaRate = Number(
+                                          article.tva ?? 0
+                                        );
+                                        const unitTTC =
+                                          Number(article.prix_ttc) !== 0
+                                            ? Number(article.prix_ttc)
+                                            : Number(
+                                                article.article?.puv_ttc
+                                              ) || unitHT * (1 + tvaRate / 100);
 
-                      const montantSousTotalHT =
-                        Math.round(qty * priceHT * 1000) / 1000;
-                      const montantNetHT =
-                        Math.round(
-                          qty * priceHT * (1 - remiseRate / 100) * 1000
-                        ) / 1000;
-                      const montantTTCLigne =
-                        Math.round(qty * priceTTC * 1000) / 1000;
-                      const montantTVA =
-                        Math.round((montantTTCLigne - montantNetHT) * 1000) /
-                        1000;
+                                        // Round to 3 decimals
+                                        const round = (num: number) =>
+                                          Math.round(num * 1000) / 1000;
 
-                      sousTotalHTValue += montantSousTotalHT;
-                      netHTValue += montantNetHT;
-                      totalTaxValue += montantTVA;
-                      grandTotalValue += montantTTCLigne;
-                    });
+                                        const montantSousTotalHT = round(
+                                          qty * unitHT
+                                        );
+                                        const montantNetHTLigne = round(
+                                          qty *
+                                            unitHT *
+                                            (1 - articleRemise / 100)
+                                        );
+                                        const montantTTCLigne = round(
+                                          qty * unitTTC
+                                        );
+                                        const montantTVALigne = round(
+                                          montantTTCLigne - montantNetHTLigne
+                                        );
 
-                    sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-                    netHTValue = Math.round(netHTValue * 1000) / 1000;
-                    totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
-                    grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
+                                        sousTotalHTValue += montantSousTotalHT;
+                                        totalTaxValue += montantTVALigne;
+                                        grandTotalValue += montantTTCLigne;
+                                      }
+                                    );
 
-                    const remiseValue = Number(selectedBonCommande.remise) || 0;
-                    const remiseTypeValue = selectedBonCommande.remiseType || "percentage";
+                                    // Round totals
+                                    sousTotalHTValue =
+                                      Math.round(sousTotalHTValue * 1000) /
+                                      1000;
+                                    totalTaxValue =
+                                      Math.round(totalTaxValue * 1000) / 1000;
+                                    grandTotalValue =
+                                      Math.round(grandTotalValue * 1000) / 1000;
 
-                    let finalTotalValue = grandTotalValue;
-                    let discountAmountValue = 0;
-                    let netHTAfterDiscount = netHTValue;
-                    let totalTaxAfterDiscount = totalTaxValue;
-                    let discountPercentage = 0;
+                                    const remiseValue =
+                                      Number(selectedBonCommande.remise) || 0;
+                                    const remiseTypeValue =
+                                      selectedBonCommande.remiseType ||
+                                      "percentage";
 
-                    if (remiseValue > 0) {
-                      if (remiseTypeValue === "percentage") {
-                        discountAmountValue =
-                          Math.round(netHTValue * (remiseValue / 100) * 1000) /
-                          1000;
-                        netHTAfterDiscount =
-                          Math.round((netHTValue - discountAmountValue) * 1000) /
-                          1000;
+                                    let finalTotalValue = grandTotalValue;
+                                    let discountAmountValue = 0;
+                                    let netHTValue = sousTotalHTValue;
+                                    let displayTotalTax = totalTaxValue;
+                                    let discountPercentage = 0;
 
-                        const discountRatio = netHTAfterDiscount / netHTValue;
-                        totalTaxAfterDiscount =
-                          Math.round(totalTaxValue * discountRatio * 1000) / 1000;
+                                    if (remiseValue > 0) {
+                                      if (remiseTypeValue === "percentage") {
+                                        // Percentage discount
+                                        discountAmountValue =
+                                          (sousTotalHTValue * remiseValue) /
+                                          100;
+                                        netHTValue =
+                                          sousTotalHTValue -
+                                          discountAmountValue;
 
-                        finalTotalValue =
-                          Math.round(
-                            (netHTAfterDiscount + totalTaxAfterDiscount) * 1000
-                          ) / 1000;
-                      } else if (remiseTypeValue === "fixed") {
-                        finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
+                                        const tvaToHtRatio =
+                                          sousTotalHTValue > 0
+                                            ? totalTaxValue / sousTotalHTValue
+                                            : 0;
+                                        displayTotalTax =
+                                          netHTValue * tvaToHtRatio;
+                                        finalTotalValue =
+                                          netHTValue + displayTotalTax;
 
-                        const tvaToHtRatio = totalTaxValue / netHTValue;
-                        const htAfterDiscount =
-                          Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) /
-                          1000;
+                                        discountPercentage = remiseValue;
+                                      } else if (remiseTypeValue === "fixed") {
+                                        // Fixed discount
+                                        finalTotalValue = remiseValue;
 
-                        discountAmountValue =
-                          Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-                        netHTAfterDiscount = htAfterDiscount;
-                        totalTaxAfterDiscount =
-                          Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+                                        // Find unique TVA rates
+                                        const tvaRates = Array.from(
+                                          new Set(
+                                            selectedBonCommande.articles.map(
+                                              (a: any) => Number(a.tva ?? 0)
+                                            )
+                                          )
+                                        );
 
-                        discountPercentage =
-                          Math.round((discountAmountValue / netHTValue) * 100 * 100) /
-                          100;
-                      }
-                    }
+                                        if (
+                                          tvaRates.length === 1 &&
+                                          tvaRates[0] > 0
+                                        ) {
+                                          // Single TVA rate: HT = TTC / (1 + TVA rate)
+                                          const tvaRate = tvaRates[0] / 100;
+                                          netHTValue =
+                                            finalTotalValue / (1 + tvaRate);
+                                          displayTotalTax =
+                                            finalTotalValue - netHTValue;
+                                        } else {
+                                          // Multiple TVA rates: proportional method
+                                          const discountCoefficient =
+                                            finalTotalValue / grandTotalValue;
 
-                    const displayNetHT =
-                      remiseValue > 0 ? netHTAfterDiscount : netHTValue;
-                    const displayTotalTax =
-                      remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
+                                          let newTotalHT = 0;
+                                          let newTotalTVA = 0;
 
-                    return (
-                      <Table className="table-sm table-borderless mb-0">
-                        <tbody>
-                          <tr className="real-time-update">
-                            <th className="text-end text-muted fs-6">
-                              Sous-total H.T.:
-                            </th>
-                            <td className="text-end fw-semibold fs-6">
-                              {sousTotalHTValue.toFixed(3)} DT
-                            </td>
-                          </tr>
-                          <tr className="real-time-update">
-                            <th className="text-end text-muted fs-6">
-                              Net H.T.:
-                            </th>
-                            <td className="text-end fw-semibold fs-6">
-                              {displayNetHT.toFixed(3)} DT
-                            </td>
-                          </tr>
-                          <tr className="real-time-update">
-                            <th className="text-end text-muted fs-6">
-                              TVA:
-                            </th>
-                            <td className="text-end fw-semibold fs-6">
-                              {displayTotalTax.toFixed(3)} DT
-                            </td>
-                          </tr>
-                          <tr className="real-time-update">
-                            <th className="text-end text-muted fs-6">
-                              Total TTC:
-                            </th>
-                            <td className="text-end fw-semibold fs-6 text-dark">
-                              {grandTotalValue.toFixed(3)} DT
-                            </td>
-                          </tr>
-                          {remiseValue > 0 && (
-                            <tr className="real-time-update">
-                              <th className="text-end text-muted fs-6">
-                                {remiseTypeValue === "percentage"
-                                  ? `Remise (${remiseValue}%)`
-                                  : `Remise (Montant fixe) ${discountPercentage}%`}
-                              </th>
-                              <td className="text-end text-danger fw-bold fs-6">
-                                - {discountAmountValue.toFixed(3)} DT
-                              </td>
-                            </tr>
-                          )}
-                          {remiseValue > 0 && (
-                            <tr className="final-total real-time-update border-top">
-                              <th className="text-end fs-5">
-                                NET À PAYER:
-                              </th>
-                              <td className="text-end fw-bold fs-5 text-primary">
-                                {finalTotalValue.toFixed(3)} DT
-                              </td>
-                            </tr>
-                          )}
-                          {!remiseValue && (
-                            <tr className="final-total real-time-update border-top">
-                              <th className="text-end fs-5">
-                                NET À PAYER:
-                              </th>
-                              <td className="text-end fw-bold fs-5 text-primary">
-                                {grandTotalValue.toFixed(3)} DT
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </Table>
-                    );
-                  })()}
-                </Col>
-              </Row>
-            </div>
-          </CardBody>
-        </Card>
+                                          selectedBonCommande.articles.forEach(
+                                            (article: any) => {
+                                              const qty =
+                                                Number(article.quantite) || 0;
+                                              const unitHT =
+                                                Number(article.prixUnitaire) ||
+                                                0;
+                                              const tvaRate =
+                                                Number(article.tva ?? 0) / 100;
 
-        {/* Informations de Paiement */}
-        <Card className="border-0 shadow-sm mt-4">
-          <CardBody className="p-4">
-            <h6 className="fw-semibold mb-3 text-primary">
-              <i className="ri-bank-card-line me-2"></i>
-              Informations de Paiement
-            </h6>
-            
-            {selectedBonCommande.paymentMethods && 
-            selectedBonCommande.paymentMethods.length > 0 ? (
-              <div className="payment-methods">
-                {selectedBonCommande.paymentMethods.map((payment: any, index: number) => (
-                  <div key={payment.id || index} className="border rounded p-3 mb-3 bg-light">
-                    <div className="d-flex justify-content-between align-items-center mb-2">
-                      <h6 className="fw-semibold mb-0 text-dark">
-                        Paiement #{index + 1}
-                      </h6>
-                      <Badge 
-                        color={
-                          payment.method === 'especes' ? 'success' :
-                          payment.method === 'cheque' ? 'warning' :
-                          payment.method === 'virement' ? 'info' :
-                          payment.method === 'traite' ? 'primary' : 'secondary'
-                        }
-                      >
-                        {payment.method === 'especes' ? 'Espèces' :
-                         payment.method === 'cheque' ? 'Chèque' :
-                         payment.method === 'virement' ? 'Virement' :
-                         payment.method === 'traite' ? 'Traite' : 'Autre'}
-                      </Badge>
-                    </div>
-                    
-                    <div className="row">
-                      <div className="col-md-6">
-                        <strong>Montant:</strong> {Number(payment.amount || 0).toFixed(3)} DT
+                                              const newLineHT =
+                                                qty *
+                                                unitHT *
+                                                discountCoefficient;
+                                              const newLineTVA =
+                                                newLineHT * tvaRate;
+
+                                              newTotalHT += newLineHT;
+                                              newTotalTVA += newLineTVA;
+                                            }
+                                          );
+
+                                          netHTValue = newTotalHT;
+                                          displayTotalTax = newTotalTVA;
+                                        }
+
+                                        discountAmountValue =
+                                          sousTotalHTValue - netHTValue;
+                                        discountPercentage =
+                                          (discountAmountValue /
+                                            sousTotalHTValue) *
+                                          100;
+                                      }
+
+                                      // Round final values
+                                      netHTValue =
+                                        Math.round(netHTValue * 1000) / 1000;
+                                      displayTotalTax =
+                                        Math.round(displayTotalTax * 1000) /
+                                        1000;
+                                      finalTotalValue =
+                                        Math.round(finalTotalValue * 1000) /
+                                        1000;
+                                      discountAmountValue =
+                                        Math.round(discountAmountValue * 1000) /
+                                        1000;
+                                      discountPercentage =
+                                        Math.round(discountPercentage * 1000) /
+                                        1000;
+                                    }
+
+                                    return (
+                                      <Table className="table-sm table-borderless mb-0">
+                                        <tbody>
+                                          <tr className="real-time-update">
+                                            <th className="text-end text-muted fs-6">
+                                              Sous-total H.T.:
+                                            </th>
+                                            <td className="text-end fw-semibold fs-6">
+                                              {sousTotalHTValue.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                          <tr className="real-time-update">
+                                            <th className="text-end text-muted fs-6">
+                                              Net H.T.:
+                                            </th>
+                                            <td className="text-end fw-semibold fs-6">
+                                              {netHTValue.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                          <tr className="real-time-update">
+                                            <th className="text-end text-muted fs-6">
+                                              TVA:
+                                            </th>
+                                            <td className="text-end fw-semibold fs-6">
+                                              {displayTotalTax.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                          <tr className="real-time-update">
+                                            <th className="text-end text-muted fs-6">
+                                              Total TTC:
+                                            </th>
+                                            <td className="text-end fw-semibold fs-6 text-dark">
+                                              {grandTotalValue.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                          {remiseValue > 0 && (
+                                            <tr className="real-time-update">
+                                              <th className="text-end text-muted fs-6">
+                                                {remiseTypeValue ===
+                                                "percentage"
+                                                  ? `Remise (${remiseValue}%)`
+                                                  : `Remise (Montant fixe) ${discountPercentage.toFixed(
+                                                      2
+                                                    )}%`}
+                                              </th>
+                                              <td className="text-end text-danger fw-bold fs-6">
+                                                -{" "}
+                                                {discountAmountValue.toFixed(3)}{" "}
+                                                DT
+                                              </td>
+                                            </tr>
+                                          )}
+                                          <tr className="final-total real-time-update border-top">
+                                            <th className="text-end fs-5">
+                                              NET À PAYER:
+                                            </th>
+                                            <td className="text-end fw-bold fs-5 text-primary">
+                                              {finalTotalValue.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                        </tbody>
+                                      </Table>
+                                    );
+                                  })()}
+                                </Col>
+                              </Row>
+                            </div>
+                          </CardBody>
+                        </Card>
+
+                        {/* Informations de Paiement */}
+                        <Card className="border-0 shadow-sm mt-4">
+                          <CardBody className="p-4">
+                            <h6 className="fw-semibold mb-3 text-primary">
+                              <i className="ri-bank-card-line me-2"></i>
+                              Informations de Paiement
+                            </h6>
+
+                            {selectedBonCommande.paymentMethods &&
+                            selectedBonCommande.paymentMethods.length > 0 ? (
+                              <div className="payment-methods">
+                                {selectedBonCommande.paymentMethods.map(
+                                  (payment: any, index: number) => (
+                                    <div
+                                      key={payment.id || index}
+                                      className="border rounded p-3 mb-3 bg-light"
+                                    >
+                                      <div className="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 className="fw-semibold mb-0 text-dark">
+                                          Paiement #{index + 1}
+                                        </h6>
+                                        <Badge
+                                          color={
+                                            payment.method === "especes"
+                                              ? "success"
+                                              : payment.method === "cheque"
+                                              ? "warning"
+                                              : payment.method === "virement"
+                                              ? "info"
+                                              : payment.method === "traite"
+                                              ? "primary"
+                                              : payment.method === "tpe"
+                                              ? "danger" // Add this line for tpe
+                                              : "secondary"
+                                          }
+                                        >
+                                          {payment.method === "especes"
+                                            ? "Espèces"
+                                            : payment.method === "cheque"
+                                            ? "Chèque"
+                                            : payment.method === "virement"
+                                            ? "Virement"
+                                            : payment.method === "traite"
+                                            ? "Traite"
+                                            : payment.method === "tpe"
+                                            ? "Carte Bancaire (TPE)" // Add this line
+                                            : "Autre"}
+                                        </Badge>
+                                      </div>
+
+                                      <div className="row">
+                                        <div className="col-md-6">
+                                          <strong>Montant:</strong>{" "}
+                                          {Number(payment.amount || 0).toFixed(
+                                            3
+                                          )}{" "}
+                                          DT
+                                        </div>
+
+                                        {payment.numero && (
+                                          <div className="col-md-6">
+                                            <strong>Numéro:</strong>{" "}
+                                            {payment.numero}
+                                          </div>
+                                        )}
+
+                                        {payment.banque && (
+                                          <div className="col-md-6">
+                                            <strong>Banque:</strong>{" "}
+                                            {payment.banque}
+                                          </div>
+                                        )}
+
+                                        {payment.dateEcheance && (
+                                          <div className="col-md-6">
+                                            <strong>Date Échéance:</strong>{" "}
+                                            {moment(
+                                              payment.dateEcheance
+                                            ).format("DD/MM/YYYY")}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+
+                                <div className="total-payment border-top pt-3 mt-3">
+                                  <div className="d-flex justify-content-between align-items-center">
+                                    <strong className="fs-6">
+                                      Total Paiements:
+                                    </strong>
+                                    <strong className="fs-5 text-primary">
+                                      {selectedBonCommande.paymentMethods
+                                        .reduce(
+                                          (sum: number, pm: any) =>
+                                            sum + (Number(pm.amount) || 0),
+                                          0
+                                        )
+                                        .toFixed(3)}{" "}
+                                      DT
+                                    </strong>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-muted">
+                                <i className="ri-information-line me-2"></i>
+                                Aucune information de paiement disponible
+                              </div>
+                            )}
+                          </CardBody>
+                        </Card>
                       </div>
-                      
-                      {payment.numero && (
-                        <div className="col-md-6">
-                          <strong>Numéro:</strong> {payment.numero}
-                        </div>
-                      )}
-                      
-                      {payment.banque && (
-                        <div className="col-md-6">
-                          <strong>Banque:</strong> {payment.banque}
-                        </div>
-                      )}
-                      
-                      {payment.dateEcheance && (
-                        <div className="col-md-6">
-                          <strong>Date Échéance:</strong> {moment(payment.dateEcheance).format('DD/MM/YYYY')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                
-                <div className="total-payment border-top pt-3 mt-3">
-                  <div className="d-flex justify-content-between align-items-center">
-                    <strong className="fs-6">Total Paiements:</strong>
-                    <strong className="fs-5 text-primary">
-                      {selectedBonCommande.paymentMethods
-                        .reduce((sum: number, pm: any) => sum + (Number(pm.amount) || 0), 0)
-                        .toFixed(3)} DT
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-muted">
-                <i className="ri-information-line me-2"></i>
-                Aucune information de paiement disponible
-              </div>
-            )}
-          </CardBody>
-        </Card>
-      </div>
-    )}
-  </ModalBody>
+                    )}
+                  </ModalBody>
 
-  <ModalFooter className="border-0 pt-4">
-    {selectedBonCommande && (
-      <>
-        <Button
-          color="primary"
-          onClick={() => openPdfModal(selectedBonCommande, "facture")}
-          className="btn-invoice btn-invoice-primary me-2"
-        >
-          <i className="ri-file-pdf-line me-2"></i> Voir Facture PDF
-        </Button>
+                  <ModalFooter className="border-0 pt-4">
+                    {selectedBonCommande && (
+                      <>
+                        <Button
+                          color="primary"
+                          onClick={() =>
+                            openPdfModal(selectedBonCommande, "facture")
+                          }
+                          className="btn-invoice btn-invoice-primary me-2"
+                        >
+                          <i className="ri-file-pdf-line me-2"></i> Voir Vente
+                          PDF
+                        </Button>
 
-        <Button
-          color="success"
-          onClick={() => handleDirectPrint(selectedBonCommande, "receipt")}
-          className="btn-invoice btn-invoice-success me-2"
-        >
-          <i className="ri-printer-line me-2"></i> Imprimer Reçu
-        </Button>
+                        <Button
+                          color="success"
+                          onClick={() =>
+                            handleDirectPrint(selectedBonCommande, "receipt")
+                          }
+                          className="btn-invoice btn-invoice-success me-2"
+                        >
+                          <i className="ri-printer-line me-2"></i> Imprimer Reçu
+                        </Button>
 
-        <Button
-          color="info"
-          onClick={() => {
-            setBonCommande(selectedBonCommande);
-            setSelectedClient(selectedBonCommande.client || null);
-            setSelectedArticles(
-              selectedBonCommande.articles.map((item: any) => ({
-                article_id: item.article?.id || 0,
-                quantite: item.quantite,
-                prixUnitaire:
-                  typeof item.prixUnitaire === "string"
-                    ? parseFloat(item.prixUnitaire)
-                    : item.prixUnitaire,
-                prixTTC:
-                  Number(item.prix_ttc) ||
-                  Number(item.article?.puv_ttc) ||
-                  (typeof item.prixUnitaire === "string"
-                    ? parseFloat(item.prixUnitaire)
-                    : item.prixUnitaire) *
-                    (1 + (item.tva || 0) / 100),
-                tva:
-                  item.tva != null
-                    ? typeof item.tva === "string"
-                      ? parseFloat(item.tva)
-                      : item.tva
-                    : null,
-                remise:
-                  item.remise != null
-                    ? typeof item.remise === "string"
-                      ? parseFloat(item.remise)
-                      : item.remise
-                    : null,
-                articleDetails: item.article,
-              }))
-            );
-            setGlobalRemise(selectedBonCommande.remise || 0);
-            setRemiseType(selectedBonCommande.remiseType || "percentage");
-            setShowRemise((selectedBonCommande.remise || 0) > 0);
-            setIsEdit(true);
-            setModal(true);
-            setDetailModal(false);
-          }}
-          className="btn-invoice btn-invoice-info me-2"
-        >
-          <i className="ri-pencil-line me-2"></i> Modifier
-        </Button>
-      </>
-    )}
-    <Button
-      color="light"
-      onClick={() => setDetailModal(false)}
-      className="btn-invoice"
-    >
-      <i className="ri-close-line me-2"></i> Fermer
-    </Button>
-  </ModalFooter>
-</Modal>
+                        <Button
+                          color="warning"
+                          onClick={() =>
+                            prepareFactureCreation(selectedBonCommande)
+                          }
+                          className="btn-invoice btn-invoice-warning me-2"
+                        >
+                          <i className="ri-file-text-line me-2"></i> Créer
+                          Facture Client
+                        </Button>
+
+                        <Button
+                          color="info"
+                          onClick={() => {
+                            setBonCommande(selectedBonCommande);
+                            setSelectedClient(
+                              selectedBonCommande.client || null
+                            );
+                            setSelectedArticles(
+                              selectedBonCommande.articles.map((item: any) => ({
+                                article_id: item.article?.id || 0,
+                                quantite: item.quantite,
+                                prixUnitaire:
+                                  typeof item.prixUnitaire === "string"
+                                    ? parseFloat(item.prixUnitaire)
+                                    : item.prixUnitaire,
+                                prixTTC:
+                                  Number(item.prix_ttc) ||
+                                  Number(item.article?.puv_ttc) ||
+                                  (typeof item.prixUnitaire === "string"
+                                    ? parseFloat(item.prixUnitaire)
+                                    : item.prixUnitaire) *
+                                    (1 + (item.tva || 0) / 100),
+                                tva:
+                                  item.tva != null
+                                    ? typeof item.tva === "string"
+                                      ? parseFloat(item.tva)
+                                      : item.tva
+                                    : null,
+                                remise:
+                                  item.remise != null
+                                    ? typeof item.remise === "string"
+                                      ? parseFloat(item.remise)
+                                      : item.remise
+                                    : null,
+                                articleDetails: item.article,
+                              }))
+                            );
+                            setGlobalRemise(selectedBonCommande.remise || 0);
+                            setRemiseType(
+                              selectedBonCommande.remiseType || "percentage"
+                            );
+                            setShowRemise(
+                              (selectedBonCommande.remise || 0) > 0
+                            );
+                            setIsEdit(true);
+                            setModal(true);
+                            setDetailModal(false);
+                          }}
+                          className="btn-invoice btn-invoice-info me-2"
+                        >
+                          <i className="ri-pencil-line me-2"></i> Modifier
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      color="light"
+                      onClick={() => setDetailModal(false)}
+                      className="btn-invoice"
+                    >
+                      <i className="ri-close-line me-2"></i> Fermer
+                    </Button>
+                  </ModalFooter>
+                </Modal>
 
                 <Modal
                   isOpen={modal}
@@ -2042,16 +2986,26 @@ useEffect(() => {
                   <ModalHeader toggle={toggleModal} className="border-0 pb-3">
                     <div className="d-flex align-items-center">
                       <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-shopping-cart-line text-primary fs-4"></i>
+                        <i
+                          className={
+                            isCreatingFacture
+                              ? "ri-file-text-line text-primary fs-4"
+                              : "ri-shopping-cart-line text-primary fs-4"
+                          }
+                        ></i>
                       </div>
                       <div>
                         <h4 className="mb-0 fw-bold text-dark">
-                          {isEdit
+                          {isCreatingFacture
+                            ? "Créer Facture Client"
+                            : isEdit
                             ? "Modifier Vente Comptoire"
                             : "Créer Vente Comptoire"}
                         </h4>
                         <small className="text-muted">
-                          {isEdit
+                          {isCreatingFacture
+                            ? "Créer une facture client à partir de cette vente"
+                            : isEdit
                             ? "Modifier les détails de la vente comptoire existante"
                             : "Créer une nouvelle vente comptoire"}
                         </small>
@@ -2060,10 +3014,18 @@ useEffect(() => {
                   </ModalHeader>
 
                   <Form
-                    onSubmit={validation.handleSubmit}
+                    onSubmit={
+                      isCreatingFacture
+                        ? handleFactureSubmit
+                        : (e) => {
+                            e.preventDefault();
+                            validation.handleSubmit();
+                          }
+                    }
                     className="invoice-form"
                   >
                     <ModalBody className="pt-0">
+                      {/* Header Information Section */}
                       {/* Header Information Section */}
                       <Card className="border-0 shadow-sm mb-4">
                         <CardBody className="p-4">
@@ -2071,51 +3033,176 @@ useEffect(() => {
                             <i className="ri-information-line me-2"></i>
                             Informations Générales
                           </h5>
-                          <Row>
-                            <Col md={4}>
-                              <div className="mb-3">
-                                <Label className="form-label-lg fw-semibold">
-                                  Numéro*
-                                </Label>
-                                <Input
-                                  name="numeroCommande"
-                                  value={validation.values.numeroCommande}
-                                  onChange={validation.handleChange}
-                                  invalid={
-                                    validation.touched.numeroCommande &&
-                                    !!validation.errors.numeroCommande
-                                  }
-                                  readOnly={isEdit}
-                                  className="form-control-lg"
-                                  placeholder="VC202400001"
-                                />
-                                <FormFeedback className="fs-6">
-                                  {validation.errors.numeroCommande}
-                                </FormFeedback>
-                              </div>
-                            </Col>
-                            <Col md={4}>
-                              <div className="mb-3">
-                                <Label className="form-label-lg fw-semibold">
-                                  Date*
-                                </Label>
-                                <Input
-                                  type="date"
-                                  name="dateCommande"
-                                  value={validation.values.dateCommande}
-                                  onChange={validation.handleChange}
-                                  invalid={
-                                    validation.touched.dateCommande &&
-                                    !!validation.errors.dateCommande
-                                  }
-                                  className="form-control-lg"
-                                />
-                                <FormFeedback className="fs-6">
-                                  {validation.errors.dateCommande as string}
-                                </FormFeedback>
-                              </div>
-                            </Col>
-                          </Row>
+
+                          {isCreatingFacture ? (
+                            // FACTURE INFORMATION - Display in single line
+                            <Row className="align-items-center">
+                              <Col md={3}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Numéro Facture*
+                                  </Label>
+                                  <Input
+                                    value={nextFactureNumber}
+                                    readOnly
+                                    className="form-control-lg bg-light"
+                                  />
+                                </div>
+                              </Col>
+
+                              <Col md={3}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Date*
+                                  </Label>
+                                  <Input
+                                    type="date"
+                                    value={moment().format("YYYY-MM-DD")}
+                                    readOnly
+                                    className="form-control-lg bg-light"
+                                  />
+                                </div>
+                              </Col>
+
+                              <Col md={3}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Dépôt*
+                                  </Label>
+                                  <Input
+                                    type="select"
+                                    value={selectedDepot?.id || ""}
+                                    onChange={(e) => {
+                                      const depotId = e.target.value;
+                                      const depot = depots.find(
+                                        (d) => d.id === parseInt(depotId)
+                                      );
+                                      setSelectedDepot(depot || null);
+                                    }}
+                                    className="form-control-lg"
+                                    required={true}
+                                  >
+                                    <option value="">
+                                      Sélectionner un dépôt
+                                    </option>
+                                    {depots.map((depot) => (
+                                      <option key={depot.id} value={depot.id}>
+                                        {depot.nom}
+                                      </option>
+                                    ))}
+                                  </Input>
+                                </div>
+                              </Col>
+
+                              <Col md={3}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Timbre Fiscal
+                                  </Label>
+                                  <div className="d-flex align-items-center">
+                                    <Input
+                                      type="checkbox"
+                                      id="timbreFiscalFacture"
+                                      checked={timbreFiscal}
+                                      onChange={(e) =>
+                                        setTimbreFiscal(e.target.checked)
+                                      }
+                                      className="form-check-input me-2"
+                                      style={{
+                                        width: "24px",
+                                        height: "24px",
+                                        cursor: "pointer",
+                                      }}
+                                    />
+                                    <Label
+                                      for="timbreFiscalFacture"
+                                      className="form-check-label fw-semibold"
+                                    >
+                                      Activé (+1.000 DT)
+                                    </Label>
+                                  </div>
+                                </div>
+                              </Col>
+                            </Row>
+                          ) : (
+                            // VENTE COMPTOIRE INFORMATION - Display in single line
+
+                            <Row className="align-items-center">
+                              <Col md={4}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Numéro Vente*
+                                  </Label>
+                                  <Input
+                                    name="numeroCommande"
+                                    value={validation.values.numeroCommande}
+                                    onChange={validation.handleChange}
+                                    invalid={
+                                      validation.touched.numeroCommande &&
+                                      !!validation.errors.numeroCommande
+                                    }
+                                    readOnly={isEdit}
+                                    className="form-control-lg"
+                                    placeholder=""
+                                  />
+                                  <FormFeedback className="fs-6">
+                                    {validation.errors.numeroCommande}
+                                  </FormFeedback>
+                                </div>
+                              </Col>
+                              <Col md={4}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Date*
+                                  </Label>
+                                  <Input
+                                    type="date"
+                                    name="dateCommande"
+                                    value={validation.values.dateCommande}
+                                    onChange={validation.handleChange}
+                                    invalid={
+                                      validation.touched.dateCommande &&
+                                      !!validation.errors.dateCommande
+                                    }
+                                    className="form-control-lg"
+                                  />
+                                  <FormFeedback className="fs-6">
+                                    {validation.errors.dateCommande as string}
+                                  </FormFeedback>
+                                </div>
+                              </Col>
+
+                              <Col md={4}>
+                                <div className="mb-3">
+                                  <Label className="form-label-lg fw-semibold">
+                                    Dépôt*
+                                  </Label>
+                                  <Input
+                                    type="select"
+                                    value={selectedDepot?.id || ""}
+                                    onChange={(e) => {
+                                      const depotId = e.target.value;
+                                      const depot = depots.find(
+                                        (d) => d.id === parseInt(depotId)
+                                      );
+                                      setSelectedDepot(depot || null);
+                                    }}
+                                    className="form-control-lg"
+                                    required={true}
+                                  >
+                                    <option value="">
+                                      Sélectionner un dépôt
+                                    </option>
+                                    {depots.map((depot) => (
+                                      <option key={depot.id} value={depot.id}>
+                                        {depot.nom}
+                                      </option>
+                                    ))}
+                                  </Input>
+                                </div>
+                              </Col>
+                            </Row>
+                          )}
                         </CardBody>
                       </Card>
 
@@ -2128,88 +3215,108 @@ useEffect(() => {
                                 <i className="ri-user-line me-2"></i>
                                 Informations Client
                               </h6>
-                              {/* Client Search Section - Updated */}
-                              <div className="mb-3">
-  <Label className="form-label-lg fw-semibold">
-    Client*
-    {!selectedClient && (
-      <button
-        type="button"
-        className="btn btn-link text-primary p-0 ms-2"
-        onClick={() => setClientModal(true)}
-        title="Ajouter un nouveau client"
-        style={{ fontSize: "0.8rem" }}
-      >
-        <i className="ri-add-line me-1"></i>
-        Nouveau client
-      </button>
-    )}
-  </Label>
-  
-  <div className="position-relative">
-    <Input
-      type="text"
-      placeholder="Rechercher client par nom ou téléphone..."
-      value={
-        selectedClient
-          ? selectedClient.raison_sociale
-          : clientSearch
-      }
-      onChange={(e) => {
-        const value = e.target.value;
 
-        if (!value) {
-          setSelectedClient(null);
-          validation.setFieldValue("client_id", "");
-          setClientSearch("");
-        } else {
-          // Enhanced phone detection - check if input looks like a phone number
-          const isLikelyPhoneNumber = isPhoneNumberInput(value);
-          
-          if (isLikelyPhoneNumber) {
-            const formatted = formatPhoneInput(value);
-            setClientSearch(formatted);
-          } else {
-            setClientSearch(value);
-          }
-        }
-      }}
-      onFocus={() => {
-        if (clientSearch.length >= 1) {
-          setFilteredClients(clients);
-        }
-      }}
-      readOnly={!!selectedClient}
-      className="form-control-lg"
-    />
-    
-    {selectedClient && (
-      <Button
-        color="link"
-        size="sm"
-        className="position-absolute end-0 top-50 translate-middle-y text-danger p-0 me-3"
-        onClick={() => {
-          setSelectedClient(null);
-          validation.setFieldValue("client_id", "");
-          setClientSearch("");
-        }}
-      >
-        <i className="ri-close-line fs-5"></i>
-      </Button>
-    )}
-  </div>
-                                {/* Client Dropdown Results - Updated to show phone numbers */}
-                                {!selectedClient &&
-                                  clientSearch.length >= 1 && (
+                              <div className="mb-3 position-relative">
+                                {" "}
+                                {/* Add position-relative wrapper */}
+                                <Label className="form-label-lg fw-semibold">
+                                  Client*
+                                </Label>
+                                <div className="position-relative">
+                                  <Input
+                                    type="text"
+                                    placeholder="Rechercher par nom, raison sociale ou téléphone..."
+                                    value={
+                                      selectedClient
+                                        ? selectedClient.raison_sociale
+                                        : clientSearch
+                                    }
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+
+                                      if (!value) {
+                                        setSelectedClient(null);
+                                        validation.setFieldValue(
+                                          "client_id",
+                                          ""
+                                        );
+                                        setClientSearch("");
+                                      } else {
+                                        const digitCount = (
+                                          value.match(/\d/g) || []
+                                        ).length;
+                                        const totalLength = value.length;
+
+                                        if (digitCount >= totalLength * 0.7) {
+                                          const formatted =
+                                            formatPhoneInput(value);
+                                          setClientSearch(formatted);
+                                        } else {
+                                          setClientSearch(value);
+                                        }
+                                      }
+                                    }}
+                                    onFocus={() => {
+                                      if (clientSearch.length >= 1) {
+                                        setFilteredClients(clients);
+                                      }
+                                    }}
+                                    readOnly={
+                                      !!selectedClient || isCreatingFacture
+                                    }
+                                    className="form-control-lg pe-10"
+                                  />
+
+                                  {/* Clear button when client is selected */}
+                                  {selectedClient && !isCreatingFacture && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-link text-danger position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                                      onClick={() => {
+                                        setSelectedClient(null);
+                                        validation.setFieldValue(
+                                          "client_id",
+                                          ""
+                                        );
+                                        setClientSearch("");
+                                      }}
+                                      title="Changer de client"
+                                    >
+                                      <i className="ri-close-line fs-5"></i>
+                                    </button>
+                                  )}
+
+                                  {/* Add button when no client is selected */}
+                                  {!selectedClient && !isCreatingFacture && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                                      onClick={() => setClientModal(true)}
+                                      title="Ajouter un nouveau client"
+                                    >
+                                      <i className="ri-add-line fs-5"></i>
+                                    </button>
+                                  )}
+                                </div>
+                                {/* Enhanced Client Dropdown Results - ABSOLUTELY POSITIONED */}
+                                {!isCreatingFacture &&
+                                  !selectedClient &&
+                                  clientSearch.length >= 3 && (
                                     <div
-                                      className="search-results mt-2 border rounded shadow-sm"
+                                      className="search-results client-results mt-1"
                                       style={{
-                                        maxHeight: "200px",
-                                        overflowY: "auto",
                                         position: "absolute",
-                                        width: "100%",
-                                        zIndex: 9999,
+                                        top: "100%", // Position below the input
+                                        left: 0,
+                                        right: 0,
+                                        zIndex: 1050,
                                         backgroundColor: "white",
+                                        border: "1px solid #dee2e6",
+                                        borderRadius: "0.375rem",
+                                        boxShadow:
+                                          "0 0.5rem 1rem rgba(0, 0, 0, 0.15)",
+                                        maxHeight: "400px",
+                                        overflowY: "auto",
                                       }}
                                     >
                                       {filteredClients.length > 0 ? (
@@ -2237,7 +3344,9 @@ useEffect(() => {
                                                   {c.raison_sociale}
                                                 </span>
                                                 <small className="text-muted">
-                                                  {c.telephone1 || "N/A"}
+                                                  {formatPhoneDisplay(
+                                                    c.telephone1
+                                                  )}
                                                 </small>
                                               </div>
                                               <div className="d-flex justify-content-between align-items-center mt-1">
@@ -2250,7 +3359,9 @@ useEffect(() => {
                                                 </small>
                                                 {c.telephone2 && (
                                                   <small className="text-muted">
-                                                    {c.telephone2}
+                                                    {formatPhoneDisplay(
+                                                      c.telephone2
+                                                    )}
                                                   </small>
                                                 )}
                                               </div>
@@ -2265,10 +3376,17 @@ useEffect(() => {
                                         </ul>
                                       ) : (
                                         <div className="text-muted p-3 text-center">
-                                          <i className="ri-search-line me-2"></i>
-                                          Aucun client trouvé
+                                          <i className="ri-search-line me-1"></i>
+                                          Aucun résultat trouvé
                                         </div>
                                       )}
+                                    </div>
+                                  )}
+                                {validation.touched.client_id &&
+                                  validation.errors.client_id && (
+                                    <div className="text-danger mt-1 fs-6">
+                                      <i className="ri-error-warning-line me-1"></i>
+                                      {validation.errors.client_id}
                                     </div>
                                   )}
                               </div>
@@ -2320,270 +3438,213 @@ useEffect(() => {
                         </Col>
                       </Row>
 
-                      {/* Global Discount Section :  <Card className="border-0 shadow-sm mb-4">
-        <CardBody className="p-4">
-          <div className="d-flex justify-content-between align-items-center mb-3">
-            <h5 className="fw-semibold text-primary mb-0">
-              <i className="ri-coupon-line me-2"></i>
-              Remise Globale
-            </h5>
-            <div className="form-check form-switch form-switch-lg">
-              <Input
-                type="checkbox"
-                id="showRemise"
-                checked={showRemise}
-                onChange={(e) => {
-                  setShowRemise(e.target.checked);
-                  if (!e.target.checked) {
-                    setGlobalRemise(0);
-                  }
-                }}
-                className="form-check-input"
-              />
-              <Label for="showRemise" check className="form-check-label fw-semibold fs-6">
-                Appliquer une remise
-              </Label>
-            </div>
-          </div>
-
-          {showRemise && (
-            <Row className="g-3 mt-3">
-              <Col md={4}>
-                <div className="mb-3">
-                  <Label className="form-label-lg fw-semibold">Type de remise</Label>
-                  <Input
-                    type="select"
-                    value={remiseType}
-                    onChange={(e) =>
-                      setRemiseType(e.target.value as "percentage" | "fixed")
-                    }
-                    className="form-control-lg"
-                  >
-                    <option value="percentage">Pourcentage (%)</option>
-                    <option value="fixed">Montant fixe (DT)</option>
-                  </Input>
-                </div>
-              </Col>
-              <Col md={4}>
-                <div className="mb-3">
-                  <Label className="form-label-lg fw-semibold">
-                    {remiseType === "percentage" ? "Pourcentage de remise" : "Montant de remise (DT)"}
-                  </Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step={remiseType === "percentage" ? "1" : "0.001"}
-                    value={globalRemise === 0 ? "" : globalRemise}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === "") {
-                        setGlobalRemise(0);
-                      } else {
-                        const numValue = Number(value);
-                        if (!isNaN(numValue) && numValue >= 0) {
-                          setGlobalRemise(numValue);
-                        }
-                      }
-                    }}
-                    placeholder={remiseType === "percentage" ? "0-100%" : "Montant en DT"}
-                    className="form-control-lg"
-                  />
-                </div>
-              </Col>
-              <Col md={4}>
-                {showRemise && globalRemise > 0 && (
-                  <div className="p-3 bg-primary bg-opacity-10 rounded border">
-                    <div className="text-center">
-                      <small className="text-muted d-block">Remise appliquée</small>
-                      <strong className="fs-5 text-primary">
-                        {remiseType === "percentage" 
-                          ? `${globalRemise}%` 
-                          : `${Number(globalRemise).toFixed(3)} DT`}
-                      </strong>
-                    </div>
-                  </div>
-                )}
-              </Col>
-            </Row>
-          )}
-        </CardBody>
-      </Card> */}
-
                       {/* Articles Section */}
                       <Card className="border-0 shadow-sm mb-4">
-  <CardBody className="p-4">
-    <h5 className="fw-semibold mb-4 text-primary">
-      <i className="ri-shopping-cart-line me-2"></i>
-      Articles
-    </h5>
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-shopping-cart-line me-2"></i>
+                            Articles
+                          </h5>
 
-    <div className="mb-4">
-      <Label className="form-label-lg fw-semibold">
-        Rechercher Article
-      </Label>
-      {/* Update the article search input */}
-      <div className="search-box position-relative">
-        <Input
-          type="text"
-          placeholder="Rechercher article..."
-          value={articleSearch}
-          onChange={(e) => {
-            setArticleSearch(e.target.value);
-            setFocusedIndex(-1); // Reset focus when typing
-          }}
-          onKeyDown={(e) => {
-            if (filteredArticles.length > 0) {
-              // Handle arrow down
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                setFocusedIndex(prev => 
-                  prev < filteredArticles.length - 1 ? prev + 1 : 0
-                );
-              }
-              // Handle arrow up
-              else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                setFocusedIndex(prev => 
-                  prev > 0 ? prev - 1 : filteredArticles.length - 1
-                );
-              }
-              // Handle Enter to select focused item
-              else if (e.key === 'Enter' && focusedIndex >= 0) {
-                e.preventDefault();
-                const article = filteredArticles[focusedIndex];
-                handleAddArticle(article.id.toString());
-                setArticleSearch("");
-                setFilteredArticles([]);
-                setFocusedIndex(-1);
-              }
-              // Handle Enter to select first item when no focus
-              else if (e.key === 'Enter' && filteredArticles.length > 0 && focusedIndex === -1) {
-                e.preventDefault();
-                const firstArticle = filteredArticles[0];
-                handleAddArticle(firstArticle.id.toString());
-                setArticleSearch("");
-                setFilteredArticles([]);
-                setFocusedIndex(-1);
-              }
-            }
-          }}
-          className="form-control-lg ps-5 pe-5"
-        />
-        <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
-        <button
-          type="button"
-          className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
-          onClick={() => setArticleModal(true)}
-          title="Ajouter un nouvel article"
-        >
-          <i className="ri-add-line fs-5"></i>
-        </button>
-      </div>
+                          <div className="mb-4">
+                            <Label className="form-label-lg fw-semibold">
+                              Rechercher Article
+                            </Label>
 
-      {/* Update the dropdown container */}
-      {articleSearch.length >= 1 && (
-        <div
-          ref={setDropdownRef}
-          className="search-results mt-2 border rounded shadow-sm"
-          style={{
-            maxHeight: "400px",
-            overflowY: "auto",
-            overflowX: "hidden",
-            position: "relative",
-            zIndex: 1000,
-            backgroundColor: "white",
-          }}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          {filteredArticles.length > 0 ? (
-            <ul className="list-group list-group-flush">
-              {filteredArticles.map((article, index) => {
-                // Create ref for each item
-                const itemRef = React.createRef<HTMLLIElement>();
-                if (!itemRefs[index]) {
-                  itemRefs[index] = itemRef;
-                }
+                            <div className="search-box position-relative">
+                              <Input
+                                type="text"
+                                placeholder="Rechercher article..."
+                                value={articleSearch}
+                                innerRef={articleSearchRef}
+                                onChange={(e) => {
+                                  setArticleSearch(e.target.value);
+                                  setFocusedIndex(-1);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (filteredArticles.length > 0) {
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev < filteredArticles.length - 1
+                                          ? prev + 1
+                                          : 0
+                                      );
+                                    } else if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev > 0
+                                          ? prev - 1
+                                          : filteredArticles.length - 1
+                                      );
+                                    } else if (
+                                      e.key === "Enter" &&
+                                      focusedIndex >= 0
+                                    ) {
+                                      e.preventDefault();
+                                      const article =
+                                        filteredArticles[focusedIndex];
+                                      handleAddArticle(article.id.toString());
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    } else if (
+                                      e.key === "Enter" &&
+                                      filteredArticles.length > 0 &&
+                                      focusedIndex === -1
+                                    ) {
+                                      e.preventDefault();
+                                      const firstArticle = filteredArticles[0];
+                                      handleAddArticle(
+                                        firstArticle.id.toString()
+                                      );
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                  }
+                                }}
+                                className="form-control-lg ps-5 pe-5"
+                              />
+                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+                              <button
+                                type="button"
+                                className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                                onClick={() => setArticleModal(true)}
+                                title="Ajouter un nouvel article"
+                              >
+                                <i className="ri-add-line fs-5"></i>
+                              </button>
+                            </div>
 
-                return (
-                  <li
-                    key={article.id}
-                    ref={itemRefs[index]}
-                    className={`list-group-item list-group-item-action ${
-                      focusedIndex === index ? 'active' : ''
-                    }`}
-                    onClick={() => {
-                      handleAddArticle(article.id.toString());
-                      setArticleSearch("");
-                      setFilteredArticles([]);
-                      setFocusedIndex(-1);
-                    }}
-                    style={{
-                      cursor: "pointer",
-                      padding: "12px 15px",
-                      opacity: selectedArticles.some(
-                        (item) => item.article_id === article.id
-                      )
-                        ? 0.6
-                        : 1,
-                      backgroundColor: focusedIndex === index ? '#e7f1ff' : 'transparent',
-                      borderLeft: focusedIndex === index ? '4px solid #0d6efd' : 'none',
-                    }}
-                    onMouseEnter={() => setFocusedIndex(index)}
-                  >
-                    <div className="d-flex justify-content-between align-items-center">
-                      <div className="flex-grow-1">
-                        {/* Show reference first in larger font - MATCHING PREVIOUS STYLE */}
-                        <div className="d-flex align-items-center mb-1">
-                          <strong className="fs-6 me-2 text-primary">
-                            {article.reference}
-                          </strong>
-                          <span className="badge bg-light text-dark me-2">
-                            Stock: {article.qte || 0}
-                          </span>
-                        </div>
-                        {/* Show designation in smaller font */}
-                        <small className="text-muted d-block" style={{ fontSize: "0.85rem" }}>
-                          {article.designation}
-                        </small>
-                        {/* Show TTC price prominently */}
-                        <div className="mt-1">
-                          <span className="badge bg-success text-white">
-                            TTC: {(Number(article.puv_ttc) || 0).toFixed(3)} DT
-                          </span>
-                          {article.tva && article.tva > 0 && (
-                            <span className="badge bg-info ms-1">
-                              TVA: {article.tva}%
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {selectedArticles.some(
-                        (item) => item.article_id === article.id
-                      ) ? (
-                        <Badge color="secondary" className="fs-6">
-                          <i className="ri-check-line me-1"></i>
-                          Ajouté
-                        </Badge>
-                      ) : (
-                        <Badge color="success" className="fs-6">
-                          <i className="ri-add-line me-1"></i>
-                          Ajouter
-                        </Badge>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="text-muted p-3 text-center">
-              <i className="ri-search-line me-2"></i>
-              Aucun article trouvé
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+                            {articleSearch.length >= 3 && (
+                              <div
+                                ref={setDropdownRef}
+                                className="search-results mt-2 border rounded shadow-sm"
+                                style={{
+                                  maxHeight: "400px",
+                                  overflowY: "auto",
+                                  overflowX: "hidden",
+                                  position: "relative",
+                                  zIndex: 1000,
+                                  backgroundColor: "white",
+                                }}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                {filteredArticles.length > 0 ? (
+                                  <ul className="list-group list-group-flush">
+                                    {filteredArticles.map((article, index) => {
+                                      const itemRef =
+                                        React.createRef<HTMLLIElement>();
+                                      if (!itemRefs[index]) {
+                                        itemRefs[index] = itemRef;
+                                      }
+
+                                      return (
+                                        <li
+                                          key={article.id}
+                                          ref={itemRefs[index]}
+                                          className={`list-group-item list-group-item-action ${
+                                            focusedIndex === index
+                                              ? "active"
+                                              : ""
+                                          }`}
+                                          onClick={() => {
+                                            handleAddArticle(
+                                              article.id.toString()
+                                            );
+                                            setArticleSearch("");
+                                            setFilteredArticles([]);
+                                            setFocusedIndex(-1);
+                                          }}
+                                          style={{
+                                            cursor: "pointer",
+                                            padding: "12px 15px",
+                                            opacity: selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            )
+                                              ? 0.6
+                                              : 1,
+                                            backgroundColor:
+                                              focusedIndex === index
+                                                ? "#e7f1ff"
+                                                : "transparent",
+                                            borderLeft:
+                                              focusedIndex === index
+                                                ? "4px solid #0d6efd"
+                                                : "none",
+                                          }}
+                                          onMouseEnter={() =>
+                                            setFocusedIndex(index)
+                                          }
+                                        >
+                                          <div className="d-flex justify-content-between align-items-center">
+                                            <div className="flex-grow-1">
+                                              <div className="d-flex align-items-center mb-1">
+                                                <strong className="fs-6 me-2 text-primary">
+                                                  {article.reference}
+                                                </strong>
+                                                <span className="badge bg-light text-dark me-2">
+                                                  Stock: {article.qte || 0}
+                                                </span>
+                                              </div>
+                                              <small
+                                                className="text-muted d-block"
+                                                style={{ fontSize: "0.85rem" }}
+                                              >
+                                                {article.designation}
+                                              </small>
+                                              <div className="mt-1">
+                                                <span className="badge bg-success text-white">
+                                                  TTC:{" "}
+                                                  {(
+                                                    Number(article.puv_ttc) || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                                {article.tva &&
+                                                  article.tva > 0 && (
+                                                    <span className="badge bg-info ms-1">
+                                                      TVA: {article.tva}%
+                                                    </span>
+                                                  )}
+                                              </div>
+                                            </div>
+                                            {selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            ) ? (
+                                              <Badge
+                                                color="secondary"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-check-line me-1"></i>
+                                                Ajouté
+                                              </Badge>
+                                            ) : (
+                                              <Badge
+                                                color="success"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-add-line me-1"></i>
+                                                Ajouter
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                ) : (
+                                  <div className="text-muted p-3 text-center">
+                                    <i className="ri-search-line me-2"></i>
+                                    Aucun article trouvé
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
 
                           {/* Articles Table */}
                           {selectedArticles.length > 0 && (
@@ -2993,7 +4054,7 @@ useEffect(() => {
                               </h6>
 
                               <Row>
-                                {/* Left Side - Remise Global with proper styling */}
+                                {/* Left Side - Remise Global */}
                                 <Col md={6}>
                                   <div className="remise-global-section h-100">
                                     <h6 className="fw-semibold">
@@ -3038,11 +4099,11 @@ useEffect(() => {
                                             }
                                             className="form-control-sm"
                                           >
-                                            <option value="percentage">
-                                              Pourcentage (%)
-                                            </option>
                                             <option value="fixed">
                                               Montant fixe (DT)
+                                            </option>
+                                            <option value="percentage">
+                                              Pourcentage (%)
                                             </option>
                                           </Input>
                                         </div>
@@ -3092,7 +4153,7 @@ useEffect(() => {
                                   </div>
                                 </Col>
 
-                                {/* Right Side - Calculations with proper spacing */}
+                                {/* Right Side - Calculations WITH TIMBRE FISCAL */}
                                 <Col md={6}>
                                   <div className="calculation-summary-right">
                                     <Table className="table table-borderless mb-0">
@@ -3135,12 +4196,24 @@ useEffect(() => {
                                               {remiseType === "percentage"
                                                 ? `Remise (${globalRemise}%)`
                                                 : `Remise (Montant fixe) ${(
-                                                    (discountAmount / netHT) *
+                                                    (discountAmount /
+                                                      grandTotal) *
                                                     100
-                                                  ).toFixed(1)}%`}
+                                                  ).toFixed(2)}%`}
                                             </th>
                                             <td className="text-end text-danger fw-bold fs-6">
                                               - {discountAmount.toFixed(3)} DT
+                                            </td>
+                                          </tr>
+                                        )}
+                                        {/* TIMBRE FISCAL ROW */}
+                                        {isCreatingFacture && timbreFiscal && (
+                                          <tr className="real-time-update">
+                                            <th className="text-end text-muted fs-6">
+                                              Timbre Fiscal:
+                                            </th>
+                                            <td className="text-end fw-bold fs-6 text-info">
+                                              + 1,000 DT
                                             </td>
                                           </tr>
                                         )}
@@ -3149,7 +4222,10 @@ useEffect(() => {
                                             NET À PAYER:
                                           </th>
                                           <td className="text-end fw-bold fs-5 text-primary">
-                                            {finalTotal.toFixed(3)} DT
+                                            {isCreatingFacture && timbreFiscal
+                                              ? (finalTotal + 1).toFixed(3)
+                                              : finalTotal.toFixed(3)}{" "}
+                                            DT
                                           </td>
                                         </tr>
                                       </tbody>
@@ -3163,417 +4239,260 @@ useEffect(() => {
                       </Card>
 
                       {/* Payment Method Section */}
-                      {/* Payment Method Section */}
                       <Card className="border-0 shadow-sm mb-4">
                         <CardBody className="p-4">
-                          {/* Chèque - Show number and bank on same line */}
-                          {modeReglement === "cheque" && (
-                            <Row>
-                              <Col md={6}>
-                                <div className="mb-3">
-                                  <Label className="form-label-lg fw-semibold">
-                                    Numéro Chèque*
-                                  </Label>
-                                  <Input
-                                    type="text"
-                                    name="numeroReglement"
-                                    value={numeroReglement}
-                                    onChange={(e) =>
-                                      setNumeroReglement(e.target.value)
-                                    }
-                                    onBlur={validation.handleBlur}
-                                    invalid={
-                                      validation.touched.numeroReglement &&
-                                      !!validation.errors.numeroReglement
-                                    }
-                                    placeholder="Numéro du chèque"
-                                    className="form-control-lg"
-                                  />
-                                  <FormFeedback>
-                                    {validation.errors.numeroReglement}
-                                  </FormFeedback>
-                                </div>
-                              </Col>
-                              <Col md={6}>
-                                <div className="mb-3">
-                                  <Label className="form-label-lg fw-semibold">
-                                    Banque*
-                                  </Label>
-                                  <Input
-                                    type="text"
-                                    name="banqueCheque"
-                                    value={banqueCheque}
-                                    onChange={(e) =>
-                                      setBanqueCheque(e.target.value)
-                                    }
-                                    onBlur={validation.handleBlur}
-                                    invalid={
-                                      validation.touched.banqueCheque &&
-                                      !!validation.errors.banqueCheque
-                                    }
-                                    placeholder="Nom de la banque"
-                                    className="form-control-lg"
-                                  />
-                                  <FormFeedback>
-                                    {validation.errors.banqueCheque}
-                                  </FormFeedback>
-                                </div>
-                              </Col>
-                            </Row>
-                          )}
+                          <div className="d-flex justify-content-between align-items-center mb-3">
+                            <h5 className="fw-semibold text-primary mb-0">
+                              <i className="ri-bank-card-line me-2"></i>
+                              Modes de Règlement
+                            </h5>
+                            <Button
+                              color="primary"
+                              size="sm"
+                              onClick={addPaymentMethod}
+                              className="btn-invoice-primary"
+                            >
+                              <i className="ri-add-line me-1"></i>
+                              Ajouter Paiement
+                            </Button>
+                          </div>
 
-                          {/* Traite - Show number and due date on same line */}
-                          {/* Traite - Show number and due date on same line */}
-                          {modeReglement === "traite" && (
-                            <Row>
-                              <Col md={6}>
-                                <div className="mb-3">
-                                  <Label className="form-label-lg fw-semibold">
-                                    Numéro Traite*
-                                  </Label>
-                                  <Input
-                                    type="text"
-                                    name="numeroReglement"
-                                    value={numeroReglement}
-                                    onChange={(e) =>
-                                      setNumeroReglement(e.target.value)
-                                    }
-                                    onBlur={validation.handleBlur}
-                                    invalid={
-                                      validation.touched.numeroReglement &&
-                                      !!validation.errors.numeroReglement
-                                    }
-                                    placeholder="Numéro de la traite"
-                                    className="form-control-lg"
-                                  />
-                                  {validation.touched.numeroReglement &&
-                                    validation.errors.numeroReglement && (
-                                      <div className="text-danger mt-1 small">
-                                        {
-                                          validation.errors
-                                            .numeroReglement as string
-                                        }
-                                      </div>
-                                    )}
-                                </div>
-                              </Col>
-                              <Col md={6}>
-                                <div className="mb-3">
-                                  <Label className="form-label-lg fw-semibold">
-                                    Date d'Échéance*
-                                  </Label>
-                                  <Input
-                                    type="date"
-                                    name="dateEcheance"
-                                    value={dateEcheance}
-                                    onChange={(e) =>
-                                      setDateEcheance(e.target.value)
-                                    }
-                                    onBlur={validation.handleBlur}
-                                    invalid={
-                                      validation.touched.dateEcheance &&
-                                      !!validation.errors.dateEcheance
-                                    }
-                                    className="form-control-lg"
-                                  />
-                                  {validation.touched.dateEcheance &&
-                                    validation.errors.dateEcheance && (
-                                      <div className="text-danger mt-1 small">
-                                        {
-                                          validation.errors
-                                            .dateEcheance as string
-                                        }
-                                      </div>
-                                    )}
-                                </div>
-                              </Col>
-                            </Row>
-                          )}
-
-                          {/* Virement - No input needed */}
-
-                          {/* Espace / Notes  <div className="mb-3">
-                            <Label className="form-label-lg fw-semibold">
-                              Notes Paiement
-                            </Label>
-                            <Input
-                              type="textarea"
-                              name="espaceNotes"
-                              value={espaceNotes}
-                              onChange={(e) => setEspaceNotes(e.target.value)}
-                              placeholder="Notes supplémentaires sur le paiement..."
-                              rows="2"
-                              className="form-control-lg"
-                            />
-                          </div> */}
-                          {/* In your detail modal payment section */}
-                          {/* Enhanced Payment Method Section */}
-                          {/* Simple Payment Method Section */}
-                          {/* Simple Payment Method Section */}
-                          <Card className="border-0 shadow-sm mb-4">
-                            <CardBody className="p-4">
+                          {/* Payment Methods List */}
+                          {paymentMethods.map((payment, index) => (
+                            <div
+                              key={payment.id}
+                              className="border rounded p-3 mb-3 bg-light"
+                            >
                               <div className="d-flex justify-content-between align-items-center mb-3">
-                                <h5 className="fw-semibold text-primary mb-0">
-                                  <i className="ri-bank-card-line me-2"></i>
-                                  Modes de Règlement
-                                </h5>
-
-                                <Button
-                                  color="primary"
-                                  size="sm"
-                                  onClick={addPaymentMethod}
-                                  className="btn-invoice-primary"
-                                >
-                                  <i className="ri-add-line me-1"></i>
-                                  Ajouter Paiement
-                                </Button>
+                                <h6 className="fw-semibold mb-0 text-dark">
+                                  Paiement #{index + 1}
+                                </h6>
+                                {paymentMethods.length > 1 && (
+                                  <Button
+                                    color="danger"
+                                    size="sm"
+                                    onClick={() =>
+                                      removePaymentMethod(payment.id)
+                                    }
+                                    className="btn-invoice-danger"
+                                  >
+                                    <i className="ri-close-line"></i>
+                                  </Button>
+                                )}
                               </div>
 
-                              {/* Payment Methods List */}
-                              {paymentMethods.map((payment, index) => (
-                                <div
-                                  key={payment.id}
-                                  className="border rounded p-3 mb-3 bg-light"
-                                >
-                                  <div className="d-flex justify-content-between align-items-center mb-3">
-                                    <h6 className="fw-semibold mb-0 text-dark">
-                                      Paiement #{index + 1}
-                                    </h6>
+                              <Row className="g-3">
+                                {/* Method Type */}
+                                <Col md={paymentMethods.length === 1 ? 12 : 3}>
+                                  <Label className="form-label fw-semibold">
+                                    Type
+                                  </Label>
+                                  <Input
+                                    type="select"
+                                    value={payment.method}
+                                    onChange={(e) =>
+                                      updatePaymentMethod(
+                                        payment.id,
+                                        "method",
+                                        e.target.value
+                                      )
+                                    }
+                                    className="form-control"
+                                  >
+                                    <option value="especes">Espèces</option>
+                                    <option value="cheque">Chèque</option>
+                                    <option value="virement">Virement</option>
+                                    <option value="traite">Traite</option>
+                                    <option value="tpe">
+                                      Carte Bancaire "TPE"
+                                    </option>
+                                  </Input>
+                                </Col>
 
-                                    {paymentMethods.length > 1 && (
-                                      <Button
-                                        color="danger"
-                                        size="sm"
-                                        onClick={() =>
-                                          removePaymentMethod(payment.id)
-                                        }
-                                        className="btn-invoice-danger"
-                                      >
-                                        <i className="ri-close-line"></i>
-                                      </Button>
-                                    )}
-                                  </div>
+                                {/* Montant - Only show when multiple payment methods */}
+                                {paymentMethods.length > 1 && (
+                                  <Col md={3}>
+                                    <Label className="form-label fw-semibold">
+                                      Montant (DT)
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      step="0.001"
+                                      min="0"
+                                      value={
+                                        payment.amount === 0
+                                          ? ""
+                                          : payment.amount
+                                      }
+                                      onChange={(e) => {
+                                        const value =
+                                          e.target.value === ""
+                                            ? 0
+                                            : Number(e.target.value);
+                                        updatePaymentMethod(
+                                          payment.id,
+                                          "amount",
+                                          value
+                                        );
+                                      }}
+                                      placeholder="0.000"
+                                      className="form-control"
+                                    />
+                                  </Col>
+                                )}
 
-                                  <Row className="g-3">
-                                    {/* Method Type */}
-                                    <Col
-                                      md={paymentMethods.length === 1 ? 12 : 3}
-                                    >
-                                      <Label className="form-label fw-semibold">
-                                        Type
-                                      </Label>
-                                      <Input
-                                        type="select"
-                                        value={payment.method}
-                                        onChange={(e) =>
-                                          updatePaymentMethod(
-                                            payment.id,
-                                            "method",
-                                            e.target.value
-                                          )
-                                        }
-                                        className="form-control"
-                                      >
-                                        <option value="especes">Espèces</option>
-                                        <option value="cheque">Chèque</option>
-                                        <option value="virement">
-                                          Virement
-                                        </option>
-                                        <option value="traite">Traite</option>
-                                        <option value="tpe">Carte Bancaire "TPE"</option> {/* ADD THIS */}
+                                {/* Numéro - Only for cheque and traite */}
+                                {(payment.method === "cheque" ||
+                                  payment.method === "traite") && (
+                                  <Col md={paymentMethods.length === 1 ? 6 : 3}>
+                                    <Label className="form-label fw-semibold">
+                                      {payment.method === "cheque"
+                                        ? "Numéro Chèque"
+                                        : "Numéro Traite"}
+                                    </Label>
+                                    <Input
+                                      type="text"
+                                      value={payment.numero || ""}
+                                      onChange={(e) =>
+                                        updatePaymentMethod(
+                                          payment.id,
+                                          "numero",
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder={
+                                        payment.method === "cheque"
+                                          ? "N° chèque"
+                                          : "N° traite"
+                                      }
+                                      className="form-control"
+                                    />
+                                  </Col>
+                                )}
 
-                                      </Input>
-                                    </Col>
+                                {/* Banque - Only for cheque */}
+                                {payment.method === "cheque" && (
+                                  <Col md={paymentMethods.length === 1 ? 6 : 3}>
+                                    <Label className="form-label fw-semibold">
+                                      Banque
+                                    </Label>
+                                    <Input
+                                      type="text"
+                                      value={payment.banque || ""}
+                                      onChange={(e) =>
+                                        updatePaymentMethod(
+                                          payment.id,
+                                          "banque",
+                                          e.target.value
+                                        )
+                                      }
+                                      placeholder="Nom banque"
+                                      className="form-control"
+                                    />
+                                  </Col>
+                                )}
 
-                                    {/* Montant - Only show when multiple payment methods */}
-                                    {paymentMethods.length > 1 && (
-                                      <Col md={3}>
-                                        <Label className="form-label fw-semibold">
-                                          Montant (DT)
-                                        </Label>
-                                        <Input
-                                          type="number"
-                                          step="0.001"
-                                          min="0"
-                                          value={
-                                            payment.amount === 0
-                                              ? ""
-                                              : payment.amount
-                                          }
-                                          onChange={(e) => {
-                                            const value =
-                                              e.target.value === ""
-                                                ? 0
-                                                : Number(e.target.value);
-                                            updatePaymentMethod(
-                                              payment.id,
-                                              "amount",
-                                              value
-                                            );
-                                          }}
-                                          placeholder="0.000"
-                                          className="form-control"
-                                        />
-                                      </Col>
-                                    )}
+                                {/* Date Échéance - Only for traite */}
+                                {payment.method === "traite" && (
+                                  <Col md={paymentMethods.length === 1 ? 6 : 3}>
+                                    <Label className="form-label fw-semibold">
+                                      Date Échéance
+                                    </Label>
+                                    <Input
+                                      type="date"
+                                      value={
+                                        payment.dateEcheance ||
+                                        moment().format("YYYY-MM-DD")
+                                      }
+                                      onChange={(e) =>
+                                        updatePaymentMethod(
+                                          payment.id,
+                                          "dateEcheance",
+                                          e.target.value
+                                        )
+                                      }
+                                      className="form-control"
+                                    />
+                                  </Col>
+                                )}
+                              </Row>
 
-                                    {/* Numéro - Only for cheque and traite */}
-                                    {(payment.method === "cheque" ||
-                                      payment.method === "traite") && (
-                                      <Col
-                                        md={paymentMethods.length === 1 ? 6 : 3}
-                                      >
-                                        <Label className="form-label fw-semibold">
-                                          {payment.method === "cheque"
-                                            ? "Numéro Chèque"
-                                            : "Numéro Traite"}
-                                        </Label>
-                                        <Input
-                                          type="text"
-                                          value={payment.numero || ""}
-                                          onChange={(e) =>
-                                            updatePaymentMethod(
-                                              payment.id,
-                                              "numero",
-                                              e.target.value
-                                            )
-                                          }
-                                          placeholder={
-                                            payment.method === "cheque"
-                                              ? "N° chèque"
-                                              : "N° traite"
-                                          }
-                                          className="form-control"
-                                        />
-                                      </Col>
-                                    )}
-
-                                    {/* Banque - Only for cheque */}
-                                    {payment.method === "cheque" && (
-                                      <Col
-                                        md={paymentMethods.length === 1 ? 6 : 3}
-                                      >
-                                        <Label className="form-label fw-semibold">
-                                          Banque
-                                        </Label>
-                                        <Input
-                                          type="text"
-                                          value={payment.banque || ""}
-                                          onChange={(e) =>
-                                            updatePaymentMethod(
-                                              payment.id,
-                                              "banque",
-                                              e.target.value
-                                            )
-                                          }
-                                          placeholder="Nom banque"
-                                          className="form-control"
-                                        />
-                                      </Col>
-                                    )}
-
-                                    {/* Date Échéance - Only for traite */}
-                                    {payment.method === "traite" && (
-                                      <Col
-                                        md={paymentMethods.length === 1 ? 6 : 3}
-                                      >
-                                        <Label className="form-label fw-semibold">
-                                          Date Échéance
-                                        </Label>
-                                        <Input
-                                          type="date"
-                                          value={
-                                            payment.dateEcheance ||
-                                            moment().format("YYYY-MM-DD")
-                                          }
-                                          onChange={(e) =>
-                                            updatePaymentMethod(
-                                              payment.id,
-                                              "dateEcheance",
-                                              e.target.value
-                                            )
-                                          }
-                                          className="form-control"
-                                        />
-                                      </Col>
-                                    )}
-                                  </Row>
-
-                                  {/* Auto-set amount to finalTotal when only one payment method */}
-                                  {paymentMethods.length === 1 && (
-                                    <div className="mt-2">
-                                      <small className="text-muted">
-                                        <i className="ri-information-line me-1"></i>
-                                        Montant automatiquement défini à:{" "}
-                                        <strong>
-                                          {finalTotal.toFixed(3)} DT
-                                        </strong>
-                                      </small>
-                                    </div>
-                                  )}
+                              {/* Auto-set amount to finalTotal when only one payment method */}
+                              {paymentMethods.length === 1 && (
+                                <div className="mt-2">
+                                  <small className="text-muted">
+                                    <i className="ri-information-line me-1"></i>
+                                    Montant automatiquement défini à:{" "}
+                                    <strong>
+                                      {isCreatingFacture && timbreFiscal
+                                        ? (finalTotal + 1).toFixed(3)
+                                        : finalTotal.toFixed(3)}{" "}
+                                      DT
+                                    </strong>
+                                  </small>
                                 </div>
-                              ))}
-
-                              {/* Payment Summary - Only show when multiple payment methods */}
-                              {paymentMethods.length > 1 && (
-                                <Card
-                                  className={
-                                    isPaymentTotalValid
-                                      ? "border-success bg-success bg-opacity-10"
-                                      : "border-warning bg-warning bg-opacity-10"
-                                  }
-                                >
-                                  <CardBody className="p-3">
-                                    <Row className="align-items-center">
-                                      <Col md={8}>
-                                        <div className="d-flex justify-content-between">
-                                          <span className="fw-semibold">
-                                            Total des Paiements:
-                                          </span>
-                                          <span className="fw-bold fs-5">
-                                            {totalPaymentAmount.toFixed(3)} DT
-                                          </span>
-                                        </div>
-                                        <div className="d-flex justify-content-between mt-1">
-                                          <span className="fw-semibold">
-                                            Montant à Payer:
-                                          </span>
-                                          <span className="fw-bold fs-5">
-                                            {finalTotal.toFixed(3)} DT
-                                          </span>
-                                        </div>
-                                      </Col>
-                                      <Col md={4}>
-                                        <div className="text-end">
-                                          {isPaymentTotalValid ? (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Équilibré
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="warning"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-error-warning-line me-1"></i>
-                                              Différence:{" "}
-                                              {(
-                                                totalPaymentAmount - finalTotal
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </Col>
-                                    </Row>
-                                  </CardBody>
-                                </Card>
                               )}
-                            </CardBody>
-                          </Card>
+                            </div>
+                          ))}
+
+                          {/* Payment Summary - Only show when multiple payment methods */}
+                          {paymentMethods.length > 1 && (
+                            <Card
+                              className={
+                                isPaymentTotalValid
+                                  ? "border-success bg-success bg-opacity-10"
+                                  : "border-warning bg-warning bg-opacity-10"
+                              }
+                            >
+                              <CardBody className="p-3">
+                                <Row className="align-items-center">
+                                  <Col md={8}>
+                                    <div className="d-flex justify-content-between">
+                                      <span className="fw-semibold">
+                                        Total des Paiements:
+                                      </span>
+                                      <span className="fw-bold fs-5">
+                                        {totalPaymentAmount.toFixed(3)} DT
+                                      </span>
+                                    </div>
+                                    <div className="d-flex justify-content-between mt-1">
+                                      <span className="fw-semibold">
+                                        Montant à Payer:
+                                      </span>
+                                      <span className="fw-bold fs-5">
+                                        {isCreatingFacture && timbreFiscal
+                                          ? (finalTotal + 1).toFixed(3)
+                                          : finalTotal.toFixed(3)}{" "}
+                                        DT
+                                      </span>
+                                    </div>
+                                  </Col>
+                                  <Col md={4}>
+                                    <div className="text-end">
+                                      {isPaymentTotalValid ? (
+                                        <Badge color="success" className="fs-6">
+                                          <i className="ri-check-line me-1"></i>
+                                          Équilibré
+                                        </Badge>
+                                      ) : (
+                                        <Badge color="warning" className="fs-6">
+                                          <i className="ri-error-warning-line me-1"></i>
+                                          Différence:{" "}
+                                          {(
+                                            totalPaymentAmount -
+                                            (isCreatingFacture && timbreFiscal
+                                              ? finalTotal + 1
+                                              : finalTotal)
+                                          ).toFixed(3)}{" "}
+                                          DT
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </Col>
+                                </Row>
+                              </CardBody>
+                            </Card>
+                          )}
                         </CardBody>
                       </Card>
 
@@ -3616,16 +4535,29 @@ useEffect(() => {
                         type="submit"
                         className="btn-invoice btn-invoice-primary fs-6 px-4"
                         disabled={
-                          selectedArticles.length === 0 || !selectedClient
+                          selectedArticles.length === 0 ||
+                          !selectedClient ||
+                          (isCreatingFacture && !selectedDepot)
                         }
                       >
-                        <i className="ri-save-line me-2"></i>
-                        {isEdit ? "Modifier" : "Enregistrer"}
+                        <i
+                          className={
+                            isCreatingFacture
+                              ? "ri-file-text-line me-2"
+                              : "ri-save-line me-2"
+                          }
+                        ></i>
+                        {isCreatingFacture
+                          ? "Créer Facture"
+                          : isEdit
+                          ? "Modifier"
+                          : "Enregistrer"}
                       </Button>
                     </ModalFooter>
                   </Form>
                 </Modal>
 
+                {/* Quick Client Creation Modal */}
                 {/* Quick Client Creation Modal */}
                 <Modal
                   isOpen={clientModal}
@@ -3634,13 +4566,27 @@ useEffect(() => {
                   size="lg"
                 >
                   <ModalHeader toggle={() => setClientModal(false)}>
-                    Nouveau Client
+                    <div className="d-flex align-items-center">
+                      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
+                        <i className="ri-user-add-line text-primary fs-4"></i>
+                      </div>
+                      <div>
+                        <h4 className="mb-0 fw-bold text-dark">
+                          Nouveau Client
+                        </h4>
+                        <small className="text-muted">
+                          Ajouter un nouveau client rapidement
+                        </small>
+                      </div>
+                    </div>
                   </ModalHeader>
                   <ModalBody>
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Raison Sociale</Label>
+                          <Label className="form-label fw-semibold">
+                            Raison Sociale*
+                          </Label>
                           <Input
                             value={newClient.raison_sociale}
                             onChange={(e) =>
@@ -3650,12 +4596,15 @@ useEffect(() => {
                               })
                             }
                             placeholder="Raison sociale"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Désignation</Label>
+                          <Label className="form-label fw-semibold">
+                            Désignation
+                          </Label>
                           <Input
                             value={newClient.designation}
                             onChange={(e) =>
@@ -3665,6 +4614,7 @@ useEffect(() => {
                               })
                             }
                             placeholder="Désignation"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
@@ -3673,7 +4623,9 @@ useEffect(() => {
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Matricule Fiscal</Label>
+                          <Label className="form-label fw-semibold">
+                            Matricule Fiscal
+                          </Label>
                           <Input
                             value={newClient.matricule_fiscal}
                             onChange={(e) =>
@@ -3683,12 +4635,15 @@ useEffect(() => {
                               })
                             }
                             placeholder="Matricule fiscal"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Registre Commerce</Label>
+                          <Label className="form-label fw-semibold">
+                            Registre Commerce
+                          </Label>
                           <Input
                             value={newClient.register_commerce}
                             onChange={(e) =>
@@ -3698,13 +4653,14 @@ useEffect(() => {
                               })
                             }
                             placeholder="Registre de commerce"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
                     <div className="mb-3">
-                      <Label>Adresse</Label>
+                      <Label className="form-label fw-semibold">Adresse</Label>
                       <Input
                         value={newClient.adresse}
                         onChange={(e) =>
@@ -3713,14 +4669,17 @@ useEffect(() => {
                             adresse: e.target.value,
                           })
                         }
-                        placeholder="Adresse"
+                        placeholder="Adresse complète"
+                        className="form-control-lg"
                       />
                     </div>
 
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Ville</Label>
+                          <Label className="form-label fw-semibold">
+                            Ville
+                          </Label>
                           <Input
                             value={newClient.ville}
                             onChange={(e) =>
@@ -3730,12 +4689,15 @@ useEffect(() => {
                               })
                             }
                             placeholder="Ville"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Code Postal</Label>
+                          <Label className="form-label fw-semibold">
+                            Code Postal
+                          </Label>
                           <Input
                             value={newClient.code_postal}
                             onChange={(e) =>
@@ -3745,6 +4707,7 @@ useEffect(() => {
                               })
                             }
                             placeholder="Code postal"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
@@ -3753,64 +4716,113 @@ useEffect(() => {
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 1</Label>
+                          <Label className="form-label fw-semibold">
+                            Téléphone 1
+                          </Label>
                           <Input
                             value={newClient.telephone1}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone1: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 1"
+                            onChange={(e) => {
+                              const value = e.target.value;
+
+                              // Apply auto-space formatting for phone numbers
+                              if (value) {
+                                const formatted = formatPhoneInput(value);
+                                setNewClient({
+                                  ...newClient,
+                                  telephone1: formatted,
+                                });
+                              } else {
+                                setNewClient({
+                                  ...newClient,
+                                  telephone1: value,
+                                });
+                              }
+                            }}
+                            placeholder="22 222 222"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 2</Label>
+                          <Label className="form-label fw-semibold">
+                            Téléphone 2
+                          </Label>
                           <Input
                             value={newClient.telephone2}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone2: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 2"
+                            onChange={(e) => {
+                              const value = e.target.value;
+
+                              // Apply auto-space formatting for phone numbers
+                              if (value) {
+                                const formatted = formatPhoneInput(value);
+                                setNewClient({
+                                  ...newClient,
+                                  telephone2: formatted,
+                                });
+                              } else {
+                                setNewClient({
+                                  ...newClient,
+                                  telephone2: value,
+                                });
+                              }
+                            }}
+                            placeholder="22 222 222"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                     </Row>
 
                     <div className="mb-3">
-                      <Label>Email</Label>
+                      <Label className="form-label fw-semibold">Email</Label>
                       <Input
                         type="email"
                         value={newClient.email}
                         onChange={(e) =>
                           setNewClient({ ...newClient, email: e.target.value })
                         }
-                        placeholder="Email"
+                        placeholder="email@example.com"
+                        className="form-control-lg"
                       />
                     </div>
+
+                    <div className="mb-3">
+                      <Label className="form-label fw-semibold">Statut</Label>
+                      <Input
+                        type="select"
+                        value={newClient.status}
+                        onChange={(e) =>
+                          setNewClient({
+                            ...newClient,
+                            status: e.target.value as "Actif" | "Inactif",
+                          })
+                        }
+                        className="form-control-lg"
+                      >
+                        <option value="Actif">Actif</option>
+                        <option value="Inactif">Inactif</option>
+                      </Input>
+                    </div>
                   </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
+                  <ModalFooter className="border-0">
+                    <Button
+                      color="light"
                       onClick={() => setClientModal(false)}
+                      className="btn-invoice fs-6 px-4"
                     >
+                      <i className="ri-close-line me-2"></i>
                       Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
+                    </Button>
+                    <Button
+                      color="primary"
                       onClick={handleCreateClient}
+                      className="btn-invoice-primary fs-6 px-4"
                     >
-                      Créer Client
-                    </button>
-                  </div>
+                      <i className="ri-check-line me-2"></i>
+                      Créer et Sélectionner
+                    </Button>
+                  </ModalFooter>
                 </Modal>
 
                 {/* Quick Article Creation Modal */}
@@ -3819,354 +4831,473 @@ useEffect(() => {
                   isOpen={articleModal}
                   toggle={() => setArticleModal(false)}
                   centered
-                  size="xl"
+                  size="lg"
                 >
                   <ModalHeader toggle={() => setArticleModal(false)}>
                     <div className="d-flex align-items-center">
-                      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-add-box-line text-primary fs-4"></i>
+                      <div className="modal-icon-wrapper bg-success bg-opacity-10 rounded-circle p-2 me-3">
+                        <i className="ri-add-box-line text-success fs-4"></i>
                       </div>
                       <div>
                         <h4 className="mb-0 fw-bold text-dark">
-                          Nouvel Article Rapide
+                          Nouvel Article
                         </h4>
                         <small className="text-muted">
-                          Créer un nouvel article rapidement
+                          Ajouter un nouveau produit
                         </small>
                       </div>
                     </div>
                   </ModalHeader>
-                  <ModalBody>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Référence</Label>
-                          <Input
-                            value={newArticle.reference}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                reference: e.target.value,
-                              })
-                            }
-                            placeholder="Référence article"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Nom</Label>
-                          <Input
-                            value={newArticle.nom}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                nom: e.target.value,
-                              })
-                            }
-                            placeholder="Nom de l'article"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
 
-                    <div className="mb-3">
-                      <Label className="form-label">Désignation</Label>
-                      <Input
-                        value={newArticle.designation}
-                        onChange={(e) =>
-                          setNewArticle({
-                            ...newArticle,
-                            designation: e.target.value,
-                          })
-                        }
-                        placeholder="Désignation complète"
-                      />
-                    </div>
+                  <Form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleCreateArticle();
+                    }}
+                  >
+                    <ModalBody>
+                      {/* ================= BASIC INFORMATION ================= */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-information-line me-2"></i>
+                            Informations de Base
+                          </h5>
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Référence
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.reference}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      reference: e.target.value,
+                                    })
+                                  }
+                                  placeholder="REF"
+                                  className="form-control-lg"
+                                />
+                                <small className="text-muted">
+                                  Identifiant unique de l'article
+                                </small>
+                              </div>
+                            </Col>
 
-                    {/* Categories */}
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Famille Principale
-                          </Label>
-                          <Input
-                            type="select"
-                            value={newArticle.categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                categorie_id: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">Sélectionner une famille</option>
-                            {categories
-                              .filter((cat) => !cat.parent_id)
-                              .map((categorie) => (
-                                <option key={categorie.id} value={categorie.id}>
-                                  {categorie.nom}
-                                </option>
-                              ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Sous-Famille</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.sous_categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                sous_categorie_id: e.target.value,
-                              })
-                            }
-                            disabled={!newArticle.categorie_id}
-                          >
-                            <option value="">
-                              Sélectionner une sous-famille
-                            </option>
-                            {subcategories.map((subcategorie) => (
-                              <option
-                                key={subcategorie.id}
-                                value={subcategorie.id}
-                              >
-                                {subcategorie.nom}
-                              </option>
-                            ))}
-                          </Input>
-                          {!newArticle.categorie_id && (
-                            <small className="text-muted">
-                              Sélectionnez d'abord une famille principale
-                            </small>
-                          )}
-                        </div>
-                      </Col>
-                    </Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Désignation
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.designation}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      designation: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Nom de l'article"
+                                  className="form-control-lg"
+                                />
+                                <small className="text-muted">
+                                  Nom complet du produit
+                                </small>
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Fournisseur</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.fournisseur_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                fournisseur_id: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">
-                              Sélectionner un fournisseur
-                            </option>
-                            {fournisseurs.map((fournisseur) => (
-                              <option
-                                key={fournisseur.id}
-                                value={fournisseur.id}
-                              >
-                                {fournisseur.raison_sociale}
-                              </option>
-                            ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Type</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.type}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                type: e.target.value as
-                                  | "Consigné"
-                                  | "Non Consigné",
-                              })
-                            }
-                          >
-                            <option value="Non Consigné">Non Consigné</option>
-                            <option value="Consigné">Consigné</option>
-                          </Input>
-                        </div>
-                      </Col>
-                    </Row>
+                      {/* ================= CATEGORIES ================= */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-folder-line me-2"></i>
+                            Catégorisation
+                          </h5>
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Famille Principale
+                                </Label>
+                                <Input
+                                  type="select"
+                                  value={newArticle.categorie_id}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      categorie_id: e.target.value,
+                                    })
+                                  }
+                                  className="form-control-lg"
+                                >
+                                  <option value="">
+                                    Sélectionner une famille principale
+                                  </option>
+                                  {categories
+                                    .filter((c) => !c.parent_id)
+                                    .map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.nom}
+                                      </option>
+                                    ))}
+                                </Input>
+                                <small className="text-muted">
+                                  Catégorie principale
+                                </small>
+                              </div>
+                            </Col>
 
-                    {/* Pricing Section */}
-                    <h6 className="fw-semibold mb-3 text-primary">
-                      Prix et Taxes
-                    </h6>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                pua_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat TTC</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Sous-Famille
+                                </Label>
+                                <Input
+                                  type="select"
+                                  value={newArticle.sous_categorie_id}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      sous_categorie_id: e.target.value,
+                                    })
+                                  }
+                                  className="form-control-lg"
+                                >
+                                  <option value="">
+                                    Sélectionner une sous-famille
+                                  </option>
+                                  {subcategories.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.nom}
+                                    </option>
+                                  ))}
+                                </Input>
+                                <small className="text-muted">
+                                  Sous-catégorie
+                                </small>
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix de vente HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                puv_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Prix de vente TTC
-                          </Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ttc}
-                            readOnly
-                            className="bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                      {/* ================= SUPPLIER / TYPE ================= */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-truck-line me-2"></i>
+                            Fournisseur & Type
+                          </h5>
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Fournisseur
+                                </Label>
+                                <Input
+                                  type="select"
+                                  value={newArticle.fournisseur_id}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      fournisseur_id: e.target.value,
+                                    })
+                                  }
+                                  className="form-control-lg"
+                                >
+                                  <option value="">
+                                    Sélectionner un fournisseur
+                                  </option>
+                                  {fournisseurs.map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.raison_sociale}
+                                    </option>
+                                  ))}
+                                </Input>
+                                <small className="text-muted">
+                                  Fournisseur principal
+                                </small>
+                              </div>
+                            </Col>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Quantité en stock
-                          </Label>
-                          <Input
-                            type="number"
-                            value={newArticle.qte}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                qte: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">TVA (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.tva}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                tva: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Type
+                                </Label>
+                                <Input
+                                  type="select"
+                                  value={newArticle.type}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      type: e.target.value,
+                                    })
+                                  }
+                                  className="form-control-lg"
+                                >
+                                  <option value="Non Consigné">
+                                    Non Consigné
+                                  </option>
+                                  <option value="Consigné">Consigné</option>
+                                </Input>
+                                <small className="text-muted">
+                                  Type d'article
+                                </small>
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Remise (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.remise}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                remise: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3 d-flex align-items-end">
-                          <div className="form-check form-switch">
-                            <Input
-                              type="checkbox"
-                              checked={newArticle.taux_fodec}
-                              onChange={(e) =>
-                                setNewArticle({
-                                  ...newArticle,
-                                  taux_fodec: e.target.checked,
-                                })
-                              }
-                              className="form-check-input"
-                            />
-                            <Label
-                              check
-                              className="form-check-label fw-semibold"
-                            >
-                              Taux FODEC (1%)
-                            </Label>
-                          </div>
-                        </div>
-                      </Col>
-                    </Row>
+                      {/* ================= PRICING SECTION ================= */}
+                      <Row className="mb-4">
+                        <Col md={6}>
+                          <Card className="border-0 shadow-sm h-100">
+                            <CardBody className="p-4">
+                              <h6 className="fw-semibold mb-4 text-primary">
+                                <i className="ri-shopping-bag-line me-2"></i>
+                                Prix d'Achat
+                              </h6>
 
-                    {/* Website Settings */}
-                  </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
-                      onClick={() => setArticleModal(false)}
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleCreateArticle}
-                    >
-                      <i className="ri-add-line me-2"></i>
-                      Créer Article
-                    </button>
-                  </div>
+                              <div className="mb-4">
+                                <Label className="form-label-lg fw-semibold">
+                                  Prix d'achat HT (DT)
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.pua_ht}
+                                  onChange={(e) =>
+                                    handlePriceChange("pua_ht", e.target.value)
+                                  }
+                                  placeholder="0,000"
+                                  className="form-control-lg text-end"
+                                />
+                                <small className="text-muted">
+                                  Prix hors taxes avant marge
+                                </small>
+                              </div>
+
+                              <div className="mb-0">
+                                <Label className="form-label-lg fw-semibold">
+                                  Prix d'achat TTC (DT)
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.pua_ttc}
+                                  onChange={(e) =>
+                                    handlePriceChange("pua_ttc", e.target.value)
+                                  }
+                                  placeholder="0,000"
+                                  className="form-control-lg text-end"
+                                />
+                                <small className="text-muted">
+                                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                                  {1 + parseNumber(newArticle.tva) / 100}
+                                </small>
+                              </div>
+                            </CardBody>
+                          </Card>
+                        </Col>
+
+                        <Col md={6}>
+                          <Card className="border-0 shadow-sm h-100">
+                            <CardBody className="p-4">
+                              <h6 className="fw-semibold mb-4 text-primary">
+                                <i className="ri-price-tag-3-line me-2"></i>
+                                Prix de Vente
+                              </h6>
+
+                              <div className="mb-4">
+                                <Label className="form-label-lg fw-semibold">
+                                  Prix de vente HT (DT)
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.puv_ht}
+                                  onChange={(e) =>
+                                    handlePriceChange("puv_ht", e.target.value)
+                                  }
+                                  placeholder="0,000"
+                                  className="form-control-lg text-end"
+                                />
+                                <small className="text-muted">
+                                  Prix de vente hors taxes
+                                </small>
+                              </div>
+
+                              <div className="mb-0">
+                                <Label className="form-label-lg fw-semibold">
+                                  Prix de vente TTC (DT)
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.puv_ttc}
+                                  onChange={(e) =>
+                                    handlePriceChange("puv_ttc", e.target.value)
+                                  }
+                                  placeholder="0,000"
+                                  className="form-control-lg text-end"
+                                />
+                                <small className="text-muted">
+                                  HT × {newArticle.taux_fodec ? "1.01" : "1"} ×{" "}
+                                  {1 + parseNumber(newArticle.tva) / 100}
+                                </small>
+                              </div>
+                            </CardBody>
+                          </Card>
+                        </Col>
+                      </Row>
+
+                      {/* ================= TAX SETTINGS ================= */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-percent-line me-2"></i>
+                            Paramètres Fiscaux
+                          </h5>
+
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-4">
+                                <Label className="form-label-lg fw-semibold">
+                                  Taux de TVA (%)
+                                </Label>
+                                <Input
+                                  type="select"
+                                  value={newArticle.tva}
+                                  onChange={(e) =>
+                                    handleTVAChange(e.target.value)
+                                  }
+                                  className="form-control-lg"
+                                >
+                                  <option value="0">0% (Exonéré)</option>
+                                  <option value="7">7%</option>
+                                  <option value="10">10%</option>
+                                  <option value="13">13%</option>
+                                  <option value="19">19% (Taux normal)</option>
+                                  <option value="21">21%</option>
+                                </Input>
+                                <small className="text-muted">
+                                  Taux de TVA applicable
+                                </small>
+                              </div>
+                            </Col>
+
+                            <Col md={6}>
+                              <div className="mb-4">
+                                <Label className="form-label-lg fw-semibold d-block">
+                                  FODEC
+                                </Label>
+                                <div className="form-check form-switch form-switch-lg">
+                                  <Input
+                                    type="checkbox"
+                                    className="form-check-input"
+                                    checked={!!newArticle.taux_fodec}
+                                    onChange={(e) =>
+                                      handleFodecChange(e.target.checked)
+                                    }
+                                    id="fodecSwitch"
+                                  />
+                                  <Label
+                                    className="form-check-label fw-semibold"
+                                    for="fodecSwitch"
+                                  >
+                                    Appliquer FODEC (1%)
+                                  </Label>
+                                </div>
+                                <small className="text-muted">
+                                  Taxe FODEC de 1% sur le HT
+                                </small>
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
+
+                      {/* ================= INVENTORY & DETAILS ================= */}
+                      <Card className="border-0 shadow-sm mb-4">
+                        <CardBody className="p-4">
+                          <h5 className="fw-semibold mb-4 text-primary">
+                            <i className="ri-store-line me-2"></i>
+                            Stock & Détails
+                          </h5>
+                          <Row>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Quantité en stock
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.qte}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      qte: e.target.value,
+                                    })
+                                  }
+                                  placeholder="0"
+                                  className="form-control-lg"
+                                />
+                                <small className="text-muted">
+                                  Stock initial disponible
+                                </small>
+                              </div>
+                            </Col>
+                            <Col md={6}>
+                              <div className="mb-3">
+                                <Label className="form-label-lg fw-semibold">
+                                  Remise (%)
+                                </Label>
+                                <Input
+                                  type="text"
+                                  value={newArticle.remise}
+                                  onChange={(e) =>
+                                    setNewArticle({
+                                      ...newArticle,
+                                      remise: e.target.value,
+                                    })
+                                  }
+                                  placeholder="0"
+                                  className="form-control-lg"
+                                />
+                                <small className="text-muted">
+                                  Pourcentage de remise par défaut
+                                </small>
+                              </div>
+                            </Col>
+                          </Row>
+                        </CardBody>
+                      </Card>
+                    </ModalBody>
+
+                    <ModalFooter className="border-0 pt-4">
+                      <Button
+                        color="light"
+                        onClick={() => setArticleModal(false)}
+                        className="btn-invoice fs-6 px-4"
+                      >
+                        <i className="ri-close-line me-2"></i>
+                        Annuler
+                      </Button>
+                      <Button
+                        color="success"
+                        type="submit"
+                        className="btn-invoice btn-invoice-success fs-6 px-4"
+                      >
+                        <i className="ri-add-line me-2"></i>
+                        Créer Article
+                      </Button>
+                    </ModalFooter>
+                  </Form>
                 </Modal>
 
                 <VenteComptoirePDFModal

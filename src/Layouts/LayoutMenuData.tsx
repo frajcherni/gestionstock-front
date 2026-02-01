@@ -9,6 +9,7 @@ const Navdata = () => {
     const [isAchat, setIsAchat] = useState<boolean>(false);
     const [isVente, setIsVente] = useState<boolean>(false);
     const [isWebsite, setIsWebsite] = useState<boolean>(false);
+    const [isStock, setIsStock] = useState<boolean>(false); // New state for Stock
 
     const [iscurrentState, setIscurrentState] = useState('Dashboard');
 
@@ -44,6 +45,9 @@ const Navdata = () => {
         if (iscurrentState !== 'Website') {
             setIsWebsite(false);
         }
+        if (iscurrentState !== 'Stock') { // Reset stock state
+            setIsStock(false);
+        }
     }, [
         history,
         iscurrentState,
@@ -51,7 +55,8 @@ const Navdata = () => {
         isGestion,
         isAchat,
         isVente,
-        isWebsite
+        isWebsite,
+        isStock // Add stock to dependencies
     ]);
 
     const menuItems: any = [
@@ -121,6 +126,42 @@ const Navdata = () => {
                     label: "Vendeurs",
                     link: "/Vendeur",
                     parentId: "gestion",
+                },
+            ],
+        },
+        {
+            id: "stock",
+            label: "Stock",
+            icon: "ri-archive-line",
+            link: "/#",
+            click: function (e: any) {
+                e.preventDefault();
+                setIsStock(!isStock);
+                setIscurrentState('Stock');
+                updateIconSidebar(e);
+            },
+            stateVariables: isStock,
+            subItems: [
+                {
+                    id: "inventaire",
+                    label: "Inventaire Physique",
+                    icon: "ri-file-list-line",
+                    link: "/inventaire",
+                    parentId: "stock",
+                },
+                {
+                    id: "depots",
+                    label: "Dépôts/Magasins",
+                    icon: "ri-store-2-line",
+                    link: "/depots",
+                    parentId: "stock",
+                },
+                {
+                    id: "mouvements",
+                    label: "Mouvements de Stock",
+                    icon: "ri-exchange-box-line",
+                    link: "/transfert",
+                    parentId: "stock",
                 },
             ],
         },
@@ -254,6 +295,8 @@ const Navdata = () => {
                 },
             ],
         },
+  
+    
     ];
     return <React.Fragment>{menuItems}</React.Fragment>;
 };

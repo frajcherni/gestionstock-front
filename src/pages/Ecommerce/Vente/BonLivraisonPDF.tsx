@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
   },
   colN: { width: "5%" },
   colArticle: { width: "18%", textAlign: "left" },
-  colDesignation: { width: "25%", textAlign: "left" },
+  colDesignation: { width: "29%", textAlign: "left" },
   colQteC: { width: "10%" },
   colQteLiv: { width: "12%" },
   colPUHT: { width: "12%", textAlign: "right" },
@@ -293,7 +293,7 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
   // Check if delivery information exists
   const hasDeliveryInfo = bonLivraison.voiture || bonLivraison.serie || bonLivraison.chauffeur || bonLivraison.cin;
 
-  // Calculate totals exactly like BC
+
   const calculateTotals = () => {
     if (!bonLivraison?.articles || bonLivraison.articles.length === 0) {
       return {
@@ -305,74 +305,153 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
         discountAmount: 0,
       };
     }
-
+  
+    // Step 1: Calculate original totals (without document-level discount)
     let sousTotalHTValue = 0;
-    let netHTValue = 0;
     let totalTaxValue = 0;
     let grandTotalValue = 0;
-
+    
+    // Store line details for proportional calculation
+    const lineDetails: Array<{
+      ht: number;
+      tvaRate: number;
+      tvaAmount: number;
+      ttc: number;
+      qty: number;
+    }> = [];
+  
+    // Calculate original line amounts (with line-level discounts only)
     bonLivraison.articles.forEach((article) => {
       const qty = Number(article.quantite) || 0;
+      const articleRemise = Number(article.remise) || 0;
       const tvaRate = Number(article.tva) || 0;
-      const remiseRate = Number(article.remise) || 0;
       
-      const priceHT = Number(article.prix_unitaire) || 0;
-      const priceTTC = Number(article.prix_ttc) || priceHT * (1 + tvaRate / 100);
-      
-      const montantSousTotalHT = Math.round(qty * priceHT * 1000) / 1000;
-      const montantNetHT = Math.round(qty * priceHT * (1 - remiseRate / 100) * 1000) / 1000;
-      const montantTTCLigne = Math.round(qty * priceTTC * 1000) / 1000;
-      const montantTVA = Math.round((montantTTCLigne - montantNetHT) * 1000) / 1000;
-
+      let unitHT = Number(article.prix_unitaire) || 0;
+      let unitTTC = Number(article.prix_ttc) || unitHT * (1 + tvaRate / 100);
+  
+      // Calculate line amounts
+      const lineHT = Math.round(unitHT * 1000) / 1000;
+      const lineTTC = Math.round(unitTTC * 1000) / 1000;
+  
+      const montantSousTotalHT = Math.round(qty * lineHT * 1000) / 1000;
+      const montantNetHTLigne = Math.round(
+        qty * lineHT * (1 - articleRemise / 100) * 1000
+      ) / 1000;
+      const montantTTCLigne = Math.round(qty * lineTTC * 1000) / 1000;
+      const montantTVALigne = Math.round(
+        (montantTTCLigne - montantNetHTLigne) * 1000
+      ) / 1000;
+  
       sousTotalHTValue += montantSousTotalHT;
-      netHTValue += montantNetHT;
-      totalTaxValue += montantTVA;
+      totalTaxValue += montantTVALigne;
       grandTotalValue += montantTTCLigne;
+  
+      // Store line details
+      lineDetails.push({
+        ht: montantNetHTLigne,
+        tvaRate: tvaRate,
+        tvaAmount: montantTVALigne,
+        ttc: montantTTCLigne,
+        qty: qty
+      });
     });
-
+  
+    // Round original totals
     sousTotalHTValue = Math.round(sousTotalHTValue * 1000) / 1000;
-    netHTValue = Math.round(netHTValue * 1000) / 1000;
     totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
     grandTotalValue = Math.round(grandTotalValue * 1000) / 1000;
-
+  
     let finalTotalValue = grandTotalValue;
     let discountAmountValue = 0;
-    let netHTAfterDiscount = netHTValue;
-    let totalTaxAfterDiscount = totalTaxValue;
-
+    let netHTValue = sousTotalHTValue;
+    
+    // Apply document-level remise if exists
     const remiseValue = Number(bonLivraison.remise) || 0;
     const remiseTypeValue = bonLivraison.remiseType || "percentage";
-
+  
     if (remiseValue > 0) {
       if (remiseTypeValue === "percentage") {
-        discountAmountValue = Math.round(netHTValue * (remiseValue / 100) * 1000) / 1000;
-        netHTAfterDiscount = Math.round((netHTValue - discountAmountValue) * 1000) / 1000;
-        const discountRatio = netHTAfterDiscount / netHTValue;
-        totalTaxAfterDiscount = Math.round(totalTaxValue * discountRatio * 1000) / 1000;
-        finalTotalValue = Math.round((netHTAfterDiscount + totalTaxAfterDiscount) * 1000) / 1000;
+        // ✅ SIMPLE FORMULA: Apply percentage discount on HT
+        discountAmountValue = Math.round((sousTotalHTValue * remiseValue / 100) * 1000) / 1000;
+        netHTValue = sousTotalHTValue - discountAmountValue;
+        
+        // Calculate new TVA proportionally
+        const tvaToHtRatio = sousTotalHTValue > 0 ? totalTaxValue / sousTotalHTValue : 0;
+        const newTVA = Math.round((netHTValue * tvaToHtRatio) * 1000) / 1000;
+        
+        totalTaxValue = newTVA;
+        finalTotalValue = Math.round((netHTValue + newTVA) * 1000) / 1000;
+        
       } else if (remiseTypeValue === "fixed") {
+        // ✅ FIXED DISCOUNT FORMULA: TTC is given, calculate HT
         finalTotalValue = Math.round(Number(remiseValue) * 1000) / 1000;
-        const tvaToHtRatio = totalTaxValue / netHTValue;
-        const htAfterDiscount = Math.round((finalTotalValue / (1 + tvaToHtRatio)) * 1000) / 1000;
-        discountAmountValue = Math.round((netHTValue - htAfterDiscount) * 1000) / 1000;
-        netHTAfterDiscount = htAfterDiscount;
-        totalTaxAfterDiscount = Math.round(netHTAfterDiscount * tvaToHtRatio * 1000) / 1000;
+        
+        // Find all unique TVA rates
+        const tvaRates = Array.from(new Set(bonLivraison.articles.map(a => Number(a.tva) || 0)));
+        
+        if (tvaRates.length === 1 && tvaRates[0] > 0) {
+          // ✅ SINGLE TVA RATE: HT = TTC / (1 + TVA rate)
+          const tvaRate = tvaRates[0];
+          netHTValue = Math.round((finalTotalValue / (1 + tvaRate / 100)) * 1000) / 1000;
+          totalTaxValue = Math.round((finalTotalValue - netHTValue) * 1000) / 1000;
+          
+        } else {
+          // ✅ MULTIPLE TVA RATES: Use proportional method
+          const discountCoefficient = grandTotalValue > 0 ? finalTotalValue / grandTotalValue : 0;
+          
+          // Reset values
+          netHTValue = 0;
+          totalTaxValue = 0;
+          
+          // Recalculate each line proportionally
+          bonLivraison.articles.forEach((article) => {
+            const qty = Number(article.quantite) || 0;
+            const articleRemise = Number(article.remise) || 0;
+            const tvaRate = Number(article.tva) || 0;
+            let unitHT = Number(article.prix_unitaire) || 0;
+            
+            // Calculate original line amounts
+            const montantNetHTLigne = Math.round(
+              qty * unitHT * (1 - articleRemise / 100) * 1000
+            ) / 1000;
+            
+            // Apply coefficient to get new amounts
+            const newLineHT = Math.round((montantNetHTLigne * discountCoefficient) * 1000) / 1000;
+            const newLineTVA = Math.round((newLineHT * (tvaRate / 100)) * 1000) / 1000;
+            
+            netHTValue += newLineHT;
+            totalTaxValue += newLineTVA;
+          });
+          
+          // Round final values
+          netHTValue = Math.round(netHTValue * 1000) / 1000;
+          totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+        }
+        
+        discountAmountValue = Math.round((sousTotalHTValue - netHTValue) * 1000) / 1000;
       }
+      
+      // Final rounding
+      netHTValue = Math.round(netHTValue * 1000) / 1000;
+      totalTaxValue = Math.round(totalTaxValue * 1000) / 1000;
+      finalTotalValue = Math.round(finalTotalValue * 1000) / 1000;
+      discountAmountValue = Math.round(discountAmountValue * 1000) / 1000;
+      
+    } else {
+      // No document-level discount - use original values
+      netHTValue = sousTotalHTValue;
     }
-
-    const displayNetHT = remiseValue > 0 ? netHTAfterDiscount : netHTValue;
-    const displayTotalTax = remiseValue > 0 ? totalTaxAfterDiscount : totalTaxValue;
-
+  
     return {
       sousTotalHT: Math.round(sousTotalHTValue * 1000) / 1000,
-      netHT: Math.round(displayNetHT * 1000) / 1000,
-      totalTax: Math.round(displayTotalTax * 1000) / 1000,
+      netHT: Math.round(netHTValue * 1000) / 1000,
+      totalTax: Math.round(totalTaxValue * 1000) / 1000,
       grandTotal: Math.round(grandTotalValue * 1000) / 1000,
       finalTotal: Math.round(finalTotalValue * 1000) / 1000,
       discountAmount: Math.round(discountAmountValue * 1000) / 1000,
     };
   };
-
+  
   const {
     sousTotalHT,
     netHT,
@@ -381,7 +460,7 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
     finalTotal,
     discountAmount,
   } = calculateTotals();
-
+  
   const formatCurrency = (amount: number) => {
     return amount.toFixed(3);
   };
@@ -532,45 +611,45 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
       <View style={[styles.summaryArea, { bottom: bottomPos }]}>
         <View style={styles.leftColumn}>
           {renderDeliveryInfoBox()}
-          {/* You can add other content here if needed */}
         </View>
         <View style={styles.totalsContainer}>
           <View style={styles.totalsBox}>
             <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Sous-total H.T.:</Text>
+              <Text style={styles.summaryLabel}>Total H.T.:</Text>
               <Text style={styles.summaryValue}>
                 {formatCurrency(sousTotalHT)} DT
               </Text>
             </View>
+            
+            {Number(bonLivraison.remise) > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Remise:</Text>
+                <Text style={styles.summaryValue}>
+                  - {formatCurrency(discountAmount)} DT
+                </Text>
+              </View>
+            )}
+            
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Net H.T.:</Text>
               <Text style={styles.summaryValue}>{formatCurrency(netHT)} DT</Text>
             </View>
+            
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>TVA:</Text>
               <Text style={styles.summaryValue}>
                 {formatCurrency(totalTax)} DT
               </Text>
             </View>
+            
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Total TTC:</Text>
               <Text style={styles.summaryValue}>
-                {formatCurrency(grandTotal)} DT
+                {formatCurrency(finalTotal)} DT
               </Text>
             </View>
-            {Number(bonLivraison.remise) > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {bonLivraison.remiseType === "percentage"
-                    ? `Remise (${bonLivraison.remise}%)`
-                    : "Remise (Montant fixe)"}
-                  :
-                </Text>
-                <Text style={styles.summaryValue}>
-                  - {formatCurrency(discountAmount)} DT
-                </Text>
-              </View>
-            )}
+            
+            {/* NET À PAYER - Same as Facture */}
             <View style={styles.netAPayerContainer}>
               <Text style={styles.netAPayerLabel}>NET À PAYER:</Text>
               <Text style={styles.netAPayerValue}>
@@ -677,7 +756,7 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
           <View>
             <View style={styles.livraisonDetailItem}>
               <Text style={styles.N}>
-                N°: <Text style={styles.livraisonNumberValue}>{bonLivraison.numeroLivraison || "N/A"}</Text>
+                 <Text style={styles.livraisonNumberValue}>{bonLivraison.numeroLivraison || "N/A"}</Text>
               </Text>
             </View>
             <View style={styles.livraisonDetailItem}>
@@ -716,6 +795,9 @@ const BonLivraisonPDF: React.FC<BonLivraisonPDFProps> = ({
                 )}
                 {bonLivraison.client.telephone1 && (
                   <Text style={styles.clientLineItem}>Tél: {bonLivraison.client.telephone1}</Text>
+                )}
+                 {bonLivraison.client.telephone2 && (
+                  <Text style={styles.clientLineItem}>Tél: {bonLivraison.client.telephone2}</Text>
                 )}
               </>
             )}

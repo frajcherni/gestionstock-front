@@ -407,3 +407,92 @@ export const deleteVendeur = async (id: number): Promise<void> => {
     });
     if (!response.ok) throw new Error("Échec de la suppression du vendeur");
 };
+
+
+
+// ArticleServices.ts - Add these functions
+
+// Search articles with pagination and filtering
+export const searchArticles = async (params: {
+  query?: string;
+  page?: number;
+  limit?: number;
+  category_id?: number;
+}): Promise<{ articles: Article[]; total: number; page: number }> => {
+  const queryParams = new URLSearchParams();
+  
+  if (params.query) queryParams.append('q', params.query);
+  if (params.page) queryParams.append('page', params.page.toString());
+  if (params.limit) queryParams.append('limit', params.limit.toString());
+  if (params.category_id) queryParams.append('category_id', params.category_id.toString());
+  
+  const response = await fetch(`${API_BASE}/articles/search?${queryParams}`);
+  if (!response.ok) throw new Error("Failed to search articles");
+  return response.json();
+};
+
+// Get article by barcode
+export const getArticleByBarcode = async (barcode: string): Promise<Article | null> => {
+  try {
+    const response = await fetch(`${API_BASE}/articles/barcode/${encodeURIComponent(barcode)}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error("Failed to fetch article by barcode");
+    return response.json();
+  } catch (error) {
+    console.error("Error fetching article by barcode:", error);
+    return null;
+  }
+};
+
+
+
+// Add to your ClientServices.ts or ArticleServices.ts (depending on your structure)
+export const searchClients = async (params: {
+  query?: string;
+  page?: number;
+  limit?: number;
+  status?: string;
+}): Promise<{ 
+  clients: Client[]; 
+  total: number; 
+  page: number;
+  limit: number;
+  totalPages: number;
+}> => {
+  try {
+    console.log("🔍 POST Client search request:", params);
+    
+    const response = await fetch(`${API_BASE}/clients/search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        q: params.query || '',
+        page: params.page || 1,
+        limit: params.limit || 20,
+        status: params.status || 'Actif'
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("❌ Client search error:", errorText);
+      throw new Error(`Client search failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log(`✅ Client search successful: ${data.total} clients found`);
+    return {
+      clients: data.clients || data.data || [],
+      total: data.total,
+      page: data.page,
+      limit: data.limit,
+      totalPages: data.totalPages
+    };
+    
+  } catch (error) {
+    console.error("❌ Client search function error:", error);
+    throw error;
+  }
+};

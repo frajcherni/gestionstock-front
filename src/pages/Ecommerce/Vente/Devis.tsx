@@ -4,6 +4,7 @@
   useState,
   useMemo,
   useCallback,
+  useRef,
 } from "react";
 import {
   Card,
@@ -57,6 +58,8 @@ import {
   fetchCategories,
   createArticle,
   createClient,
+  searchArticles,
+  searchClients,
 } from "../../../Components/Article/ArticleServices";
 import {
   Article,
@@ -65,8 +68,14 @@ import {
   BonCommandeClient,
   Fournisseur,
   Categorie,
+  Depot,
 } from "../../../Components/Article/Interfaces";
 import classnames from "classnames";
+import { PDFDownloadLink } from "@react-pdf/renderer";
+import DevisPDF from "./DevisPdf"; // Ajustez le chemin selon votre structure
+import logo from "../../../assets/images/imglogo.png";
+import { useProfile } from "Components/Hooks/UserHooks";
+import { fetchDepots } from "../Stock/DepotServices";
 
 const Devis = () => {
   const [detailModal, setDetailModal] = useState(false);
@@ -99,10 +108,48 @@ const Devis = () => {
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [showRemise, setShowRemise] = useState(false);
   // Ajoutez ces états au début de votre composant
-  const [scannerEnabled, setScannerEnabled] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState("");
-  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [scanningTimeout, setScanningTimeout] = useState<NodeJS.Timeout | null>(
+    null
+  );
+  const [lastKeyPressTime, setLastKeyPressTime] = useState<number>(0);
+  const [phoneSearch, setPhoneSearch] = useState("");
 
+  const [selectedDepot, setSelectedDepot] = useState<Depot | null>(null);
+
+  
+  const articleSearchRef = useRef<HTMLInputElement>(null);
+  const { userProfile } = useProfile();
+
+  // Add near your other state declarations
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [dropdownRef, setDropdownRef] = useState<HTMLDivElement | null>(null);
+  const [itemRefs, setItemRefs] = useState<React.RefObject<HTMLLIElement>[]>(
+    []
+  );
+
+
+  // Ajoutez ces états près de vos autres déclarations d'état
+  const [depots, setDepots] = useState<Depot[]>([]);
+
+// Ajoutez cette fonction pour charger les dépôts
+
+
+
+  const companyInfo = useMemo(
+    () => ({
+      name: userProfile?.company_name || "Votre Société",
+      address: userProfile?.company_address || "Adresse",
+      city: userProfile?.company_city || "Ville",
+      phone: userProfile?.company_phone || "Téléphone",
+      gsm: userProfile?.company_gsm || "Téléphone",
+      email: userProfile?.company_email || "Email",
+      website: userProfile?.company_website || "Site web",
+      taxId: userProfile?.company_tax_id || "MF",
+      logo: logo,
+    }),
+    [userProfile]
+  );
   const [selectedArticles, setSelectedArticles] = useState<
     {
       article_id: number;
@@ -131,21 +178,21 @@ const Devis = () => {
     status: "Actif" as "Actif" | "Inactif",
   });
 
+
   const [newArticle, setNewArticle] = useState({
     reference: "",
-    code_barre: "", // AJOUTEZ CETTE LIGNE
-
+    code_barre: "",
     nom: "",
     designation: "",
-    puv_ht: 0,
-    puv_ttc: 0,
-    pua_ht: 0,
-    pua_ttc: 0,
-    qte: 0,
-    tva: 0,
-    remise: 0,
+    puv_ht: "",
+    puv_ttc: "",
+    pua_ht: "",
+    pua_ttc: "",
+    qte: "",
+    tva: "19",
+    remise: "0",
     taux_fodec: false,
-    type: "Non Consigné" as "Consigné" | "Non Consigné",
+    type: "Non Consigné",
     image: "",
     on_website: false,
     is_offre: false,
@@ -159,45 +206,263 @@ const Devis = () => {
     fournisseur_id: "",
   });
 
+
+
+  // 2. Fonction de formatage
+// === FONCTIONS DE CALCUL TVA/FODEC TUNISIEN ===
+const parseNumber = (value: string | number): number => {
+  if (value === null || value === undefined || value === "") return 0;
+  const strValue = String(value).replace(/[^\d.,]/g, '').replace(',', '.');
+  const num = parseFloat(strValue);
+  return isNaN(num) ? 0 : Math.round(num * 100000) / 100000; // 5 décimales pour précision
+};
+
+// Formatage avec 3 décimales
+const formatNumber = (value: number): string => {
+  if (value === 0) return "";
+  return (Math.round(value * 1000) / 1000).toFixed(3).replace('.', ',');
+};
+
+// === CALCUL TTC AVEC FODEC (Norme tunisienne) ===
+// Formule : TTC = HT × 1.01 × (1 + TVA/100)
+const calculateTTCFromHT = (ht: number, tva: number, hasFodec: boolean): number => {
+  const htValue = parseNumber(ht);
+  const tvaRate = parseNumber(tva);
+  
+  // Si pas de TVA ni FODEC
+  if (tvaRate === 0 && !hasFodec) return htValue;
+  
+  // Calcul selon norme tunisienne
+  let baseTTC = htValue;
+  
+  // 1. Ajouter FODEC (1%) au HT si applicable
+  if (hasFodec) {
+    baseTTC = htValue * 1.01;
+  }
+  
+  // 2. Ajouter TVA sur la base (HT + FODEC)
+  if (tvaRate > 0) {
+    baseTTC = baseTTC * (1 + tvaRate / 100);
+  }
+  
+  return Math.round(baseTTC * 1000) / 1000;
+};
+
+// === CALCUL HT À PARTIR DE TTC (Norme tunisienne) ===
+// Formule inverse : HT = TTC / (1.01 × (1 + TVA/100))
+const calculateHTFromTTC = (ttc: number, tva: number, hasFodec: boolean): number => {
+  const ttcValue = parseNumber(ttc);
+  const tvaRate = parseNumber(tva);
+  
+  // Si pas de TVA ni FODEC
+  if (tvaRate === 0 && !hasFodec) return ttcValue;
+  
+  // Facteur total
+  let factor = 1;
+  
+  if (hasFodec) {
+    factor *= 1.01;
+  }
+  
+  if (tvaRate > 0) {
+    factor *= (1 + tvaRate / 100);
+  }
+  
+  const ht = ttcValue / factor;
+  return Math.round(ht * 1000) / 1000;
+};
+
+// === FACTEUR MULTIPLICATEUR POUR AFFICHAGE ===
+// === FACTEUR MULTIPLICATEUR POUR AFFICHAGE ===
+
+  // 6. Effet pour recalculer quand TVA ou FODEC change
+  useEffect(() => {
+    const tva = parseNumber(newArticle.tva);
+    const hasFodec = newArticle.taux_fodec;
+    
+    // Recalculer les TTC à partir des HT existants
+    if (newArticle.pua_ht) {
+      const ht = parseNumber(newArticle.pua_ht);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+    }
+    
+    if (newArticle.puv_ht) {
+      const ht = parseNumber(newArticle.puv_ht);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+    }
+    
+    // Si pas de HT mais TTC existe, recalculer HT
+    if (newArticle.pua_ttc && !newArticle.pua_ht) {
+      const ttc = parseNumber(newArticle.pua_ttc);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, pua_ht: formatNumber(ht) }));
+    }
+    
+    if (newArticle.puv_ttc && !newArticle.puv_ht) {
+      const ttc = parseNumber(newArticle.puv_ttc);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, puv_ht: formatNumber(ht) }));
+    }
+  }, [newArticle.tva, newArticle.taux_fodec]);
+  
+
+  const handleTVAChange = (value: string) => {
+    const oldTva = parseNumber(newArticle.tva);
+    const newTva = parseNumber(value);
+    const hasFodec = newArticle.taux_fodec;
+    
+    setNewArticle(prev => ({ ...prev, tva: value }));
+    
+    // Recalculer tous les TTC à partir des HT
+    setTimeout(() => {
+      if (newArticle.pua_ht) {
+        const ht = parseNumber(newArticle.pua_ht);
+        const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+        setNewArticle(prev => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      }
+      
+      if (newArticle.puv_ht) {
+        const ht = parseNumber(newArticle.puv_ht);
+        const ttc = calculateTTCFromHT(ht, newTva, hasFodec);
+        setNewArticle(prev => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      }
+    }, 10);
+  };
+  
+  // Gestionnaire pour FODEC - recalculer tous les prix
+  const handleFodecChange = (checked: boolean) => {
+    const tva = parseNumber(newArticle.tva);
+    
+    setNewArticle(prev => ({ ...prev, taux_fodec: checked }));
+    
+    // Recalculer tous les TTC à partir des HT
+    setTimeout(() => {
+      if (newArticle.pua_ht) {
+        const ht = parseNumber(newArticle.pua_ht);
+        const ttc = calculateTTCFromHT(ht, tva, checked);
+        setNewArticle(prev => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      }
+      
+      if (newArticle.puv_ht) {
+        const ht = parseNumber(newArticle.puv_ht);
+        const ttc = calculateTTCFromHT(ht, tva, checked);
+        setNewArticle(prev => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      }
+    }, 10);
+  };
+
+
+  // Effet pour garantir que tous les prix sont synchronisés
+useEffect(() => {
+  const tva = parseNumber(newArticle.tva);
+  const hasFodec = newArticle.taux_fodec;
+  
+  // Recalculer TTC si HT existe
+  if (newArticle.pua_ht && !newArticle.pua_ttc) {
+    const ht = parseNumber(newArticle.pua_ht);
+    const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+    setNewArticle(prev => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+  }
+  
+  if (newArticle.puv_ht && !newArticle.puv_ttc) {
+    const ht = parseNumber(newArticle.puv_ht);
+    const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+    setNewArticle(prev => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+  }
+  
+  // Recalculer HT si TTC existe
+  if (newArticle.pua_ttc && !newArticle.pua_ht) {
+    const ttc = parseNumber(newArticle.pua_ttc);
+    const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+    setNewArticle(prev => ({ ...prev, pua_ht: formatNumber(ht) }));
+  }
+  
+  if (newArticle.puv_ttc && !newArticle.puv_ht) {
+    const ttc = parseNumber(newArticle.puv_ttc);
+    const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+    setNewArticle(prev => ({ ...prev, puv_ht: formatNumber(ht) }));
+  }
+}, [newArticle.tva, newArticle.taux_fodec]);
+  // Gestionnaire unifié pour les changements de prix
+const handlePriceChange = (field: keyof typeof newArticle, value: string) => {
+  const newValue = value.replace(',', '.');
+  const tva = parseNumber(newArticle.tva);
+  const hasFodec = newArticle.taux_fodec;
+  
+  // Mettre à jour la valeur
+  setNewArticle(prev => ({ ...prev, [field]: newValue }));
+  
+  // Calculs automatiques basés sur le champ modifié
+  switch (field) {
+    case 'pua_ht': {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, pua_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case 'pua_ttc': {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, pua_ht: formatNumber(ht) }));
+      break;
+    }
+    case 'puv_ht': {
+      const ht = parseNumber(newValue);
+      const ttc = calculateTTCFromHT(ht, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, puv_ttc: formatNumber(ttc) }));
+      break;
+    }
+    case 'puv_ttc': {
+      const ttc = parseNumber(newValue);
+      const ht = calculateHTFromTTC(ttc, tva, hasFodec);
+      setNewArticle(prev => ({ ...prev, puv_ht: formatNumber(ht) }));
+      break;
+    }
+  }
+};
+
+
+
+// Gestionnaire pour FODEC - recalculer tous les prix
+
   // Add categories and fournisseurs states if not already present
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [fournisseurs, setFournisseurs] = useState<Fournisseur[]>([]);
   const [subcategories, setSubcategories] = useState<Categorie[]>([]);
-
+  // Add ref for article search input
   // Phone formatting function
-const formatPhoneInput = (value: string): string => {
-  // Remove all non-digit characters
-  const cleaned = value.replace(/\D/g, '');
-  
-  // Limit to 8 digits (Tunisian phone number length)
-  const limited = cleaned.slice(0, 8);
-  
-  // Format as XX XXX XXX
-  if (limited.length <= 2) {
-    return limited;
-  } else if (limited.length <= 5) {
-    return `${limited.substring(0, 2)} ${limited.substring(2)}`;
-  } else {
-    return `${limited.substring(0, 2)} ${limited.substring(2, 5)} ${limited.substring(5, 8)}`;
-  }
-};
 
-// Display formatting function
-const formatPhoneDisplay = (phone: string | null | undefined): string => {
-  if (!phone) return 'N/A';
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  if (cleanPhone.length === 8) {
-    return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(2, 5)} ${cleanPhone.substring(5, 8)}`;
-  }
-  return phone;
-};
+  // Add these states near your other state declarations
+const [secondaryLoading, setSecondaryLoading] = useState(false);
+const [articlesLoading, setArticlesLoading] = useState(false);
+const [clientsLoading, setClientsLoading] = useState(false);
+const [modalLoading, setModalLoading] = useState(false);
 
   // Add these functions to your devis page component
   const handleCreateClient = async () => {
     try {
-      await createClient(newClient);
+      // Create the client
+      const createdClient = await createClient(newClient);
       toast.success("Client créé avec succès");
+
+      // Refresh clients list
+      const clientsData = await fetchClients();
+      setClients(clientsData);
+
+      // Find the newly created client in the refreshed list
+      const newClientData = clientsData.find(
+        (client) => client.id === createdClient.id
+      );
+
+      if (newClientData) {
+        // Auto-select the new client
+        setSelectedClient(newClientData);
+        validation.setFieldValue("client_id", newClientData.id);
+      }
+
+      // Close modal and reset form
       setClientModal(false);
       setNewClient({
         raison_sociale: "",
@@ -210,154 +475,78 @@ const formatPhoneDisplay = (phone: string | null | undefined): string => {
         telephone1: "",
         telephone2: "",
         email: "",
-        status: "Actif",
+        status: "Actif" as "Actif" | "Inactif",
       });
-      // Refresh clients list
-      const clientsData = await fetchClients();
-      setClients(clientsData);
     } catch (err) {
-      toast.error("Erreur création client");
+      console.error("Error creating client:", err);
+      toast.error("Erreur lors de la création du client");
     }
   };
 
-// Modifiez handleCreateArticle pour ne pas générer en front
-const handleCreateArticle = async () => {
-  try {
-    const articleToCreate = {
-      ...newArticle,
-      // NE PAS générer code_barre ici - la DB s'en chargera
-      pua_ttc: Number(
-        calculateTTCForQuickCreate(
-          newArticle.pua_ht,
-          newArticle.tva,
-          newArticle.taux_fodec
-        )
-      ),
-      puv_ttc: Number(
-        calculateTTCForQuickCreate(
-          newArticle.puv_ht,
-          newArticle.tva,
-          newArticle.taux_fodec
-        )
-      ),
-      categorie_id: newArticle.categorie_id
-        ? Number(newArticle.categorie_id)
-        : null,
-      sous_categorie_id: newArticle.sous_categorie_id
-        ? Number(newArticle.sous_categorie_id)
-        : null,
-      fournisseur_id: newArticle.fournisseur_id
-        ? Number(newArticle.fournisseur_id)
-        : null,
-    };
+  // Modifiez handleCreateArticle pour ne pas générer en front
+  const handleCreateArticle = async () => {
+    try {
+      const articleToCreate = {
+        ...newArticle,
+        // NE PAS générer code_barre ici - la DB s'en chargera
+        puv_ht: parseNumber(newArticle.puv_ht),
+        puv_ttc: parseNumber(newArticle.puv_ttc),
+        pua_ht: parseNumber(newArticle.pua_ht),
+        pua_ttc: parseNumber(newArticle.pua_ttc),
+        qte: parseNumber(newArticle.qte),
+        tva: parseNumber(newArticle.tva),
 
-    await createArticle(articleToCreate);
-    toast.success("Article créé avec succès");
-    setArticleModal(false);
-    setNewArticle({
-      reference: "",
-      code_barre: "", // Toujours vide par défaut
-      nom: "",
-      designation: "",
-      puv_ht: 0,
-      puv_ttc: 0,
-      pua_ht: 0,
-      pua_ttc: 0,
-      qte: 0,
-      tva: 0,
-      remise: 0,
-      taux_fodec: false,
-      type: "Non Consigné",
-      image: "",
-      on_website: false,
-      is_offre: false,
-      is_top_seller: false,
-      is_new_arrival: false,
-      website_description: "",
-      website_images: [],
-      website_order: 0,
-      categorie_id: "",
-      sous_categorie_id: "",
-      fournisseur_id: "",
-    });
-    
-    // Refresh articles list pour récupérer le code-barres généré
-    const articlesData = await fetchArticles();
-    setArticles(articlesData);
-  } catch (err) {
-    toast.error("Erreur création article");
-  }
-};
+        categorie_id: newArticle.categorie_id
+          ? Number(newArticle.categorie_id)
+          : null,
+        sous_categorie_id: newArticle.sous_categorie_id
+          ? Number(newArticle.sous_categorie_id)
+          : null,
+        fournisseur_id: newArticle.fournisseur_id
+          ? Number(newArticle.fournisseur_id)
+          : null,
+      };
 
+      await createArticle(articleToCreate);
+      toast.success("Article créé avec succès");
+      setArticleModal(false);
+      setNewArticle({
+        reference: "",
+        code_barre: "", // Toujours vide par défaut
+        nom: "",
+        designation: "",
+        puv_ht: "",
+        puv_ttc: "",
+        pua_ht: "",
+        pua_ttc: "",
+        qte: "",
+        tva: "",
+        remise: "",
+        taux_fodec: false,
+        type: "Non Consigné",
+        image: "",
+        on_website: false,
+        is_offre: false,
+        is_top_seller: false,
+        is_new_arrival: false,
+        website_description: "",
+        website_images: [],
+        website_order: 0,
+        categorie_id: "",
+        sous_categorie_id: "",
+        fournisseur_id: "",
+      });
 
-
-
-// Replace your current barcode scanning states and functions with this:
-
-
-// Improved barcode scan handler
-
-// Effect pour écouter les scans
-
-
-  // Add TTC calculation function
-  const calculateTTCForQuickCreate = (
-    ht: number,
-    tva: number,
-    hasFodec: boolean
-  ) => {
-    const htValue = Number(ht) || 0;
-    const tvaRate = Number(tva) || 0;
-    const tvaAmount = htValue * (tvaRate / 100);
-    const fodecAmount = hasFodec ? htValue * 0.01 : 0;
-    return (htValue + tvaAmount + fodecAmount).toFixed(3);
+      // Refresh articles list pour récupérer le code-barres généré
+      const articlesData = await fetchArticles();
+      setArticles(articlesData);
+    } catch (err) {
+      toast.error("Erreur création article");
+    }
   };
 
-  // Add effect for auto-calculation in article modal
-  useEffect(() => {
-    if (articleModal) {
-      const puaTtc = calculateTTCForQuickCreate(
-        newArticle.pua_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
-      const puvTtc = calculateTTCForQuickCreate(
-        newArticle.puv_ht,
-        newArticle.tva,
-        newArticle.taux_fodec
-      );
+ 
 
-      setNewArticle((prev) => ({
-        ...prev,
-        pua_ttc: Number(puaTtc),
-        puv_ttc: Number(puvTtc),
-      }));
-    }
-  }, [
-    newArticle.pua_ht,
-    newArticle.puv_ht,
-    newArticle.tva,
-    newArticle.taux_fodec,
-    articleModal,
-  ]);
-
-  // Add effect for subcategories
-  useEffect(() => {
-    if (newArticle.categorie_id) {
-      const categoryId = parseInt(newArticle.categorie_id);
-      const subs = categories.filter((cat) => cat.parent_id === categoryId);
-      setSubcategories(subs);
-
-      if (
-        !subs.find((sub) => sub.id === parseInt(newArticle.sous_categorie_id))
-      ) {
-        setNewArticle((prev) => ({ ...prev, sous_categorie_id: "" }));
-      }
-    } else {
-      setSubcategories([]);
-      setNewArticle((prev) => ({ ...prev, sous_categorie_id: "" }));
-    }
-  }, [newArticle.categorie_id, categories]);
 
   const [remiseType, setRemiseType] = useState<"percentage" | "fixed">(
     "percentage"
@@ -382,17 +571,18 @@ const handleCreateArticle = async () => {
     currentYear: string,
     type: "devis" | "bonCommande"
   ) => {
-    const prefix = type === "devis" ? "DIVER" : "BC";
-    const regex = new RegExp(`^${prefix}-(\\d{4})/${currentYear}$`);
-  
-    // Minimum starting number
-    const DEFAULT_START = 150;
-  
+    const prefix = type === "devis" ? "DEVIS" : "BC";
+    const regex = new RegExp(`^${prefix}-(\\d{3})/${currentYear}$`);
+
+    // Pour les devis, commencer à 001
+    // Pour les bons de commande, commencer à 150
+    const DEFAULT_START = type === "devis" ? 1 : 150;
+
     // Filter only entries for this prefix
     const relevantBons = bonsCommande.filter((bon) =>
       bon.numeroCommande.startsWith(`${prefix}-`)
     );
-  
+
     // Extract numbers for current year
     const numbers = relevantBons
       .map((bon) => {
@@ -400,16 +590,20 @@ const handleCreateArticle = async () => {
         return match ? parseInt(match[1], 10) : null;
       })
       .filter((num): num is number => num !== null);
-  
-    // If there are numbers, increment max. Otherwise start from DEFAULT_START.
-    const nextSequence =
-      numbers.length > 0
-        ? Math.max(Math.max(...numbers) + 1, DEFAULT_START)
-        : DEFAULT_START;
-  
-    return `${prefix}-${nextSequence.toString().padStart(4, "0")}/${currentYear}`;
+
+    // Trouver le prochain numéro
+    let nextSequence = DEFAULT_START;
+
+    if (numbers.length > 0) {
+      const maxNumber = Math.max(...numbers);
+      nextSequence = maxNumber + 1;
+    }
+
+    // Formater avec 3 chiffres (001, 002, etc.)
+    return `${prefix}-${nextSequence
+      .toString()
+      .padStart(3, "0")}/${currentYear}`;
   };
-  
   const fetchNextCommandeNumberFromAPI = useCallback(async () => {
     try {
       const numero = await fetchNextCommandeNumber();
@@ -422,146 +616,314 @@ const handleCreateArticle = async () => {
     }
   }, [bonsCommande]);
 
+
+  const formatPhoneInput = (value: string): string => {
+    // Remove all non-digit characters
+    const cleaned = value.replace(/\D/g, "");
+
+    // Limit to 8 digits (Tunisian phone number length)
+    const limited = cleaned.slice(0, 8);
+
+    // Format as XX XXX XXX
+    if (limited.length <= 2) {
+      return limited;
+    } else if (limited.length <= 5) {
+      return `${limited.substring(0, 2)} ${limited.substring(2)}`;
+    } else {
+      return `${limited.substring(0, 2)} ${limited.substring(
+        2,
+        5
+      )} ${limited.substring(5, 8)}`;
+    }
+  };
+
+
+
+  // Display formatting function
+  const formatPhoneDisplay = (phone: string | null | undefined): string => {
+    if (!phone) return "N/A";
+
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length === 8) {
+      return `${cleanPhone.substring(0, 2)} ${cleanPhone.substring(
+        2,
+        5
+      )} ${cleanPhone.substring(5, 8)}`;
+    }
+    return phone;
+  };
+
+
   useEffect(() => {
     if (modal && !isEdit && isCreatingCommande) {
       fetchNextCommandeNumberFromAPI();
     }
   }, [modal, isEdit, isCreatingCommande, fetchNextCommandeNumberFromAPI]);
 
-  useEffect(() => {
-    if (articleSearch.length >= 3) {
-      const filtered = articles.filter(
-        (article) =>
-          article.designation
-            .toLowerCase()
-            .includes(articleSearch.toLowerCase()) ||
-          article.reference.toLowerCase().includes(articleSearch.toLowerCase()) ||
-          (article.code_barre && article.code_barre.toLowerCase().includes(articleSearch.toLowerCase())) // AJOUTER CETTE LIGNE
-      );
-      setFilteredArticles(filtered);
-    } else {
-      setFilteredArticles([]);
-    }
-  }, [articleSearch, articles]);
+
 
   // Fix the client search functionality
-
-  useEffect(() => {
-    if (clientSearch.length >= 3) {
-      const searchTerm = clientSearch.toLowerCase().trim();
-      
-      const filtered = clients.filter((client) => {
-        // Search by name (partial match anywhere in the name)
-        const nameMatch = client.raison_sociale?.toLowerCase().includes(searchTerm) ||
-                         client.designation?.toLowerCase().includes(searchTerm);
-        
-        // Search by phone - remove spaces for comparison
-        const cleanSearchTerm = searchTerm.replace(/\s/g, '');
-        const phoneMatch = client.telephone1?.replace(/\s/g, '').includes(cleanSearchTerm) ||
-                          client.telephone2?.replace(/\s/g, '').includes(cleanSearchTerm);
-        
-        return nameMatch || phoneMatch;
-      });
-      
-      setFilteredClients(filtered);
-    } else {
-      setFilteredClients([]);
-    }
-  }, [clientSearch, clients]);
-
-  // Helper function to format phone numbers for search
-  const formatPhoneForSearch = (
-    phone: string | null | undefined,
-    searchTerm: string
-  ): boolean => {
-    if (!phone) return false;
-
-    // Remove all spaces and special characters from both phone and search term
-    const cleanPhone = phone.replace(/[\s\-\.\(\)]/g, "");
-    const cleanSearchTerm = searchTerm.replace(/[\s\-\.\(\)]/g, "");
-
-    return cleanPhone.includes(cleanSearchTerm);
-  };
-
   // Also add this helper function for better phone display
 
-
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (skipSecondary = false) => {
     try {
       setLoading(true);
-      const [
-        bonsData,
-        clientsData,
-        vendeursData,
-        articlesData,
-        categoriesData,
-        fournisseursData,
-      ] = await Promise.all([
-        fetchDevis(),
-        fetchClients(),
+      
+      // PHASE 1: Load critical data only
+      const [bonsData, vendeursData] = await Promise.all([
+        fetchDevis(), // This should be your devis fetching function
         fetchVendeurs(),
-        fetchArticles(),
-
-        fetchCategories(),
-        fetchFournisseurs(),
       ]);
-
+  
       setBonsCommande(bonsData);
       setFilteredBonsCommande(bonsData);
-      setClients(clientsData);
       setVendeurs(vendeursData);
-      setArticles(articlesData);
-      setCategories(categoriesData);
-      setFournisseurs(fournisseursData);
+      
+      // PHASE 2: Load secondary data only if not skipped
+      if (!skipSecondary) {
+        setSecondaryLoading(true);
+        
+        try {
+          // Load depot first (needed for forms)
+          const [depotsData, categoriesData] = await Promise.all([
+            fetchDepots(),
+            fetchCategories(),
+          ]);
+          
+          //setDepots(depotsData);
+          setCategories(categoriesData);
+          
+          // Then load articles and clients in parallel with limit
+          const [articlesResult, clientsResult] = await Promise.all([
+            searchArticles({ query: "", page: 1, limit: 25 }),
+            searchClients({ query: "", page: 1, limit: 25 }),
+          ]);
+          
+          setArticles(articlesResult.articles || []);
+          setFilteredClients(clientsResult.clients || []);
+        } catch (secondaryErr) {
+          console.error("Secondary data loading failed:", secondaryErr);
+          // Continue without secondary data
+        } finally {
+          setSecondaryLoading(false);
+        }
+      }
+      
       setLoading(false);
+      setError(null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Échec du chargement des données"
       );
       setLoading(false);
+      setSecondaryLoading(false);
     }
   }, []);
-
+  
+  // Initial load - only critical data
   useEffect(() => {
-    fetchData();
+    fetchData(true); // true means skip secondary data initially
   }, [fetchData]);
+  
+  // Load articles only when needed (modal opens or search)
+  const loadArticles = async (query = "", page = 1, limit = 15) => {
+    if (modal || articleSearch) {
+      setArticlesLoading(true);
+      try {
+        const result = await searchArticles({ query, page, limit });
+        if (query === "" && page === 1) {
+          setArticles(result.articles || []);
+        }
+        setFilteredArticles(result.articles || []);
+      } catch (err) {
+        console.error("Failed to load articles:", err);
+      } finally {
+        setArticlesLoading(false);
+      }
+    }
+  };
+  
+  // Load clients only when needed
+  const loadClients = async (query = "", page = 1, limit = 15) => {
+    if (modal || clientSearch) {
+      setClientsLoading(true);
+      try {
+        const result = await searchClients({ query, page, limit });
+        if (query === "" && page === 1) {
+          setFilteredClients(result.clients || []);
+        } else {
+          setFilteredClients(result.clients || []);
+        }
+      } catch (err) {
+        console.error("Failed to load clients:", err);
+      } finally {
+        setClientsLoading(false);
+      }
+    }
+  };
+  
+  // Load modal data only when modal opens
+  const loadModalData = async () => {
+    if (modal) {
+      setModalLoading(true);
+      try {
+        // Load only what's needed for the modal
+        const [depotsResult, categoriesResult,fournisseursData] = await Promise.all([
+          fetchDepots(),
+          fetchCategories(),
+          fetchFournisseurs(), // ADD THIS LINE
+
+        ]);
+        
+        //setDepots(depotsResult);
+        setCategories(categoriesResult);
+         setFournisseurs(fournisseursData); // ADD THIS LINE
+
+        
+        // Load initial articles and clients for modal
+        await Promise.all([
+          loadArticles("", 1, 15),
+          loadClients("", 1, 15),
+        ]);
+      } catch (err) {
+        console.error("Modal data loading failed:", err);
+      } finally {
+        setModalLoading(false);
+      }
+    }
+  };
+  
+  // Update article search to use the new function
+  useEffect(() => {
+    const searchArticlesDebounced = async () => {
+      if (articleSearch.length >= 3 || modal) {
+        await loadArticles(articleSearch, 1, 20);
+      } else {
+        setFilteredArticles([]);
+      }
+    };
+  
+    const timer = setTimeout(searchArticlesDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [articleSearch, modal]);
+  
+  // Update client search to use the new function
+  useEffect(() => {
+    const searchClientsDebounced = async () => {
+      if (clientSearch.length >= 1 || modal) {
+        await loadClients(clientSearch, 1, 20);
+      } else {
+        setFilteredClients([]);
+      }
+    };
+  
+    const timer = setTimeout(searchClientsDebounced, 300);
+    return () => clearTimeout(timer);
+  }, [clientSearch, modal]);
+  
+  // Load modal data when modal opens
+  useEffect(() => {
+    if (modal) {
+      loadModalData();
+    }
+  }, [modal]);
+  
 
   useEffect(() => {
     let result = [...bonsCommande];
 
-    if (activeTab === "4") {
-      result = result.filter((bon) => bon.status === "Confirme");
-    } else if (activeTab === "6") {
-      result = result.filter((bon) => bon.status === "Annule");
-    }
-
     if (startDate && endDate) {
       const start = moment(startDate).startOf("day");
       const end = moment(endDate).endOf("day");
-
       result = result.filter((bon) => {
         const bonDate = moment(bon.dateCommande);
         return bonDate.isBetween(start, end, null, "[]");
       });
     }
 
+    // Apply regular text search
     if (searchText) {
-      const searchLower = searchText.toLowerCase();
-      result = result.filter(
-        (bon) =>
-          bon.numeroCommande.toLowerCase().includes(searchLower) ||
-          (bon.client?.raison_sociale &&
-            bon.client.raison_sociale.toLowerCase().includes(searchLower))
-      );
+      const searchLower = searchText.toLowerCase().trim();
+
+      result = result.filter((bon) => {
+        const bonNumero = bon.numeroCommande?.toLowerCase() || "";
+        const clientName = bon.client?.raison_sociale?.toLowerCase() || "";
+        const clientDesignation = bon.client?.designation?.toLowerCase() || "";
+
+        return (
+          bonNumero.includes(searchLower) ||
+          clientName.includes(searchLower) ||
+          clientDesignation.includes(searchLower)
+        );
+      });
+    }
+
+    // Apply phone number search separately
+    if (phoneSearch) {
+      const cleanPhoneSearch = phoneSearch.replace(/\s/g, "").trim();
+
+      result = result.filter((bon) => {
+        if (!bon.client) return false;
+
+        const phone1 = bon.client.telephone1?.replace(/\s/g, "") || "";
+        const phone2 = bon.client.telephone2?.replace(/\s/g, "") || "";
+
+        return (
+          phone1.includes(cleanPhoneSearch) || phone2.includes(cleanPhoneSearch)
+        );
+      });
     }
 
     setFilteredBonsCommande(result);
-  }, [activeTab, startDate, endDate, searchText, bonsCommande]);
+  }, [startDate, endDate, searchText, phoneSearch, bonsCommande]);
 
   const openDetailModal = (bonCommande: BonCommandeClient) => {
     setSelectedBonCommande(bonCommande);
     setDetailModal(true);
   };
+
+  // Scroll to focused item
+  useEffect(() => {
+    if (focusedIndex >= 0 && itemRefs[focusedIndex]?.current && dropdownRef) {
+      const item = itemRefs[focusedIndex].current;
+      const dropdown = dropdownRef;
+
+      if (item && dropdown) {
+        const itemTop = item.offsetTop;
+        const itemBottom = itemTop + item.offsetHeight;
+        const dropdownTop = dropdown.scrollTop;
+        const dropdownBottom = dropdownTop + dropdown.clientHeight;
+
+        if (itemTop < dropdownTop) {
+          dropdown.scrollTop = itemTop;
+        } else if (itemBottom > dropdownBottom) {
+          dropdown.scrollTop = itemBottom - dropdown.clientHeight;
+        }
+      }
+    }
+  }, [focusedIndex, dropdownRef, itemRefs]);
+
+  // Reset item refs when filtered articles change
+  useEffect(() => {
+    setItemRefs(filteredArticles.map(() => React.createRef()));
+    setFocusedIndex(-1); // Reset focus
+  }, [filteredArticles]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef && !dropdownRef.contains(e.target as Node)) {
+        setFilteredArticles([]);
+        setFocusedIndex(-1);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [dropdownRef]);
+
 
   // Add these helper functions
   const parseNumericInput = (value: string): number => {
@@ -739,28 +1101,43 @@ const handleCreateArticle = async () => {
         const commandeData = {
           numeroCommande: values.numeroCommande,
           dateCommande: values.dateCommande,
+          dateLivBonCommande: moment().format("YYYY-MM-DD"),
           client_id: selectedClient!.id,
           vendeur_id: values.vendeur_id,
-          status: "Confirme",
+          status: "Confirme" as "Confirme", // Add type assertion
           notes: values.notes,
-          taxMode,
+          taxMode: taxMode, // Corrigé : utiliser l'état existant
           remise: globalRemise,
           remiseType: remiseType,
           devis_id: bonCommande?.id,
+          depot_id: selectedDepot?.id || 1, // Utiliser selectedDepot
+          hasRetenue: false,
+          montantRetenue: 0,
+          modeReglement: "especes" as "especes",
+          acompte: 0,
+          totalHT: netHT,
+          totalTTC: finalTotal,
+          totalTTCAfterRemise: finalTotal,
+          totalAfterRemise: finalTotal,
+          montantPaye: 0,
+          resteAPayer: finalTotal,
+          hasPayments: false,
           articles: selectedArticles.map((item) => ({
             article_id: item.article_id,
-            quantite: item.quantite === "" ? 0 : Number(item.quantite), // Convert empty string to 0
+            quantite: item.quantite === "" ? 0 : Number(item.quantite),
+            quantiteLivree: 0,
             prixUnitaire: item.prixUnitaire,
             puv_ttc: item.prixTTC,
             prix_ttc: item.prixTTC,
             tva: item.tva ?? undefined,
             remise: item.remise ?? undefined,
-            quantiteLivree: 0, // Ajoutez cette ligne
           })),
         };
-        //  await createBonCommandeClientBasedOnDevis(commandeData);
+        
+        await createBonCommandeClientBasedOnDevis(commandeData);
         toast.success("Bon de commande créé avec succès");
-      } else {
+      }
+       else {
         const bonCommandeData = {
           ...values,
           taxMode,
@@ -895,7 +1272,7 @@ const handleCreateArticle = async () => {
               : 0;
             return sum + taxableAmount + itemTax;
           }, 0);
-
+ 
           const globalDiscount = Number(cell.row.original.remise) || 0;
           const discountType = cell.row.original.remiseType || "percentage";
 
@@ -980,6 +1357,7 @@ const handleCreateArticle = async () => {
                   <i className="ri-eye-line fs-16"></i>
                 </Link>
               </li>
+      
             </ul>
           );
         },
@@ -1023,32 +1401,87 @@ const handleCreateArticle = async () => {
     }
   }, [modal, isEdit, isCreatingCommande, bonsCommande]);
 
-  const handleAddArticle = (articleId: string) => {
-    const article = articles.find((a) => a.id === parseInt(articleId));
-    if (
-      article &&
-      !selectedArticles.some((item) => item.article_id === article.id)
-    ) {
+  const handleAddArticle = useCallback((articleId: string | number) => {
+    console.log("handleAddArticle called with ID:", articleId);
+    
+    // Try to find the article in multiple sources
+    const articleIdNum = typeof articleId === 'string' ? parseInt(articleId) : articleId;
+    
+    // Search in this order: filteredArticles, articles, item.articleDetails
+    let article = filteredArticles.find((a) => a.id === articleIdNum);
+    
+    if (!article) {
+      article = articles.find((a) => a.id === articleIdNum);
+    }
+    
+    if (!article) {
+      // Try to find it in existing selected articles (articleDetails)
+      const existingItem = selectedArticles.find(item => item.article_id === articleIdNum);
+      if (existingItem?.articleDetails) {
+        article = existingItem.articleDetails;
+      }
+    }
+    
+    if (!article) {
+      console.error("Article not found with ID:", articleIdNum);
+      toast.error(`Article avec ID ${articleIdNum} non trouvé`);
+      return;
+    }
+    
+    // Check if article already exists in selectedArticles
+    const alreadyExists = selectedArticles.some((item) => item.article_id === article?.id);
+    
+    if (alreadyExists) {
+      console.log("Article already exists, incrementing quantity");
+      // Increment quantity if article already exists
+      setSelectedArticles(prev => 
+        prev.map(item => {
+          if (item.article_id === article?.id) {
+            const currentQty = item.quantite === "" ? 0 : Number(item.quantite);
+            return {
+              ...item,
+              quantite: currentQty + 1
+            };
+          }
+          return item;
+        })
+      );
+      toast.info(`Quantité augmentée pour "${article.designation}"`);
+    } else {
+      console.log("Adding new article:", article.designation);
       const initialHT = article.puv_ht || 0;
       const initialTVA = article.tva || 0;
-      // USE puv_ttc FROM ARTICLE IF AVAILABLE, OTHERWISE CALCULATE
-      const initialTTC =
-        article.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
-
-      setSelectedArticles([
-        ...selectedArticles,
+      const initialTTC = article.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+  
+      setSelectedArticles(prev => [
+        ...prev,
         {
           article_id: article.id,
-          quantite: "", // Start with empty instead of 1
+          quantite: 1, // Start with 1 instead of empty
           prixUnitaire: initialHT,
+          prixTTC: Math.round(initialTTC * 1000) / 1000,
           tva: initialTVA,
           remise: 0,
-          prixTTC: Math.round(initialTTC * 1000) / 1000, // Use article's puv_ttc
+          quantiteLivree: "",
           articleDetails: article,
         },
       ]);
+      toast.success(`Article "${article.designation}" ajouté`);
     }
-  };
+    
+    // Clear search and reset focus
+    setArticleSearch("");
+    setFilteredArticles([]);
+    setFocusedIndex(-1);
+    
+    // Refocus on search input
+    setTimeout(() => {
+      if (articleSearchRef.current) {
+        articleSearchRef.current.focus();
+      }
+    }, 100);
+    
+  }, [filteredArticles, articles, selectedArticles, articleSearchRef]);
 
   const handleRemoveArticle = (articleId: number) => {
     setSelectedArticles(
@@ -1066,20 +1499,21 @@ const handleCreateArticle = async () => {
         if (item.article_id === articleId) {
           const updatedItem = { ...item, [field]: value };
 
-          // Recalculate HT when TVA changes
+          // Handle TVA change - recalculate HT from TTC
           if (field === "tva") {
             const currentTTC = item.prixTTC;
             const newTVA = value === "" ? 0 : Number(value);
 
+            // Recalculate HT from existing TTC
             let newPriceHT = currentTTC;
             if (newTVA > 0) {
               newPriceHT = currentTTC / (1 + newTVA / 100);
             }
 
-            // Use proper rounding
             updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
+            updatedItem.tva = newTVA;
 
-            // Clear any editing states to use the new calculated values
+            // Clear editing states
             setEditingHT((prev) => {
               const newState = { ...prev };
               delete newState[articleId];
@@ -1092,31 +1526,29 @@ const handleCreateArticle = async () => {
             });
           }
 
-          // Recalculate TTC when HT changes
+          // Handle HT change - recalculate TTC
           if (field === "prixUnitaire") {
-            const currentHT = value;
+            const currentHT = Number(value) || 0;
             const currentTVA = item.tva || 0;
 
-            let newPriceTTC = Number(currentHT);
+            let newPriceTTC = currentHT;
             if (currentTVA > 0) {
-              newPriceTTC = Number(currentHT) * (1 + currentTVA / 100);
+              newPriceTTC = currentHT * (1 + currentTVA / 100);
             }
 
-            // Use proper rounding
             updatedItem.prixTTC = Math.round(newPriceTTC * 1000) / 1000;
           }
 
-          // Recalculate HT when TTC changes
+          // Handle TTC change - recalculate HT
           if (field === "prixTTC") {
-            const currentTTC = value;
+            const currentTTC = Number(value) || 0;
             const currentTVA = item.tva || 0;
 
-            let newPriceHT = Number(currentTTC);
+            let newPriceHT = currentTTC;
             if (currentTVA > 0) {
-              newPriceHT = Number(currentTTC) / (1 + currentTVA / 100);
+              newPriceHT = currentTTC / (1 + currentTVA / 100);
             }
 
-            // Use proper rounding
             updatedItem.prixUnitaire = Math.round(newPriceHT * 1000) / 1000;
           }
 
@@ -1125,130 +1557,154 @@ const handleCreateArticle = async () => {
         return item;
       })
     );
-
-    // Keep the existing code for resetting editing states when TVA changes
-    if (field === "tva") {
-      setEditingHT((prev) => {
-        const newState = { ...prev };
-        delete newState[articleId];
-        return newState;
-      });
-      setEditingTTC((prev) => {
-        const newState = { ...prev };
-        delete newState[articleId];
-        return newState;
-      });
-    }
   };
 
+  const handleBarcodeScan = useCallback(
+    (barcode: string) => {
+      if (!barcode.trim()) return;
 
-  const handleBarcodeScan = useCallback((barcode: string) => {
-    if (!scannerEnabled || !barcode.trim()) return;
-  
-    console.log("Code-barres scanné:", barcode);
-    
-    // Clean the barcode (remove any non-alphanumeric characters that might be added by scanner)
-    const cleanBarcode = barcode.trim();
-    
-    // Rechercher l'article par code_barre depuis la DB
-    const scannedArticle = articles.find(article => 
-      article.code_barre === cleanBarcode
-    );
-  
-    if (scannedArticle) {
-      const existingArticle = selectedArticles.find(
-        item => item.article_id === scannedArticle.id
+      console.log("Code-barres scanné:", barcode);
+
+      // Clean the barcode
+      const cleanBarcode = barcode.trim();
+
+      // Search for article by code_barre
+      const scannedArticle = articles.find(
+        (article) => article.code_barre === cleanBarcode
       );
-  
-      if (existingArticle) {
-        handleArticleChange(
-          scannedArticle.id,
-          "quantite",
-          (Number(existingArticle.quantite) || 0) + 1
+
+      if (scannedArticle) {
+        const existingArticle = selectedArticles.find(
+          (item) => item.article_id === scannedArticle.id
         );
-        toast.success(`Quantité augmentée pour "${scannedArticle.designation}"`);
-      } else {
-        const initialHT = scannedArticle.puv_ht || 0;
-        const initialTVA = scannedArticle.tva || 0;
-        const initialTTC = scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
-  
-        setSelectedArticles(prev => [
-          ...prev,
-          {
-            article_id: scannedArticle.id,
-            quantite: 1,
-            prixUnitaire: initialHT,
-            tva: initialTVA,
-            remise: 0,
-            prixTTC: Math.round(initialTTC * 1000) / 1000,
-            articleDetails: scannedArticle,
-          },
-        ]);
-        toast.success(`Article "${scannedArticle.designation}" ajouté`);
-      }
-    } else {
-      toast.error(`Article avec code ${cleanBarcode} non trouvé`);
-      console.log("Articles disponibles:", articles.map(a => ({ 
-        id: a.id, 
-        designation: a.designation, 
-        code_barre: a.code_barre 
-      })));
-    }
-  }, [scannerEnabled, articles, selectedArticles, handleArticleChange]);
-  
-  // Improved keyboard handler for scanner
-  const handleKeyPress = useCallback((event: KeyboardEvent) => {
-    if (!scannerEnabled) return;
-  
-    // Prevent default behavior for all keys when scanner is active
-    event.preventDefault();
-  
-    // Les scanners envoient généralement les données suivies par "Enter"
-    if (event.key === 'Enter') {
-      if (barcodeInput.length > 0) {
-        handleBarcodeScan(barcodeInput);
-        setBarcodeInput("");
-      }
-    } else if (event.key.length === 1) { // Only process single character keys
-      // Accumuler les caractères
-      setBarcodeInput(prev => prev + event.key);
-      
-      // Reset après un délai (au cas où le scanner n'envoie pas de Enter)
-      if (scanningTimeout) {
-        clearTimeout(scanningTimeout);
-      }
-      
-      const newTimeout = setTimeout(() => {
-        if (barcodeInput.length >= 3) { // Minimum length for barcode
-          handleBarcodeScan(barcodeInput);
+
+        if (existingArticle) {
+          // Increment quantity if article already exists
+          handleArticleChange(
+            scannedArticle.id,
+            "quantite",
+            (Number(existingArticle.quantite) || 0) + 1
+          );
+          toast.success(
+            `Quantité augmentée pour "${scannedArticle.designation}"`
+          );
+        } else {
+          // Add new article
+          const initialHT = scannedArticle.puv_ht || 0;
+          const initialTVA = scannedArticle.tva || 0;
+          const initialTTC =
+            scannedArticle.puv_ttc || initialHT * (1 + (initialTVA || 0) / 100);
+
+          setSelectedArticles((prev) => [
+            ...prev,
+            {
+              article_id: scannedArticle.id,
+              quantite: 1,
+              prixUnitaire: initialHT,
+              tva: initialTVA,
+              remise: 0,
+              prixTTC: Math.round(initialTTC * 1000) / 1000,
+              articleDetails: scannedArticle,
+            },
+          ]);
+          toast.success(`Article "${scannedArticle.designation}" ajouté`);
         }
-        setBarcodeInput("");
-      }, 150); // Increased timeout for better reliability
-      
-      setScanningTimeout(newTimeout);
-    }
-  }, [scannerEnabled, barcodeInput, scanningTimeout, handleBarcodeScan]);
+
+        // Focus on article search input after scanning
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      } else {
+        toast.error(`Article avec code ${cleanBarcode} non trouvé`);
+      }
+    },
+    [articles, selectedArticles, handleArticleChange]
+  );
 
   useEffect(() => {
-    if (scannerEnabled) {
-      document.addEventListener('keydown', handleKeyPress);
-      console.log("Scanner activé - en attente de codes-barres...");
-    } else {
-      document.removeEventListener('keydown', handleKeyPress);
-      if (scanningTimeout) {
-        clearTimeout(scanningTimeout);
-      }
-      setBarcodeInput("");
-      console.log("Scanner désactivé");
+    if (modal && articleSearchRef.current) {
+      // Focus on article search input when modal opens
+      setTimeout(() => {
+        if (articleSearchRef.current) {
+          articleSearchRef.current.focus();
+        }
+      }, 100);
     }
-  
+  }, [modal]);
+  // 3. Modifier le gestionnaire de clavier pour détection automatique
+  const handleKeyPress = useCallback(
+    (event: KeyboardEvent) => {
+      // Ignorer si on est dans un champ de saisie (input, textarea, select)
+      const target = event.target as HTMLElement;
+      const isInputField =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable;
+
+      if (isInputField) {
+        // Si l'utilisateur tape dans un champ, ne pas traiter comme un scan
+        return;
+      }
+
+      const currentTime = Date.now();
+      const timeSinceLastKey = currentTime - lastKeyPressTime;
+
+      // Si plus de 100ms se sont écoulés depuis la dernière touche, réinitialiser
+      if (timeSinceLastKey > 100) {
+        setBarcodeInput("");
+      }
+
+      setLastKeyPressTime(currentTime);
+
+      // Les scanners envoient généralement les données suivies par "Enter"
+      if (event.key === "Enter") {
+        if (barcodeInput.length >= 3) {
+          // Minimum 3 caractères pour un code-barres
+          handleBarcodeScan(barcodeInput);
+          setBarcodeInput("");
+          event.preventDefault(); // Empêcher tout comportement par défaut de Enter
+        }
+      } else if (
+        event.key.length === 1 &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey
+      ) {
+        // Accumuler les caractères (uniquement caractères simples, pas de combinaisons)
+        setBarcodeInput((prev) => prev + event.key);
+
+        // Réinitialiser le timeout précédent
+        if (scanningTimeout) {
+          clearTimeout(scanningTimeout);
+        }
+
+        // Détecter automatiquement après un délai (pour les scanners qui n'envoient pas de Enter)
+        const newTimeout = setTimeout(() => {
+          if (barcodeInput.length >= 8) {
+            // Longueur minimale typique pour un code-barres
+            handleBarcodeScan(barcodeInput);
+            setBarcodeInput("");
+          }
+        }, 50); // Délai très court pour détection rapide
+
+        setScanningTimeout(newTimeout);
+      }
+    },
+    [barcodeInput, scanningTimeout, lastKeyPressTime, handleBarcodeScan]
+  );
+
+  // 4. Modifier l'effet pour toujours écouter les frappes
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyPress);
+
     return () => {
-      document.removeEventListener('keydown', handleKeyPress);
+      document.removeEventListener("keydown", handleKeyPress);
       if (scanningTimeout) {
         clearTimeout(scanningTimeout);
       }
     };
-  }, [scannerEnabled, handleKeyPress]);
+  }, [handleKeyPress]);
 
   const StatusBadge = ({
     status,
@@ -1326,6 +1782,20 @@ const handleCreateArticle = async () => {
                   <div className="col-sm-auto">
                     <div className="d-flex gap-1 flex-wrap">
                       <Button
+                        color="info"
+                        onClick={() => {
+                          setStartDate(null);
+                          setEndDate(null);
+                          setSearchText("");
+                          setPhoneSearch("");
+                        }}
+                        size="sm"
+                      >
+                        <i className="ri-close-line align-bottom me-1"></i>
+                        Réinitialiser tous les filtres
+                      </Button>
+
+                      <Button
                         color="secondary"
                         onClick={() => {
                           setIsEdit(false);
@@ -1373,18 +1843,44 @@ const handleCreateArticle = async () => {
               </Nav>
               <CardBody className="pt-3">
                 <Row className="mb-3">
-                  <Col md={4}>
+                  <Col md={3}>
                     <div className="search-box">
                       <Input
                         type="text"
                         className="form-control"
-                        placeholder="Rechercher..."
+                        placeholder="Rechercher par numéro vente, client..."
                         value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
+                        onChange={(e) => {
+                          setSearchText(e.target.value);
+                        }}
                       />
                       <i className="ri-search-line search-icon"></i>
                     </div>
                   </Col>
+
+                  {/* Add this phone search input */}
+                  <Col md={3}>
+                    <div className="search-box">
+                      <Input
+                        type="text"
+                        className="form-control"
+                        placeholder="Rechercher par téléphone..."
+                        value={phoneSearch}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          // Apply auto-space formatting for phone numbers
+                          if (value) {
+                            const formatted = formatPhoneInput(value);
+                            setPhoneSearch(formatted);
+                          } else {
+                            setPhoneSearch("");
+                          }
+                        }}
+                      />
+                      <i className="ri-phone-line search-icon"></i>
+                    </div>
+                  </Col>
+
                   <Col md={3}>
                     <InputGroup>
                       <InputGroupText>De</InputGroupText>
@@ -1414,20 +1910,6 @@ const handleCreateArticle = async () => {
                         onChange={(dates) => setEndDate(dates[0])}
                       />
                     </InputGroup>
-                  </Col>
-                  <Col md={2}>
-                    <Button
-                      color="light"
-                      className="w-100"
-                      onClick={() => {
-                        setStartDate(null);
-                        setEndDate(null);
-                        setSearchText("");
-                      }}
-                    >
-                      <i className="ri-close-line align-bottom me-1"></i>{" "}
-                      Réinitialiser
-                    </Button>
                   </Col>
                 </Row>
 
@@ -1507,7 +1989,7 @@ const handleCreateArticle = async () => {
                                   }
                                   readOnly={!isEdit && !isCreatingCommande}
                                   className="form-control-lg"
-                                  placeholder="DIVER-0001/2024"
+                                  placeholder="DEVIS-0001/2024"
                                 />
                                 <FormFeedback className="fs-6">
                                   {validation.errors.numeroCommande}
@@ -1535,6 +2017,7 @@ const handleCreateArticle = async () => {
                                 </FormFeedback>
                               </div>
                             </Col>
+                          
                           </Row>
                         </CardBody>
                       </Card>
@@ -1834,37 +2317,6 @@ const handleCreateArticle = async () => {
         </CardBody>
       </Card> */}
 
-{/* Scanner de Codes-Barres Section */}
-<Card className="border-0 shadow-sm mb-4">
-  <CardBody className="p-4">
-    <div className="d-flex justify-content-between align-items-center mb-3">
-      <h5 className="fw-semibold mb-0 text-primary">
-        <i className="ri-barcode-line me-2"></i>
-        Scanner de Codes-Barres
-      </h5>
-      <div className="form-check form-switch">
-        <Input
-          type="checkbox"
-          id="scannerToggle"
-          checked={scannerEnabled}
-          onChange={(e) => {
-            setScannerEnabled(e.target.checked);
-            setBarcodeInput("");
-            if (scanningTimeout) {
-              clearTimeout(scanningTimeout);
-            }
-          }}
-          className="form-check-input"
-        />
-        <Label for="scannerToggle" check className="form-check-label fw-semibold">
-          {scannerEnabled ? "Scanner Activé" : "Scanner Désactivé"}
-        </Label>
-      </div>
-    </div>
-
-  </CardBody>
-</Card>
-
                       {/* Articles Section */}
                       <Card className="border-0 shadow-sm mb-4">
                         <CardBody className="p-4">
@@ -1876,102 +2328,192 @@ const handleCreateArticle = async () => {
                           <div className="mb-4">
                             <Label className="form-label-lg fw-semibold">
                               Rechercher Article
-                              <button
-                                type="button"
-                                className="btn btn-link text-primary p-0 ms-2"
-                                onClick={() => setArticleModal(true)}
-                                title="Ajouter un nouvel article"
-                                style={{ fontSize: "0.8rem" }}
-                              >
-                                <i className="ri-add-line me-1"></i>Nouvel
-                                article
-                              </button>
-                            </Label>{" "}
+                            </Label>
+
                             <div className="search-box position-relative">
                               <Input
                                 type="text"
                                 placeholder="Rechercher article..."
                                 value={articleSearch}
-                                onChange={(e) =>
-                                  setArticleSearch(e.target.value)
-                                }
-                                className="form-control-lg ps-5"
+                                innerRef={articleSearchRef}
+                                onChange={(e) => {
+                                  setArticleSearch(e.target.value);
+                                  setFocusedIndex(-1);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (filteredArticles.length > 0) {
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev < filteredArticles.length - 1
+                                          ? prev + 1
+                                          : 0
+                                      );
+                                    } else if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setFocusedIndex((prev) =>
+                                        prev > 0
+                                          ? prev - 1
+                                          : filteredArticles.length - 1
+                                      );
+                                    } else if (
+                                      e.key === "Enter" &&
+                                      focusedIndex >= 0
+                                    ) {
+                                      e.preventDefault();
+                                      const article =
+                                        filteredArticles[focusedIndex];
+                                      handleAddArticle(article.id.toString());
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    } else if (
+                                      e.key === "Enter" &&
+                                      filteredArticles.length > 0 &&
+                                      focusedIndex === -1
+                                    ) {
+                                      e.preventDefault();
+                                      const firstArticle = filteredArticles[0];
+                                      handleAddArticle(
+                                        firstArticle.id.toString()
+                                      );
+                                      setArticleSearch("");
+                                      setFilteredArticles([]);
+                                      setFocusedIndex(-1);
+                                    }
+                                  }
+                                }}
+                                className="form-control-lg ps-5 pe-5"
                               />
-                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3 fs-5 text-muted"></i>
+                              <i className="ri-search-line search-icon position-absolute top-50 start-0 translate-middle-y ms-3"></i>
+                              <button
+                                type="button"
+                                className="btn btn-link text-primary position-absolute end-0 top-50 translate-middle-y p-0 me-3"
+                                onClick={() => setArticleModal(true)}
+                                title="Ajouter un nouvel article"
+                              >
+                                <i className="ri-add-line fs-5"></i>
+                              </button>
                             </div>
-                            {/* Scrollable Dropdown Results */}
+
                             {articleSearch.length >= 1 && (
                               <div
+                                ref={setDropdownRef}
                                 className="search-results mt-2 border rounded shadow-sm"
                                 style={{
-                                  maxHeight: "300px",
+                                  maxHeight: "400px",
                                   overflowY: "auto",
+                                  overflowX: "hidden",
                                   position: "relative",
                                   zIndex: 1000,
                                   backgroundColor: "white",
                                 }}
+                                onKeyDown={(e) => e.stopPropagation()}
                               >
                                 {filteredArticles.length > 0 ? (
                                   <ul className="list-group list-group-flush">
-                                    {filteredArticles.map((article) => (
-                                      <li
-                                        key={article.id}
-                                        className="list-group-item list-group-item-action"
-                                        onClick={() => {
-                                          handleAddArticle(
-                                            article.id.toString()
-                                          );
-                                          setArticleSearch("");
-                                          setFilteredArticles([]);
-                                        }}
-                                        style={{
-                                          cursor: "pointer",
-                                          padding: "12px 15px",
-                                          opacity: selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          )
-                                            ? 0.6
-                                            : 1,
-                                        }}
-                                      >
-                                        <div className="d-flex justify-content-between align-items-center">
-                                          <div className="flex-grow-1">
-                                            <strong className="d-block">
-                                              {article.designation}
-                                            </strong>
-                                            <small className="text-muted">
-                                              Réf: {article.reference} | Stock:{" "}
-                                              {article.qte} | HT:{" "}
-                                              {(
-                                                Number(article.puv_ht) || 0
-                                              ).toFixed(3)}{" "}
-                                              DT
-                                            </small>
+                                    {filteredArticles.map((article, index) => {
+                                      const itemRef =
+                                        React.createRef<HTMLLIElement>();
+                                      if (!itemRefs[index]) {
+                                        itemRefs[index] = itemRef;
+                                      }
+
+                                      return (
+                                        <li
+                                          key={article.id}
+                                          ref={itemRefs[index]}
+                                          className={`list-group-item list-group-item-action ${
+                                            focusedIndex === index
+                                              ? "active"
+                                              : ""
+                                          }`}
+                                          onClick={() => {
+                                            handleAddArticle(
+                                              article.id.toString()
+                                            );
+                                            setArticleSearch("");
+                                            setFilteredArticles([]);
+                                            setFocusedIndex(-1);
+                                          }}
+                                          style={{
+                                            cursor: "pointer",
+                                            padding: "12px 15px",
+                                            opacity: selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            )
+                                              ? 0.6
+                                              : 1,
+                                            backgroundColor:
+                                              focusedIndex === index
+                                                ? "#e7f1ff"
+                                                : "transparent",
+                                            borderLeft:
+                                              focusedIndex === index
+                                                ? "4px solid #0d6efd"
+                                                : "none",
+                                          }}
+                                          onMouseEnter={() =>
+                                            setFocusedIndex(index)
+                                          }
+                                        >
+                                          <div className="d-flex justify-content-between align-items-center">
+                                            <div className="flex-grow-1">
+                                              <div className="d-flex align-items-center mb-1">
+                                                <strong className="fs-6 me-2 text-primary">
+                                                  {article.reference}
+                                                </strong>
+                                                <span className="badge bg-light text-dark me-2">
+                                                  Stock: {article.qte || 0}
+                                                </span>
+                                              </div>
+                                              <small
+                                                className="text-muted d-block"
+                                                style={{ fontSize: "0.85rem" }}
+                                              >
+                                                {article.designation}
+                                              </small>
+                                              <div className="mt-1">
+                                                <span className="badge bg-success text-white">
+                                                  TTC:{" "}
+                                                  {(
+                                                    Number(article.puv_ttc) || 0
+                                                  ).toFixed(3)}{" "}
+                                                  DT
+                                                </span>
+                                                {article.tva &&
+                                                  article.tva > 0 && (
+                                                    <span className="badge bg-info ms-1">
+                                                      TVA: {article.tva}%
+                                                    </span>
+                                                  )}
+                                              </div>
+                                            </div>
+                                            {selectedArticles.some(
+                                              (item) =>
+                                                item.article_id === article.id
+                                            ) ? (
+                                              <Badge
+                                                color="secondary"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-check-line me-1"></i>
+                                                Ajouté
+                                              </Badge>
+                                            ) : (
+                                              <Badge
+                                                color="success"
+                                                className="fs-6"
+                                              >
+                                                <i className="ri-add-line me-1"></i>
+                                                Ajouter
+                                              </Badge>
+                                            )}
                                           </div>
-                                          {selectedArticles.some(
-                                            (item) =>
-                                              item.article_id === article.id
-                                          ) ? (
-                                            <Badge
-                                              color="secondary"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-check-line me-1"></i>
-                                              Ajouté
-                                            </Badge>
-                                          ) : (
-                                            <Badge
-                                              color="success"
-                                              className="fs-6"
-                                            >
-                                              <i className="ri-add-line me-1"></i>
-                                              Ajouter
-                                            </Badge>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
+                                        </li>
+                                      );
+                                    })}
                                   </ul>
                                 ) : (
                                   <div className="text-muted p-3 text-center">
@@ -2525,12 +3067,7 @@ const handleCreateArticle = async () => {
                                         {showRemise && globalRemise > 0 && (
                                           <tr className="real-time-update">
                                             <th className="text-end text-muted fs-6">
-                                              {remiseType === "percentage"
-                                                ? `Remise (${globalRemise}%)`
-                                                : `Remise (Montant fixe) ${(
-                                                    (discountAmount / netHT) *
-                                                    100
-                                                  ).toFixed(1)}%`}
+                                              Remise:
                                             </th>
                                             <td className="text-end text-danger fw-bold fs-6">
                                               - {discountAmount.toFixed(3)} DT
@@ -2751,33 +3288,57 @@ const handleCreateArticle = async () => {
                     <Row>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 1*</Label>
+                          <Label className="form-label fw-semibold">
+                            Téléphone 1
+                          </Label>
                           <Input
                             value={newClient.telephone1}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone1: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 1"
-                            className="form-control"
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              // Apply auto-space formatting
+                              if (value) {
+                                const formatted = formatPhoneInput(value);
+                                setNewClient({
+                                  ...newClient,
+                                  telephone1: formatted,
+                                });
+                              } else {
+                                setNewClient({
+                                  ...newClient,
+                                  telephone1: value,
+                                });
+                              }
+                            }}
+                            placeholder="22 222 222"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
                       <Col md={6}>
                         <div className="mb-3">
-                          <Label>Téléphone 2</Label>
+                          <Label className="form-label fw-semibold">
+                            Téléphone 2
+                          </Label>
                           <Input
                             value={newClient.telephone2}
-                            onChange={(e) =>
-                              setNewClient({
-                                ...newClient,
-                                telephone2: e.target.value,
-                              })
-                            }
-                            placeholder="Téléphone 2"
-                            className="form-control"
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              // Apply auto-space formatting
+                              if (value) {
+                                const formatted = formatPhoneInput(value);
+                                setNewClient({
+                                  ...newClient,
+                                  telephone2: formatted,
+                                });
+                              } else {
+                                setNewClient({
+                                  ...newClient,
+                                  telephone2: value,
+                                });
+                              }
+                            }}
+                            placeholder="22 222 222"
+                            className="form-control-lg"
                           />
                         </div>
                       </Col>
@@ -2818,384 +3379,384 @@ const handleCreateArticle = async () => {
                     </button>
                   </div>
                 </Modal>
-
-                {/* Quick Article Creation Modal */}
+                 
                 <Modal
-                  isOpen={articleModal}
-                  toggle={() => setArticleModal(false)}
-                  centered
-                  size="xl"
+  isOpen={articleModal}
+  toggle={() => setArticleModal(false)}
+  centered
+  size="lg"
+>
+  <ModalHeader toggle={() => setArticleModal(false)}>
+    <div className="d-flex align-items-center">
+      <div className="modal-icon-wrapper bg-success bg-opacity-10 rounded-circle p-2 me-3">
+        <i className="ri-add-box-line text-success fs-4"></i>
+      </div>
+      <div>
+        <h4 className="mb-0 fw-bold text-dark">Nouvel Article</h4>
+        <small className="text-muted">Ajouter un nouveau produit</small>
+      </div>
+    </div>
+  </ModalHeader>
+
+  <Form
+    onSubmit={(e) => {
+      e.preventDefault();
+      handleCreateArticle();
+    }}
+  >
+    <ModalBody>
+      {/* ================= BASIC INFORMATION ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-information-line me-2"></i>
+            Informations de Base
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Référence</Label>
+                <Input
+                  type="text"
+                  value={newArticle.reference}
+                  onChange={(e) =>
+                    setNewArticle({ ...newArticle, reference: e.target.value })
+                  }
+                  placeholder="REF"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">Identifiant unique de l'article</small>
+              </div>
+            </Col>
+
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Désignation</Label>
+                <Input
+                  type="text"
+                  value={newArticle.designation}
+                  onChange={(e) =>
+                    setNewArticle({ ...newArticle, designation: e.target.value })
+                  }
+                  placeholder="Nom de l'article"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">Nom complet du produit</small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+
+      {/* ================= CATEGORIES ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-folder-line me-2"></i>
+            Catégorisation
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Famille Principale</Label>
+                <Input
+                  type="select"
+                  value={newArticle.categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({ ...newArticle, categorie_id: e.target.value })
+                  }
+                  className="form-control-lg"
                 >
-                  <ModalHeader toggle={() => setArticleModal(false)}>
-                    <div className="d-flex align-items-center">
-                      <div className="modal-icon-wrapper bg-primary bg-opacity-10 rounded-circle p-2 me-3">
-                        <i className="ri-add-box-line text-primary fs-4"></i>
-                      </div>
-                      <div>
-                        <h4 className="mb-0 fw-bold text-dark">
-                          Nouvel Article Rapide
-                        </h4>
-                        <small className="text-muted">
-                          Créer un nouvel article rapidement
-                        </small>
-                      </div>
-                    </div>
-                  </ModalHeader>
-                  <ModalBody>
-                {/* Dans la modal de création d'article - ajoutez cette section après le champ Référence */}
-<Row>
-  <Col md={6}>
-    <div className="mb-3">
-      <Label className="form-label">Référence*</Label>
-      <Input
-        value={newArticle.reference}
-        onChange={(e) =>
-          setNewArticle({
-            ...newArticle,
-            reference: e.target.value,
-          })
-        }
-        placeholder="Référence article"
-        className="form-control"
-      />
-    </div>
-  </Col>
-  <Col md={6}>
-    <div className="mb-3">
-      <Label className="form-label">Code-Barres</Label>
-      <Input
-        value={newArticle.code_barre}
-        onChange={(e) =>
-          setNewArticle({
-            ...newArticle,
-            code_barre: e.target.value,
-          })
-        }
-        placeholder="Code-barres (EAN, UPC, etc.)"
-        className="form-control"
-      />
-      <small className="text-muted">
-        Laissez vide pour génération automatique par le système
-      </small>
-    </div>
-  </Col>
-</Row>
+                  <option value="">Sélectionner une famille principale</option>
+                  {categories
+                    .filter((c) => !c.parent_id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nom}
+                      </option>
+                    ))}
+                </Input>
+                <small className="text-muted">Catégorie principale</small>
+              </div>
+            </Col>
 
-                    <div className="mb-3">
-                      <Label className="form-label">Désignation*</Label>
-                      <Input
-                        value={newArticle.designation}
-                        onChange={(e) =>
-                          setNewArticle({
-                            ...newArticle,
-                            designation: e.target.value,
-                          })
-                        }
-                        placeholder="Désignation complète"
-                        className="form-control"
-                      />
-                    </div>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Sous-Famille</Label>
+                <Input
+                  type="select"
+                  value={newArticle.sous_categorie_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      sous_categorie_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">Sélectionner une sous-famille</option>
+                  {subcategories.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.nom}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">Sous-catégorie</small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
 
-                    {/* Categories */}
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Famille Principale
-                          </Label>
-                          <Input
-                            type="select"
-                            value={newArticle.categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                categorie_id: e.target.value,
-                              })
-                            }
-                            className="form-control"
-                          >
-                            <option value="">Sélectionner une famille</option>
-                            {categories
-                              .filter((cat) => !cat.parent_id)
-                              .map((categorie) => (
-                                <option key={categorie.id} value={categorie.id}>
-                                  {categorie.nom}
-                                </option>
-                              ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Sous-Famille</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.sous_categorie_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                sous_categorie_id: e.target.value,
-                              })
-                            }
-                            disabled={!newArticle.categorie_id}
-                            className="form-control"
-                          >
-                            <option value="">
-                              Sélectionner une sous-famille
-                            </option>
-                            {subcategories.map((subcategorie) => (
-                              <option
-                                key={subcategorie.id}
-                                value={subcategorie.id}
-                              >
-                                {subcategorie.nom}
-                              </option>
-                            ))}
-                          </Input>
-                          {!newArticle.categorie_id && (
-                            <small className="text-muted">
-                              Sélectionnez d'abord une famille principale
-                            </small>
-                          )}
-                        </div>
-                      </Col>
-                    </Row>
+      {/* ================= SUPPLIER / TYPE ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-truck-line me-2"></i>
+            Fournisseur & Type
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Fournisseur</Label>
+                <Input
+                  type="select"
+                  value={newArticle.fournisseur_id}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      fournisseur_id: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="">Sélectionner un fournisseur</option>
+                  {fournisseurs.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.raison_sociale}
+                    </option>
+                  ))}
+                </Input>
+                <small className="text-muted">Fournisseur principal</small>
+              </div>
+            </Col>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Fournisseur</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.fournisseur_id}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                fournisseur_id: e.target.value,
-                              })
-                            }
-                            className="form-control"
-                          >
-                            <option value="">
-                              Sélectionner un fournisseur
-                            </option>
-                            {fournisseurs.map((fournisseur) => (
-                              <option
-                                key={fournisseur.id}
-                                value={fournisseur.id}
-                              >
-                                {fournisseur.raison_sociale}
-                              </option>
-                            ))}
-                          </Input>
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Type</Label>
-                          <Input
-                            type="select"
-                            value={newArticle.type}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                type: e.target.value as
-                                  | "Consigné"
-                                  | "Non Consigné",
-                              })
-                            }
-                            className="form-control"
-                          >
-                            <option value="Non Consigné">Non Consigné</option>
-                            <option value="Consigné">Consigné</option>
-                          </Input>
-                        </div>
-                      </Col>
-                    </Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Type</Label>
+                <Input
+                  type="select"
+                  value={newArticle.type}
+                  onChange={(e) =>
+                    setNewArticle({
+                      ...newArticle,
+                      type: e.target.value,
+                    })
+                  }
+                  className="form-control-lg"
+                >
+                  <option value="Non Consigné">Non Consigné</option>
+                  <option value="Consigné">Consigné</option>
+                </Input>
+                <small className="text-muted">Type d'article</small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
 
-                    {/* Pricing Section */}
-                    <h6 className="fw-semibold mb-3 text-primary border-bottom pb-2">
-                      Prix et Taxes
-                    </h6>
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat HT</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                pua_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Prix d'achat TTC</Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.pua_ttc}
-                            readOnly
-                            className="form-control bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+      {/* ================= PRICING SECTION ================= */}
+      <Row className="mb-4">
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-shopping-bag-line me-2"></i>
+                Prix d'Achat
+              </h6>
+              
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">Prix d'achat HT (DT)</Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ht}
+                  onChange={(e) => handlePriceChange('pua_ht', e.target.value)}
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">Prix hors taxes avant marge</small>
+              </div>
+              
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">Prix d'achat TTC (DT)</Label>
+                <Input
+                  type="text"
+                  value={newArticle.pua_ttc}
+                  onChange={(e) => handlePriceChange('pua_ttc', e.target.value)}
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? '1.01' : '1'} × {1 + parseNumber(newArticle.tva)/100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Prix de vente HT*
-                          </Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ht}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                puv_ht: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0.000"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Prix de vente TTC
-                          </Label>
-                          <Input
-                            type="number"
-                            step="0.001"
-                            value={newArticle.puv_ttc}
-                            readOnly
-                            className="form-control bg-light"
-                            placeholder="Calculé automatiquement"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+        <Col md={6}>
+          <Card className="border-0 shadow-sm h-100">
+            <CardBody className="p-4">
+              <h6 className="fw-semibold mb-4 text-primary">
+                <i className="ri-price-tag-3-line me-2"></i>
+                Prix de Vente
+              </h6>
+              
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">Prix de vente HT (DT)</Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ht}
+                  onChange={(e) => handlePriceChange('puv_ht', e.target.value)}
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">Prix de vente hors taxes</small>
+              </div>
+              
+              <div className="mb-0">
+                <Label className="form-label-lg fw-semibold">Prix de vente TTC (DT)</Label>
+                <Input
+                  type="text"
+                  value={newArticle.puv_ttc}
+                  onChange={(e) => handlePriceChange('puv_ttc', e.target.value)}
+                  placeholder="0,000"
+                  className="form-control-lg text-end"
+                />
+                <small className="text-muted">
+                  HT × {newArticle.taux_fodec ? '1.01' : '1'} × {1 + parseNumber(newArticle.tva)/100}
+                </small>
+              </div>
+            </CardBody>
+          </Card>
+        </Col>
+      </Row>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">
-                            Quantité en stock
-                          </Label>
-                          <Input
-                            type="number"
-                            value={newArticle.qte}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                qte: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">TVA (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.tva}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                tva: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                    </Row>
+      {/* ================= TAX SETTINGS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-percent-line me-2"></i>
+            Paramètres Fiscaux
+          </h5>
+          
+          <Row>
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold">Taux de TVA (%)</Label>
+                <Input
+                  type="select"
+                  value={newArticle.tva}
+                  onChange={(e) => handleTVAChange(e.target.value)}
+                  className="form-control-lg"
+                >
+                  <option value="0">0% (Exonéré)</option>
+                  <option value="7">7%</option>
+                  <option value="10">10%</option>
+                  <option value="13">13%</option>
+                  <option value="19">19% (Taux normal)</option>
+                  <option value="21">21%</option>
+                </Input>
+                <small className="text-muted">Taux de TVA applicable</small>
+              </div>
+            </Col>
+            
+            <Col md={6}>
+              <div className="mb-4">
+                <Label className="form-label-lg fw-semibold d-block">FODEC</Label>
+                <div className="form-check form-switch form-switch-lg">
+                  <Input
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={!!newArticle.taux_fodec}
+                    onChange={(e) => handleFodecChange(e.target.checked)}
+                    id="fodecSwitch"
+                  />
+                  <Label className="form-check-label fw-semibold" for="fodecSwitch">
+                    Appliquer FODEC (1%)
+                  </Label>
+                </div>
+                <small className="text-muted">Taxe FODEC de 1% sur le HT</small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
 
-                    <Row>
-                      <Col md={6}>
-                        <div className="mb-3">
-                          <Label className="form-label">Remise (%)</Label>
-                          <Input
-                            type="number"
-                            value={newArticle.remise}
-                            onChange={(e) =>
-                              setNewArticle({
-                                ...newArticle,
-                                remise: Number(e.target.value),
-                              })
-                            }
-                            placeholder="0"
-                            className="form-control"
-                          />
-                        </div>
-                      </Col>
-                      <Col md={6}>
-                        <div className="mb-3 d-flex align-items-end">
-                          <div className="form-check form-switch">
-                            <Input
-                              type="checkbox"
-                              checked={newArticle.taux_fodec}
-                              onChange={(e) =>
-                                setNewArticle({
-                                  ...newArticle,
-                                  taux_fodec: e.target.checked,
-                                })
-                              }
-                              className="form-check-input"
-                            />
-                            <Label
-                              check
-                              className="form-check-label fw-semibold"
-                            >
-                              Taux FODEC (1%)
-                            </Label>
-                          </div>
-                        </div>
-                      </Col>
-                    </Row>
-                  </ModalBody>
-                  <div className="modal-footer">
-                    <button
-                      type="button"
-                      className="btn btn-light"
-                      onClick={() => setArticleModal(false)}
-                    >
-                      <i className="ri-close-line me-1"></i>
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleCreateArticle}
-                      disabled={
-                        !newArticle.reference ||
-                        !newArticle.nom ||
-                        !newArticle.designation ||
-                        !newArticle.puv_ht
-                      }
-                    >
-                      <i className="ri-add-line me-1"></i>
-                      Créer Article
-                    </button>
-                  </div>
-                </Modal>
+      {/* ================= INVENTORY & DETAILS ================= */}
+      <Card className="border-0 shadow-sm mb-4">
+        <CardBody className="p-4">
+          <h5 className="fw-semibold mb-4 text-primary">
+            <i className="ri-store-line me-2"></i>
+            Stock & Détails
+          </h5>
+          <Row>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Quantité en stock</Label>
+                <Input
+                  type="text"
+                  value={newArticle.qte}
+                  onChange={(e) =>
+                    setNewArticle({ ...newArticle, qte: e.target.value })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">Stock initial disponible</small>
+              </div>
+            </Col>
+            <Col md={6}>
+              <div className="mb-3">
+                <Label className="form-label-lg fw-semibold">Remise (%)</Label>
+                <Input
+                  type="text"
+                  value={newArticle.remise}
+                  onChange={(e) =>
+                    setNewArticle({ ...newArticle, remise: e.target.value })
+                  }
+                  placeholder="0"
+                  className="form-control-lg"
+                />
+                <small className="text-muted">Pourcentage de remise par défaut</small>
+              </div>
+            </Col>
+          </Row>
+        </CardBody>
+      </Card>
+    </ModalBody>
+
+    <ModalFooter className="border-0 pt-4">
+      <Button
+        color="light"
+        onClick={() => setArticleModal(false)}
+        className="btn-invoice fs-6 px-4"
+      >
+        <i className="ri-close-line me-2"></i>
+        Annuler
+      </Button>
+      <Button
+        color="success"
+        type="submit"
+        className="btn-invoice btn-invoice-success fs-6 px-4"
+      >
+        <i className="ri-add-line me-2"></i>
+        Créer Article
+      </Button>
+    </ModalFooter>
+  </Form>
+</Modal>
+
 
                 <Modal
                   isOpen={detailModal}
@@ -3597,10 +4158,7 @@ const handleCreateArticle = async () => {
                                           {remiseValue > 0 && (
                                             <tr className="real-time-update">
                                               <th className="text-end text-muted fs-6">
-                                                {remiseTypeValue ===
-                                                "percentage"
-                                                  ? `Remise (${remiseValue}%)`
-                                                  : `Remise (Montant fixe) ${discountPercentage}%`}
+                                                Remise:
                                               </th>
                                               <td className="text-end text-danger fw-bold fs-6">
                                                 -{" "}
@@ -3657,11 +4215,11 @@ const handleCreateArticle = async () => {
                             selectedBonCommande.articles.map((item) => ({
                               article_id: item.article?.id || 0,
                               quantite: item.quantite,
+                              articleDetails: item.article, // ✅ This includes the article reference
                               prixUnitaire:
                                 typeof item.prixUnitaire === "string"
                                   ? parseFloat(item.prixUnitaire)
                                   : item.prixUnitaire,
-                              // FIX: Handle both string and number types for prix_ttc
                               prixTTC:
                                 Number(item.prix_ttc) ||
                                 Number(item.article?.puv_ttc) ||
@@ -3696,7 +4254,7 @@ const handleCreateArticle = async () => {
                             client_id: selectedBonCommande.client?.id ?? "",
                             vendeur_id: selectedBonCommande.vendeur?.id ?? "",
                             dateCommande: moment().format("YYYY-MM-DD"),
-                            status: "Brouillon",
+                            status: "Confirme",
                             notes: selectedBonCommande.notes ?? "",
                           });
                           setModal(true);
